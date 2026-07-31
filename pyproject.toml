@@ -28,7 +28,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "ruff==0.15.21",
+    "ruff==0.16.0",
     "mypy>=2.3.0",
     "pre-commit>=3.6.0",
     "pytest>=9.1.0",
