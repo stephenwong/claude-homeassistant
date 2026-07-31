@@ -17,7 +17,7 @@ authors = [
 ]
 requires-python = ">=3.14.2"
 dependencies = [
-    "homeassistant>=2024.1.0",
+    "homeassistant>=2026.7.2",
     "voluptuous",
     "pyyaml>=6.0.0",
     "jsonschema",
@@ -28,14 +28,14 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "ruff==0.15.19",
-    "mypy>=2.0.0",
+    "ruff==0.15.21",
+    "mypy>=2.3.0",
     "pre-commit>=3.6.0",
     "pytest>=9.1.0",
     "pytest-cov>=4.0.0",
     "pytest-mock>=3.12.0",
     "types-PyYAML>=6.0.0",
-    "types-requests>=2.31.0",
+    "types-requests>=2.33.0.20260712",
 ]
 
 [tool.ruff]
