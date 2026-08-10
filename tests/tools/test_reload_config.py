@@ -9,6 +9,7 @@ from tools.common import HARequestError
 from tools.reload_config import (
     CORE_RELOAD_SERVICE,
     FILE_TO_SERVICE,
+    FULL_RELOAD_SERVICE,
     SERVICE_LABELS,
     detect_changed_services,
     reload_config,
@@ -39,7 +40,8 @@ def _make_client():
 
 class TestDetectChangedServices:
     def test_core_service_constant_is_used_for_mapping_and_label(self):
-        assert FILE_TO_SERVICE["configuration.yaml"] == CORE_RELOAD_SERVICE
+        assert FILE_TO_SERVICE["configuration.yaml"] == FULL_RELOAD_SERVICE
+        assert SERVICE_LABELS[FULL_RELOAD_SERVICE] == "all YAML config"
         assert SERVICE_LABELS[CORE_RELOAD_SERVICE] == "core config"
 
     def test_automations_yaml_returns_automation_reload(self):
@@ -60,17 +62,30 @@ class TestDetectChangedServices:
             result = detect_changed_services()
         assert result == {"scene/reload"}
 
-    def test_configuration_yaml_returns_reload_core_config(self):
+    def test_configuration_yaml_returns_reload_all(self):
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = _diff_only(_nul("config/configuration.yaml\n"))
             result = detect_changed_services()
-        assert result == {CORE_RELOAD_SERVICE}
+        assert result == {FULL_RELOAD_SERVICE}
 
-    def test_unknown_yaml_returns_reload_core_config(self):
+    def test_unknown_yaml_returns_reload_all(self):
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = _diff_only(_nul("config/secrets.yaml\n"))
             result = detect_changed_services()
-        assert result == {CORE_RELOAD_SERVICE}
+        assert result == {FULL_RELOAD_SERVICE}
+
+    def test_full_reload_short_circuits_domain_reloads(self):
+        client = _make_client()
+        from tools.reload_config import _execute_reload_plan
+
+        results = _execute_reload_plan(
+            client, {FULL_RELOAD_SERVICE, "automation/reload"}
+        )
+
+        assert results == [(FULL_RELOAD_SERVICE, True, None)]
+        client.post.assert_called_once_with(
+            "/api/services/homeassistant/reload_all", json={}
+        )
 
     def test_subdir_file_not_included(self):
         with patch("subprocess.run") as mock_run:
@@ -217,7 +232,7 @@ class TestReloadConfig:
     def test_success(self):
         with patch(
             "tools.reload_config.detect_changed_services",
-            return_value={"homeassistant/reload_core_config"},
+            return_value={FULL_RELOAD_SERVICE},
         ):
             assert reload_config() is True
 
@@ -225,7 +240,7 @@ class TestReloadConfig:
         self._mock_client.post.return_value = MagicMock(status_code=500)
         with patch(
             "tools.reload_config.detect_changed_services",
-            return_value={"homeassistant/reload_core_config"},
+            return_value={FULL_RELOAD_SERVICE},
         ):
             assert reload_config() is False
 
@@ -269,7 +284,10 @@ class TestReloadConfig:
         with patch("tools.reload_config.detect_changed_services", return_value=None):
             result = reload_config()
         assert result is True
-        assert self._mock_client.post.call_count == 4
+        assert self._mock_client.post.call_count == 1
+        self._mock_client.post.assert_called_once_with(
+            "/api/services/homeassistant/reload_all", json={}
+        )
 
     def test_detect_returns_empty_set_reloads_all_services(self):
         ok_resp = MagicMock(status_code=200)
@@ -277,7 +295,10 @@ class TestReloadConfig:
         with patch("tools.reload_config.detect_changed_services", return_value=set()):
             result = reload_config()
         assert result is True
-        assert self._mock_client.post.call_count == 4
+        assert self._mock_client.post.call_count == 1
+        self._mock_client.post.assert_called_once_with(
+            "/api/services/homeassistant/reload_all", json={}
+        )
 
     def test_detect_returns_one_service_makes_one_call(self):
         self._mock_client.post.return_value = MagicMock(status_code=200)
@@ -547,10 +568,10 @@ class TestClassifyChangedFiles:
 
         assert _classify_changed_files({"automations.yaml"}) == {"automation/reload"}
 
-    def test_unknown_yaml_falls_back_to_core_config(self):
+    def test_unknown_yaml_falls_back_to_reload_all(self):
         from tools.reload_config import _classify_changed_files
 
-        assert _classify_changed_files({"unknown.yaml"}) == {CORE_RELOAD_SERVICE}
+        assert _classify_changed_files({"unknown.yaml"}) == {FULL_RELOAD_SERVICE}
 
     def test_non_yaml_file_ignored(self):
         from tools.reload_config import _classify_changed_files

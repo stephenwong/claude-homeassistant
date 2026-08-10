@@ -48,6 +48,8 @@ INTERESTING_EXTENSIONS = {
 
 def should_include(name: str) -> bool:
     """Check if a file should be included in the diff."""
+    if Path(name).name == "secrets.yaml":
+        return False
     for pattern in SKIP_PATTERNS:
         if pattern in name:
             return False

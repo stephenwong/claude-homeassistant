@@ -89,10 +89,34 @@ backup:
 	@mkdir -p $(BACKUP_DIR)
 	@timestamp=$$(date +%Y%m%d_%H%M%S); \
 	backup_name="$(BACKUP_DIR)/ha_config_$$timestamp"; \
-	tar -czf "$$backup_name.tar.gz" $(LOCAL_CONFIG_PATH) $(FRIGATE_LOCAL_PATH) 2>/dev/null || tar -czf "$$backup_name.tar.gz" $(LOCAL_CONFIG_PATH); \
+	while [ -e "$$backup_name.tar.gz" ]; do \
+		sleep 1; \
+		timestamp=$$(date +%Y%m%d_%H%M%S); \
+		backup_name="$(BACKUP_DIR)/ha_config_$$timestamp"; \
+	done; \
+	set -- "$(LOCAL_CONFIG_PATH)"; \
+	if [ -d "$(FRIGATE_LOCAL_PATH)" ]; then set -- "$$@" "$(FRIGATE_LOCAL_PATH)"; fi; \
+	if ! tar -czf "$$backup_name.tar.gz" -- "$$@"; then \
+		echo "$(RED)Backup failed; no archive was created$(NC)" >&2; \
+		rm -f "$$backup_name.tar.gz"; \
+		exit 1; \
+	fi; \
+	if ! tar -tzf "$$backup_name.tar.gz" >/dev/null; then \
+		echo "$(RED)Backup failed integrity verification$(NC)" >&2; \
+		rm -f "$$backup_name.tar.gz"; \
+		exit 1; \
+	fi; \
+	if ! chmod 600 "$$backup_name.tar.gz"; then \
+		echo "$(RED)Backup failed to apply restrictive permissions$(NC)" >&2; \
+		rm -f "$$backup_name.tar.gz"; \
+		exit 1; \
+	fi; \
 	echo "$(GREEN)Backup created: $$backup_name.tar.gz$(NC)"; \
-	$(UV_RUN) python $(TOOLS_PATH)/generate_changelog.py "$$backup_name.tar.gz" 2>/dev/null && \
-	echo "$(GREEN)Changelog generated$(NC)" || true
+	if $(UV_RUN) python $(TOOLS_PATH)/generate_changelog.py "$$backup_name.tar.gz"; then \
+		echo "$(GREEN)Changelog generated$(NC)"; \
+	else \
+		echo "$(YELLOW)Warning: changelog generation failed$(NC)" >&2; \
+	fi
 
 # Search backups for a pattern
 backup-search:

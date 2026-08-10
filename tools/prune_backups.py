@@ -4,8 +4,8 @@ Prune Home Assistant configuration backups with smart retention.
 
 Retention rules:
 - Keep all backups from last 7 days
-- Keep one backup per day for backups 7-30 days old (latest each day)
-- Keep one backup per week for backups older than 30 days (latest each week)
+- Keep one backup per day for backups 8-30 days old (latest each day)
+- Keep one backup per week for backups 31+ days old (latest each week)
 """
 
 import argparse
@@ -34,8 +34,8 @@ def group_by_retention_period(
     """Group backups into retention periods."""
     groups: RetentionGroups = {
         "keep_all": [],  # Last 7 days
-        "daily": defaultdict(list),  # 7-30 days, one per day
-        "weekly": defaultdict(list),  # 30+ days, one per week
+        "daily": defaultdict(list),  # 8-30 days, one per day
+        "weekly": defaultdict(list),  # 31+ days, one per week
     }
 
     for backup in backups:
@@ -132,6 +132,22 @@ def clean_orphaned_changelogs(dry_run: bool = False) -> int:
                 else:
                     print(f"  Deleted: {orphan.name}", file=sys.stderr)
     return len(orphans)
+
+
+def _clean_orphans_and_check(dry_run: bool) -> bool:
+    """Clean orphaned changelogs and report whether apply mode completed."""
+    found = clean_orphaned_changelogs(dry_run=dry_run)
+    if dry_run or not found:
+        return True
+
+    remaining = clean_orphaned_changelogs(dry_run=True)
+    if remaining:
+        print(
+            f"\n✗ Failed to remove {remaining} orphaned changelog(s)",
+            file=sys.stderr,
+        )
+        return False
+    return True
 
 
 def _format_delete_line(backup: BackupRecord, now: datetime) -> str:
@@ -257,8 +273,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if not backups:
         print("(no backups found — nothing to prune)", file=sys.stderr)
-        clean_orphaned_changelogs(dry_run=not apply_deletes)
-        return 0
+        return int(not _clean_orphans_and_check(dry_run=not apply_deletes))
 
     print(f"\nFound {len(backups)} backup(s)", file=sys.stderr)
 
@@ -286,7 +301,7 @@ def main(argv: list[str] | None = None) -> int:
                     f"\n✗ Deleted {len(to_delete) - errors}, failed {errors}",
                     file=sys.stderr,
                 )
-                clean_orphaned_changelogs(dry_run=not apply_deletes)
+                _clean_orphans_and_check(dry_run=not apply_deletes)
                 return 1
 
             print(f"\n✓ Successfully deleted {len(to_delete)} backup(s)")
@@ -296,8 +311,7 @@ def main(argv: list[str] | None = None) -> int:
     if to_keep:
         _print_keep_summary(to_keep, now)
 
-    clean_orphaned_changelogs(dry_run=not apply_deletes)
-    return 0
+    return int(not _clean_orphans_and_check(dry_run=not apply_deletes))
 
 
 if __name__ == "__main__":

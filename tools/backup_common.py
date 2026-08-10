@@ -5,6 +5,7 @@ tarball iteration so the three backup CLIs don't reach into each
 other's modules for shared types.
 """
 
+import os
 import re
 import tarfile
 from collections.abc import Iterator
@@ -12,7 +13,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import IO, TypedDict
 
-BACKUP_DIR = Path(__file__).parent.parent / "backups"
+BACKUP_DIR = Path(
+    os.environ.get("BACKUP_DIR", Path(__file__).parent.parent / "backups")
+)
 _BACKUP_RE = re.compile(r"^ha_config_(\d{8})_(\d{6})\.tar\.gz$")
 _CHANGELOG_RE = re.compile(r"^ha_config_\d{8}_\d{6}\.changelog$")
 

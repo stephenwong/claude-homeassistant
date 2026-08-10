@@ -1,5 +1,6 @@
 """Tests for tools/backup_common.py — shared backup primitives."""
 
+import importlib
 import io
 import tarfile
 
@@ -83,6 +84,17 @@ class TestIterTarballFileMembers:
 
 
 class TestManagedBackups:
+    def test_backup_dir_honors_environment_override(self, monkeypatch, tmp_path):
+        import tools.backup_common as backup_common
+
+        override = tmp_path / "custom-backups"
+        monkeypatch.setenv("BACKUP_DIR", str(override))
+        importlib.reload(backup_common)
+        assert override == backup_common.BACKUP_DIR
+
+        monkeypatch.delenv("BACKUP_DIR")
+        importlib.reload(backup_common)
+
     def test_get_backups_only_returns_canonical_regular_files(
         self, tmp_path, monkeypatch
     ):

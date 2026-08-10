@@ -37,7 +37,7 @@ Configure `.env` (copy from `.env.example`) for repository tools: `HA_TOKEN`, `H
 ```
 make pull           Sync config from HA
 make push           Push config (with validation)
-make backup         Timestamped backup (attempts changelog generation)
+make backup         Verified mode-600 local config snapshot (attempts changelog generation)
 make validate       Run all validators
 make reload         Reload HA config via API
 make status         Config/filesystem status + entity-reference summary
@@ -177,7 +177,7 @@ from tools.validators.entity_definitions import EntityDefinitionExtractor
 
 ## Development Workflow
 
-- **Before HA configuration work:** `home-assistant-backup` skill (pull → backup → preview/apply prune). Read-only audits and `check-upgrade` are exempt.
+- **Before HA configuration work:** `home-assistant-backup` skill (protect local state → pull → verified snapshot → preview/apply prune). Read-only audits and `check-upgrade` are exempt.
 - **Graphify freshness:** Before using graphify for any query, path, explain, or graph-backed analysis, run `graphify . --update --code-only` from the repository root. Treat `graphify-out/graph.json` as stale until that refresh completes; never use the existing-graph fast path without first updating it.
 - **Automations:** `home-assistant-automation` skill; scripts/scenes: the external `home-assistant-best-practices` skill supplied by ha-mcp
 - **Debugging:** `home-assistant-debugging` skill

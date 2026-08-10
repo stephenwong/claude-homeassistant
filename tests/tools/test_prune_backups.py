@@ -508,6 +508,33 @@ class TestMain:
             main(["--apply", "--min-keep", "1"])
             assert not orphan.exists()
 
+    def test_orphan_cleanup_failure_returns_nonzero(self, tmp_path, monkeypatch):
+        """A failed orphan cleanup must not be reported as a successful prune."""
+        from tools import prune_backups as pb
+
+        backup_dir = tmp_path / "backups"
+        backup_dir.mkdir()
+        now = datetime.now()
+        backup = backup_dir / f"ha_config_{now.strftime('%Y%m%d_%H%M%S')}.tar.gz"
+        backup.write_bytes(b"x")
+        orphan = backup_dir / "ha_config_20250101_120000.changelog"
+        orphan.write_text("orphan")
+
+        import pathlib
+
+        original_unlink = pathlib.Path.unlink
+
+        def fail_orphan_unlink(self, *args, **kwargs):
+            if self == orphan:
+                raise OSError("mock permission denied")
+            return original_unlink(self, *args, **kwargs)
+
+        monkeypatch.setattr(pathlib.Path, "unlink", fail_orphan_unlink)
+        monkeypatch.setattr(pb.backup_common, "BACKUP_DIR", backup_dir)
+
+        assert pb.main(["--apply", "--min-keep", "1"]) == 1
+        assert orphan.exists()
+
     def test_delete_error_returns_nonzero(self, tmp_path, capsys):
         """If a file can't be deleted, main() should return 1."""
         import pathlib

@@ -28,6 +28,7 @@ from tools.generate_changelog import (
         ("tools/test.py", True),
         ("config/data.json", True),
         ("config/.storage/core.entity_registry", False),
+        ("config/secrets.yaml", False),
         ("zigbee2mqtt/state.json", False),
         ("zigbee2mqtt/log/2026-01-01.log", False),
         ("config/home-assistant_v2.db", False),

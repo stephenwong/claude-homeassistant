@@ -29,7 +29,9 @@ flowchart LR
     mcp["🤖 MCP<br/>live lookup/debug"]
 
     ha -->|"make pull<br/>(rsync + validate)"| local
-    local -->|"make backup"| backup
+    local -->|"make backup (protect)"| backup
+    backup -->|"make pull<br/>(rsync + validate)"| local
+    local -->|"make backup (fresh)"| backup
     backup --> edit
     mcp -.-> edit
     edit --> validate
@@ -38,11 +40,11 @@ flowchart LR
     push --> ha
 ```
 
-> **1. Pull** — `make pull` syncs config from HA via rsync, triggers validation for integrity.
-> **2. Backup** — Run `make backup` explicitly before making changes; it creates a timestamped tarball and attempts changelog generation.
+> **1. Protect and pull** — Run `make backup` before `make pull` if local state may contain work; then pull the latest config and create a fresh verified snapshot.
+> **2. Backup** — `make backup` creates a local, mode-600 timestamped configuration snapshot and attempts changelog generation. It is not a native Home Assistant system backup.
 > **3. Edit** — Modify config files locally. `ha_cli edit` preserves YAML formatting. MCP tools provide live lookups and debugging data.<br>
 > **4. Validate** — `make validate` runs 7 validators: YAML syntax, entity/device/area references, duplicate automation IDs, service references, Jinja2 template linting, stale sensor detection, and official HA `check_config`.
-> **5. Push** — `make push` validates then rsyncs to HA, blocking broken configs from reaching the server. HA reloads the new configuration automatically.
+> **5. Push** — `make push` validates then rsyncs to HA, blocking broken configs from reaching the server. `configuration.yaml` changes use Home Assistant's `homeassistant.reload_all`; domain-only changes use targeted reloads. Verify new helpers after deployment.
 
 ### 🔍 Debugging
 
@@ -59,7 +61,7 @@ flowchart LR
     validate -->|"pass"| push
 ```
 
-> **1. Pull** — `make pull` syncs the latest config to ensure you're investigating the current state.
+> **1. Protect and pull** — Snapshot local state before `make pull`; rsync can overwrite or remove local files. After a successful pull, take a fresh snapshot for the investigation.
 > **2. Search backups** — `make backup-search PATTERN='text'` finds when an entity or automation last changed.
 > **3. Compare versions** — Extract old config from a backup tarball (`tar -xzOf backups/... config/automations.yaml`) and diff against the current version.
 > **4. Inspect logs** — Prefer MCP log/history tools; use `ssh homeassistant "ha core logs --follow"` or the REST API as fallbacks.<br>
@@ -301,7 +303,7 @@ uv run python tools/ha_cli.py reload
 | `make pull` | Sync config from HA (includes Z2M and Frigate configs) |
 | `make push` | Push config (validates first, then rsyncs) |
 | `make validate` | Run all validation tests |
-| `make backup` | Create timestamped backup and attempt changelog generation |
+| `make backup` | Create and verify a mode-600 local configuration snapshot; attempt changelog generation |
 | `make setup` | Install Python dependencies via uv |
 | `make status` | Show config/filesystem status and an entity-reference summary |
 | `make reload` | Reload HA config via API (no push) |
@@ -323,7 +325,7 @@ uv run python tools/prune_backups.py --apply      # actually delete
 uv run python tools/prune_backups.py --apply --min-keep 5   # defense-in-depth floor
 ```
 
-`--dry-run` is accepted as an explicit alias for the default. `--min-keep N` (default 3) refuses to delete if fewer than N backups would remain.
+`--dry-run` is accepted as an explicit alias for the default. `--min-keep N` (default 3) refuses to delete if fewer than N backups would remain. Retention keeps all snapshots aged 0-7 days, one per day for days 8-30, and one per week from day 31 onward. Backup patterns are regular expressions, so quote and escape literal searches.
 
 ## ✏️ YAML Editing (`ha_cli edit`)
 

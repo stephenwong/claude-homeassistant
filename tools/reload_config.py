@@ -18,19 +18,21 @@ from tools.ha.client import HAClient
 
 _REPO_ROOT = Path(__file__).parent.parent
 CORE_RELOAD_SERVICE = "homeassistant/reload_core_config"
+FULL_RELOAD_SERVICE = "homeassistant/reload_all"
 
 FILE_TO_SERVICE = {
     "automations.yaml": "automation/reload",
     "scripts.yaml": "script/reload",
     "scenes.yaml": "scene/reload",
-    "configuration.yaml": CORE_RELOAD_SERVICE,
+    "configuration.yaml": FULL_RELOAD_SERVICE,
 }
-ALL_SERVICES = frozenset(FILE_TO_SERVICE.values())
+ALL_SERVICES = frozenset({FULL_RELOAD_SERVICE})
 SERVICE_LABELS = {
     "automation/reload": "automations",
     "script/reload": "scripts",
     "scene/reload": "scenes",
     CORE_RELOAD_SERVICE: "core config",
+    FULL_RELOAD_SERVICE: "all YAML config",
 }
 
 
@@ -114,7 +116,7 @@ def _classify_changed_files(filenames: set[str]) -> set[str]:
     services: set[str] = set()
     for fname in filenames:
         if fname.endswith((".yaml", ".yml")):
-            services.add(FILE_TO_SERVICE.get(fname, CORE_RELOAD_SERVICE))
+            services.add(FILE_TO_SERVICE.get(fname, FULL_RELOAD_SERVICE))
     return services
 
 
@@ -158,6 +160,9 @@ def _execute_reload_plan(
     client: HAClient, services: set[str]
 ) -> list[tuple[str, bool, str | None]]:
     """Execute core first, then sorted domain reloads with shared concurrency."""
+    if FULL_RELOAD_SERVICE in services:
+        return [reload_service(client, FULL_RELOAD_SERVICE)]
+
     core_service = CORE_RELOAD_SERVICE
     domain_services = services - {core_service}
     results: list[tuple[str, bool, str | None]] = []

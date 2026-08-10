@@ -20,10 +20,8 @@ Systematic approach to debugging Home Assistant issues. Find root cause before p
 
 ### Common mistakes
 
-**Anti-pattern:** checking an entity's state with BOTH `ha_cli curl
-/api/states/X` AND `ha_get_state("X")`. They return the same data; pick one
-(prefer `ha_get_state` with `fields=["state","last_changed"]` — ~65 tokens vs
-curl's ~670 unprojected).
+**Anti-pattern:** checking an entity's state with BOTH `uv run python tools/ha_cli.py curl /api/states/X` AND `ha_get_state("X")`. They return the same data; pick one.
+Prefer `ha_get_state` with `fields=["state","last_changed"]` for a compact response; exact token counts vary with the entity and projection.
 
 **Shrink MCP responses to save tokens:**
 - `ha_get_overview` with `fields=["system_info"]` to project one section (diagnostics are always retained).
@@ -50,7 +48,7 @@ curl's ~670 unprojected).
 1. **Identify** — Find the entity, note domain/class
 2. **Locate** — Find where entity is defined in config
 3. **Analyze** — Trace logic, identify failure mode
-4. **Fix** — Propose minimal fix, validate, deploy
+4. **Fix** — Protect configuration, propose minimal fix, validate, deploy
 5. **Reflect** — Capture learnings via `reflect` skill
 
 | Phase | Tools/Commands | Purpose |
@@ -74,7 +72,7 @@ curl's ~670 unprojected).
    `ha_get_state("binary_sensor.entity_name", fields=["state", "last_changed", "last_updated"])`
 
 **`last_triggered` and `last_changed` are useful first checks:**
-- If `last_triggered` is `null` or old, the automation never fired → check triggers
+- If `last_triggered` is `null`, the automation has not fired since registration; if it is old, it fired previously but not recently. In either case, compare the expected event time with the trigger and trace evidence.
 - If `last_triggered` is recent but nothing happened → check conditions/actions
 - If `last_changed` is old, the entity state may not be updating → check source and expected reporting cadence
 - If `last_changed == last_updated` and both are old, treat the sensor as a **stale candidate** — a stable entity can also have equal timestamps. Corroborate with expected reporting cadence, history, heartbeat attributes, and integration diagnostics. Confirm with `ha_get_state("<id>", fields=["state","last_changed","last_updated"])`. See Common Failure Patterns: "Sensor value frozen"
@@ -146,10 +144,10 @@ cat backups/ha_config_YYYYMMDD_HHMMSS.changelog
 
 ### Template Sensor Debugging
 
-**Trigger-based templates** are especially vulnerable after HA restart. When HA restarts, all entities transition from `unavailable` → first reading, which means:
-- `trigger.from_state.state` = "unavailable"
-- `| float(0)` converts "unavailable" to 0
-- Large delta from 0 to real value triggers false positives
+**Trigger-based templates** can be vulnerable after an HA restart when the source entity transitions from `unknown`/`unavailable` to its first reading. In that case:
+- `trigger.from_state` may be `none` or may contain an `unknown`/`unavailable` state
+- `| float(0)` converts an unavailable string to 0
+- A large delta from 0 to a real value can trigger a false positive
 
 ```yaml
 # PROBLEM: Doesn't handle unavailable → available transition
@@ -169,7 +167,9 @@ cat backups/ha_config_YYYYMMDD_HHMMSS.changelog
 ```yaml
 state: >
   {% set current = this.state if this.state in ['on', 'off'] else 'off' %}
-  {% if trigger.from_state.state in ['unavailable', 'unknown'] %}
+  {% set old_state = trigger.from_state.state if trigger.from_state is not none else 'unavailable' %}
+  {% set new_state = trigger.to_state.state if trigger.to_state is not none else 'unavailable' %}
+  {% if old_state in ['unavailable', 'unknown'] or new_state in ['unavailable', 'unknown'] %}
     {{ current }}
   {% else %}
     {# Normal logic here #}
@@ -178,13 +178,13 @@ state: >
 
 ### Automation Debugging
 
-**Find the automation:** `ha_search("automation_name_or_keyword")`
+**Find the automation:** `ha_search("automation_name_or_keyword")`. Check `partial`, `partial_reason`, `warnings`, and `errors`; paginate each result surface independently before concluding that no match exists.
 
 **Check automation traces** for execution history:
 - HA UI: Settings > Automations > find automation > three-dot menu > Traces
 - **MCP: `ha_get_automation_traces("automation.<name>")`** — preferred. Returns retained recent runs; pass a `run_id` for full step-by-step detail (trigger matched, conditions evaluated, actions executed).
-- CLI: `ha_cli trace` (no arg) — lists traces across ALL automations. `ha_cli trace automation.<name>` — fetch a specific automation's trace.
-- If no traces exist, there is no retained evidence; the trigger may not have fired or the trace may have expired
+- CLI: `uv run python tools/ha_cli.py trace` (no arg) — lists traces across ALL automations. `uv run python tools/ha_cli.py trace automation.<name>` — fetch a specific automation's trace.
+- YAML automations need a stable `id` for debug traces to be stored. If no traces exist, check the ID and trace retention before concluding that the trigger did not fire or the trace expired.
 - If traces show condition failure, read the condition values at that timestamp
 - **(HA 2026.7+, when supported by the running version)** Traces include template errors, so a clean trace means templates didn't error — not that templates weren't evaluated.
 
@@ -197,10 +197,11 @@ state: >
 ## Phase 4: Fix and Deploy
 
 1. **Propose minimal fix** - explain the change to user
-2. **Get approval** - don't fix without confirmation
-3. **Make targeted edit** - smallest change that fixes the issue
-4. **Validate:** `make validate`
-5. **Deploy:** `make push`
+2. **Protect local state:** run the `home-assistant-backup` pre-flight before editing
+3. **Get approval** - don't fix without confirmation
+4. **Make targeted edit** - smallest change that fixes the issue
+5. **Validate:** `make validate`
+6. **Deploy:** `make push`
 
 ## Debugging Workflow for Service Failures
 
@@ -227,13 +228,13 @@ This isolates whether the problem is:
 
 ## Direct HA API Access (Fallback)
 
-**Prefer MCP for normal debugging.** Use `ha_cli` when MCP is unavailable:
+**Prefer MCP for normal debugging.** Use the repository's explicit CLI form when MCP is unavailable:
 
 | Task | MCP (preferred) | ha_cli (fallback) |
 |------|-----------------|-------------------|
-| Check entity state | `ha_get_state("X", fields=["state","last_changed"])` | `ha_cli curl /api/states/X --pretty` |
-| Fetch automation trace | `ha_get_automation_traces("automation.X")` | `ha_cli trace automation.X` |
-| List all traces | No MCP equivalent | `ha_cli trace` (no arg) |
+| Check entity state | `ha_get_state("X", fields=["state","last_changed"])` | `uv run python tools/ha_cli.py curl /api/states/X --pretty` |
+| Fetch automation trace | `ha_get_automation_traces("automation.X")` | `uv run python tools/ha_cli.py trace automation.X` |
+| List all traces | No MCP equivalent | `uv run python tools/ha_cli.py trace` (no arg) |
 | Fetch system logs | `ha_get_logs(source="system", level="ERROR", limit=30)` | SSH `ha core logs`; `/api/logbook/...` is entity activity, not system logs |
 
 ### When New Entities Need a Reload
@@ -273,6 +274,14 @@ There is no supported validation-bypass target. Do not use an unfiltered `rsync`
 - Not explaining root cause to user
 
 **All of these mean: Go back to Phase 2 and trace the actual code.**
+
+## References
+
+- [Testing and troubleshooting automations](https://www.home-assistant.io/docs/automation/troubleshooting/)
+- [Automation YAML IDs and traces](https://www.home-assistant.io/docs/automation/yaml/)
+- [Home Assistant REST API](https://developers.home-assistant.io/docs/api/rest/)
+- [Home Assistant state trigger](https://www.home-assistant.io/triggers/state/)
+- [Home Assistant logs](https://www.home-assistant.io/integrations/logger/)
 
 ## Phase 5: Reflect & Learn
 

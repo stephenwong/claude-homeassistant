@@ -11,20 +11,20 @@ Do not automatically run `make pull`, `make backup`, `make push`, or other comma
 
 ## Required Input
 
-The user must provide a stable target version in `YYYY.M.P` form, such as `2026.8.1`.
+The user must provide a stable target version in `YYYY.M.P` form, such as `2026.8.1`. Resolve that exact version against the official Home Assistant Core releases/tags before calculating the range; an unpublished or nonexistent target is `BLOCKER`, not merely an unresolved low-confidence review.
 
 If no target is supplied, ask for it. Do not silently use the latest release.
 
 The current version is determined in this order:
 
 1. Read the live Home Assistant version with `ha_get_overview(fields=["system_info"])`.
-2. Fall back to `config/.HA_VERSION` if live Home Assistant is unavailable.
+2. Fall back to the read-only REST endpoint with `uv run python tools/ha_cli.py curl /api/config --pick version` if MCP is unavailable.
 3. If both sources exist and disagree, use the live version for the comparison and report the mismatch prominently.
-4. If neither source is available, ask the user for the current version and record it as user-provided evidence. Do not infer it from the target or silently use the latest release.
+4. If neither source is available, ask the user for the current version and record it as user-provided evidence. Do not infer it from a target, an unverified local snapshot, or silently use the latest release.
 
-Reject prereleases and malformed versions. If the target is not newer than the current version, report that there is no upgrade range instead of pretending to review one.
+Reject prerelease targets and malformed versions. If the current installation is itself a prerelease, state that the stable-release range is approximate and ask whether prerelease-specific notes should also be reviewed. If the target is not newer than the current version, report that there is no upgrade range instead of pretending to review one.
 
-Record the evidence source and retrieval timestamp for the current version. If the live version is unavailable and the local fallback is used, record the local file path and whether its freshness could be verified.
+Record the evidence source and retrieval timestamp for the current version using ISO 8601 with an explicit offset or UTC. If only user-provided evidence is available, record that fact and its uncertainty.
 
 ## Version Range
 
@@ -45,6 +45,7 @@ Use official Home Assistant sources only for release facts:
 
 - Release blog: `https://www.home-assistant.io/blog/`
 - Core changelog: `https://www.home-assistant.io/changelogs/core-YYYY.M`
+- Official Core stable releases/tags: `https://github.com/home-assistant/core/releases`
 - Integration documentation linked from the release blog
 - Home Assistant developer blog links included in the release blog
 
@@ -54,7 +55,7 @@ For each release family:
 
 1. Find the release blog from the official blog index by its `YYYY.M` title or `release-YYYYM` slug.
 2. Fetch the blog and its linked core changelog.
-3. Record the canonical URL, publication date, release title, and retrieval date.
+3. Record the canonical URL, publication date when resolved (otherwise `unavailable/unverified`), release title, and retrieval date.
 4. If the blog or changelog cannot be fetched, mark that release as unresolved and lower the confidence of the report. Do not claim that no breaking changes exist for an unresolved release.
 
 ## Release-Note Parsing
@@ -68,6 +69,7 @@ Extract these sections when present:
 - `Patch releases`: parse each `YYYY.M.P - Month day` subsection and include only versions inside the range.
 - `New integrations` and `Noteworthy improvements to existing integrations`.
 - `Other noteworthy changes`.
+- `(breaking-change)` and other compatibility markers in the core changelog as a secondary discovery signal; the dedicated release-blog section remains primary.
 - Developer-blog links listed near the backward-incompatible section.
 - `All changes`: use the core changelog to find relevant details, not as a substitute for the dedicated backward-incompatible section.
 
@@ -92,7 +94,7 @@ Use the live instance first:
 
 - `ha_get_overview` for system information and domain summaries
 - `ha_search` for affected integration names, entity IDs, properties, services, and configuration references
-- `ha_search_tools` to discover read-only tools for entities, devices, config entries, HACS repositories, add-ons, or integrations when the overview/search results are insufficient
+- `ha_search_tools` to discover tools for entities, devices, config entries, HACS repositories, add-ons, or integrations when the overview/search results are insufficient. Inspect annotations and use only tools/actions marked read-only; do not call install, update, skip, service, or other state-changing actions in this skill.
 - `ha_get_entity` to resolve an entity's platform and config entry
 - `ha_get_device` to resolve the owning device's integration, manufacturer, model, and related entities
 - `ha_get_integration` to confirm the state and options of the owning config entry
@@ -111,7 +113,7 @@ Do not infer an entity's owning integration from its domain, friendly name, or t
 
 1. Find the exact entity IDs with `ha_search` or a targeted state/entity query.
 2. Resolve each affected entity with `ha_get_entity` and, when it belongs to a device, `ha_get_device(entity_id=...)`.
-3. Use the returned `platform`, `integration_type`, `integration_sources`, and `config_entries` as the applicability evidence.
+3. Use the fields actually returned by the tool, such as `platform`, `device_id`, and singular `config_entry_id`, as applicability evidence; do not assume plural or deprecated registry fields.
 4. If necessary, inspect the owning config entry with `ha_get_integration(entry_id=...)`.
 
 For example, a Matter integration and two cover entities do not prove that the covers are Matter entities. Resolve both covers before attributing a Matter fix to them.
@@ -120,7 +122,7 @@ Capture the live evidence timestamp, or the report-generation timestamp when the
 
 ### Handle Partial Search Results
 
-Every `ha_search` response must be checked for `partial`, `partial_reason`, `warnings`, and `errors`. An empty result with `partial: True` is not evidence that no match exists.
+Every `ha_search` response must be checked immediately for `partial`, `partial_reason`, `warnings`, and `errors`. An empty result with `partial: True` is not evidence that no match exists. Paginate entity and configuration surfaces independently using their respective offsets.
 
 When configuration search is partial or skips YAML-defined automations:
 
@@ -150,7 +152,7 @@ Use these labels in the report:
 - `INFORMATIONAL`: relevant improvement or removal with no current impact or action
 - `UNKNOWN`: impact could not be determined because evidence was unavailable
 
-Do not call the upgrade safe solely because the dedicated breaking-change section has no matching item. State the coverage limits, especially for custom integrations and external add-ons.
+Aggregate overall risk by precedence: `BLOCKER > ACTION REQUIRED > ATTENTION > UNKNOWN > INFORMATIONAL`. Any `UNKNOWN` evidence prevents an unqualified "safe" conclusion. Do not call the upgrade safe solely because the dedicated breaking-change section has no matching item. State the coverage limits, especially for custom integrations and external add-ons.
 
 ## Feature Relevance
 
@@ -171,7 +173,7 @@ Write one report at:
 Create `working-docs/upgrades/` if needed. The report must contain:
 
 1. `Upgrade summary`: current version, target version, evidence source/timestamp, overall risk, and a short recommendation qualified by any incomplete evidence.
-2. `Coverage`: every release version reviewed, source URL, publication date, retrieval date, and unresolved sources.
+2. `Coverage`: every release version reviewed, source URL, publication date (or explicitly `unavailable/unverified`), retrieval date, and unresolved sources.
 3. `Breaking changes`: a table with release, item, applicability, risk, evidence, required action, a short release-note quote, and a source URL on every row.
 4. `Removed or deprecated items`: a distinct section covering integrations, properties, services, options, and replacements, even when the same item also appears in the breaking-changes table.
 5. `Relevant features`: instance-specific improvements, with `HIGH VALUE` highlights and ownership evidence for entity-specific features.
@@ -186,7 +188,7 @@ Use direct links and quote enough release-note text to make the conclusion audit
 Before completing the skill:
 
 - Confirm every version in the calculated range was attempted.
-- Confirm each release in `Coverage` has a publication date and retrieval date.
+- Confirm each resolved release in `Coverage` has a publication date and retrieval date. For an unresolved release, write `publication date: unavailable/unverified`, retain the retrieval timestamp, and lower report confidence; never infer a date.
 - Confirm the report includes a source URL and a release-note quote for every breaking-change finding.
 - Confirm the report has a distinct `Removed or deprecated items` section.
 - Confirm all `Confirmed` and `Likely` findings have evidence and a concrete action or verification.
@@ -194,7 +196,7 @@ Before completing the skill:
 - Confirm every entity-specific feature was matched to its owning platform/config entry before classification.
 - Confirm no local sync or deployment command was run by the skill; disclose any user-run `make pull` or backup used as context.
 - Confirm no configuration, `.storage` file, Home Assistant state, or deployment was modified.
-- Mention if the report is based on the local version fallback rather than live HA.
+- Mention if the report is based on REST or user-provided version evidence rather than live HA.
 - Use the `reflect` skill if the review uncovers a new Home Assistant compatibility gotcha.
 
 ## Common Mistakes
