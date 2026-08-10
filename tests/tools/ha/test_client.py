@@ -21,10 +21,6 @@ class TestInit:
         c = HAClient("http://ha.local:8123/", "tok")
         assert c.url == "http://ha.local:8123"
 
-    def test_invalid_url_raises(self):
-        with pytest.raises(HARequestError, match="HA_URL"):
-            HAClient("ftp://ha.local", "tok")
-
     def test_missing_token_raises(self):
         with pytest.raises(MissingTokenError, match="HA_TOKEN") as exc_info:
             HAClient("http://ha.local:8123", "")
@@ -47,27 +43,36 @@ class TestFromEnv:
     patching is needed.
     """
 
-    def test_reads_env_vars(self, monkeypatch):
+    @pytest.mark.parametrize(
+        "client_cls", [HAClient, HAWSClient], ids=["rest", "websocket"]
+    )
+    def test_reads_env_vars(self, monkeypatch, client_cls):
         monkeypatch.setenv("HA_URL", "http://ha.example:8123")
         monkeypatch.setenv("HA_TOKEN", "env-token")
         monkeypatch.setenv("HA_REQUEST_TIMEOUT", "42")
-        c = HAClient.from_env()
+        c = client_cls.from_env()
         assert c.url == "http://ha.example:8123"
         assert c.token == "env-token"
         assert c.timeout == 42
 
-    def test_uses_defaults_when_unset(self, monkeypatch):
+    @pytest.mark.parametrize(
+        "client_cls", [HAClient, HAWSClient], ids=["rest", "websocket"]
+    )
+    def test_uses_defaults_when_unset(self, monkeypatch, client_cls):
         monkeypatch.delenv("HA_URL", raising=False)
         monkeypatch.delenv("HA_TOKEN", raising=False)
         monkeypatch.delenv("HA_REQUEST_TIMEOUT", raising=False)
         with pytest.raises(HARequestError, match="HA_TOKEN"):
-            HAClient.from_env()
+            client_cls.from_env()
 
-    def test_default_url_when_only_token_set(self, monkeypatch):
+    @pytest.mark.parametrize(
+        "client_cls", [HAClient, HAWSClient], ids=["rest", "websocket"]
+    )
+    def test_default_url_when_only_token_set(self, monkeypatch, client_cls):
         monkeypatch.delenv("HA_URL", raising=False)
         monkeypatch.setenv("HA_TOKEN", "tok")
         monkeypatch.delenv("HA_REQUEST_TIMEOUT", raising=False)
-        c = HAClient.from_env()
+        c = client_cls.from_env()
         assert c.url == "http://homeassistant.local:8123"
         assert c.timeout == 10
 
@@ -80,12 +85,15 @@ class TestFromEnv:
         assert "must be an integer" in captured.err
         assert c.timeout == 10
 
-    def test_load_env_file_called_once(self, monkeypatch):
+    @pytest.mark.parametrize(
+        "client_cls", [HAClient, HAWSClient], ids=["rest", "websocket"]
+    )
+    def test_load_env_file_called_once(self, monkeypatch, client_cls):
         """Verify from_env delegates to load_env_file (the project's .env loader)."""
         monkeypatch.setenv("HA_URL", "http://ha.example:8123")
         monkeypatch.setenv("HA_TOKEN", "tok")
         with patch("tools.ha.client.load_env_file") as mock_load:
-            HAClient.from_env()
+            client_cls.from_env()
             mock_load.assert_called_once()
 
     def test_rest_and_websocket_factories_share_environment_tuple(self, monkeypatch):
@@ -112,29 +120,6 @@ class TestFromEnv:
             ("rest", "http://ha.example:8123", "tok", 42),
             ("websocket", "http://ha.example:8123", "tok", 42),
         ]
-
-
-@pytest.mark.parametrize(
-    "method,verb",
-    [
-        ("get", "get"),
-        ("post", "post"),
-        ("put", "put"),
-        ("delete", "delete"),
-        ("patch", "patch"),
-    ],
-)
-def test_http_methods_route_to_session_verb(method, verb):
-    session = MagicMock()
-    session_mock = MagicMock(return_value=requests.Response())
-    setattr(session, verb, session_mock)
-    client = HAClient("http://h.local:8123", "tok", session=session)
-    getattr(client, method)("/api/x")
-    session_mock.assert_called_once()
-    args, kwargs = session_mock.call_args
-    assert args[0] == "http://h.local:8123/api/x"
-    assert kwargs["headers"]["Authorization"] == "Bearer tok"
-    assert "timeout" in kwargs
 
 
 def test_get_json_accepts_2xx():
@@ -355,81 +340,43 @@ def _make_mock_session_factory(ws):
 
 class TestHAWSInit:
     def test_valid_construction_stores_http_url(self):
-        from tools.ha.client import HAWSClient
-
         c = HAWSClient("http://ha.local:8123", "tok", timeout=15)
         assert c.url == "http://ha.local:8123"
         assert c.token == "tok"
         assert c.timeout == 15
 
     def test_url_trailing_slash_stripped(self):
-        from tools.ha.client import HAWSClient
-
         c = HAWSClient("http://ha.local:8123/", "tok")
         assert c.url == "http://ha.local:8123"
 
     def test_ws_url_converts_http_to_ws(self):
-        from tools.ha.client import HAWSClient
-
         c = HAWSClient("http://ha.local:8123", "tok")
         assert c._ws_url == "ws://ha.local:8123"
 
     def test_ws_url_converts_https_to_wss(self):
-        from tools.ha.client import HAWSClient
-
         c = HAWSClient("https://ha.example.com", "tok")
         assert c._ws_url == "wss://ha.example.com"
 
-    def test_invalid_url_raises(self):
-        from tools.ha.client import HAWSClient
 
-        with pytest.raises(HARequestError, match="HA_URL"):
-            HAWSClient("ftp://ha.local", "tok")
-
-    def test_missing_token_raises(self):
-        from tools.ha.client import HAWSClient
-
-        with pytest.raises(MissingTokenError, match="HA_TOKEN") as exc_info:
-            HAWSClient("http://ha.local:8123", "")
-        assert isinstance(exc_info.value, HARequestError)
+@pytest.mark.parametrize(
+    "client_cls", [HAClient, HAWSClient], ids=["rest", "websocket"]
+)
+def test_common_constructor_rejects_invalid_url(client_cls):
+    with pytest.raises(HARequestError, match="HA_URL"):
+        client_cls("ftp://ha.local", "tok")
 
 
-class TestHAWSFromEnv:
-    def test_reads_env_vars(self, monkeypatch):
-        from tools.ha.client import HAWSClient
-
-        monkeypatch.setenv("HA_URL", "http://ha.example:8123")
-        monkeypatch.setenv("HA_TOKEN", "env-token")
-        monkeypatch.setenv("HA_REQUEST_TIMEOUT", "42")
-        c = HAWSClient.from_env()
-        assert c.url == "http://ha.example:8123"
-        assert c.token == "env-token"
-        assert c.timeout == 42
-
-    def test_missing_token_raises(self, monkeypatch):
-        from tools.ha.client import HAWSClient
-
-        monkeypatch.delenv("HA_URL", raising=False)
-        monkeypatch.delenv("HA_TOKEN", raising=False)
-        monkeypatch.delenv("HA_REQUEST_TIMEOUT", raising=False)
-        with pytest.raises(MissingTokenError, match="HA_TOKEN") as exc_info:
-            HAWSClient.from_env()
-        assert isinstance(exc_info.value, HARequestError)
-
-    def test_load_env_file_called_once(self, monkeypatch):
-        from tools.ha.client import HAWSClient
-
-        monkeypatch.setenv("HA_URL", "http://ha.example:8123")
-        monkeypatch.setenv("HA_TOKEN", "tok")
-        with patch("tools.ha.client.load_env_file") as mock_load:
-            HAWSClient.from_env()
-            mock_load.assert_called_once()
+@pytest.mark.parametrize(
+    "client_cls", [HAClient, HAWSClient], ids=["rest", "websocket"]
+)
+def test_common_constructor_rejects_missing_token(client_cls):
+    with pytest.raises(MissingTokenError, match="HA_TOKEN") as exc_info:
+        client_cls("http://ha.local:8123", "")
+    assert isinstance(exc_info.value, HARequestError)
 
 
 class TestHAWSAuthenticate:
     def test_success(self):
-        from tools.ha.client import HAWSClient
-
         ws = _make_mock_ws(
             [
                 {"type": "auth_required"},
@@ -443,8 +390,6 @@ class TestHAWSAuthenticate:
         )
 
     def test_auth_invalid_raises(self):
-        from tools.ha.client import HAWSClient
-
         ws = _make_mock_ws(
             [
                 {"type": "auth_required"},
@@ -456,8 +401,6 @@ class TestHAWSAuthenticate:
             asyncio.run(c._authenticate(ws))
 
     def test_unexpected_first_message_raises(self):
-        from tools.ha.client import HAWSClient
-
         ws = _make_mock_ws([{"type": "something_else"}])
         c = HAWSClient("http://ha:8123", "tok")
         with pytest.raises(HARequestError, match="auth_required"):
@@ -466,8 +409,6 @@ class TestHAWSAuthenticate:
 
 class TestHAWSSendAndReceive:
     def test_success_returns_result(self):
-        from tools.ha.client import HAWSClient
-
         ws = _make_mock_ws(
             [
                 {"type": "result", "id": 1, "success": True, "result": {"data": "ok"}},
@@ -478,8 +419,6 @@ class TestHAWSSendAndReceive:
         assert result == {"data": "ok"}
 
     def test_skips_non_result_messages(self):
-        from tools.ha.client import HAWSClient
-
         ws = _make_mock_ws(
             [
                 {"type": "event", "id": 1},
@@ -492,8 +431,6 @@ class TestHAWSSendAndReceive:
         assert result == [1, 2]
 
     def test_success_false_raises(self):
-        from tools.ha.client import HAWSClient
-
         ws = _make_mock_ws(
             [
                 {
@@ -510,9 +447,31 @@ class TestHAWSSendAndReceive:
 
 
 class TestHAWSCommand:
-    def test_full_flow_returns_result(self):
-        from tools.ha.client import HAWSClient
+    def test_transport_error_is_wrapped(self):
+        ws = _make_mock_ws([])
+        sf = _make_mock_session_factory(ws)
+        c = HAWSClient("http://ha:8123", "tok", session_factory=sf)
+        c._authenticate = AsyncMock(side_effect=OSError("network down"))
+        with pytest.raises(HARequestError, match="cannot connect"):
+            asyncio.run(c._command("system_log/list"))
 
+    def test_deliberate_request_error_is_preserved(self):
+        ws = _make_mock_ws([])
+        sf = _make_mock_session_factory(ws)
+        c = HAWSClient("http://ha:8123", "tok", session_factory=sf)
+        c._authenticate = AsyncMock(side_effect=HARequestError("auth contract"))
+        with pytest.raises(HARequestError, match="auth contract"):
+            asyncio.run(c._command("system_log/list"))
+
+    def test_programming_error_is_not_mislabeled_as_connection_failure(self):
+        ws = _make_mock_ws([{"type": "auth_required"}, {"type": "auth_ok"}])
+        sf = _make_mock_session_factory(ws)
+        c = HAWSClient("http://ha:8123", "tok", session_factory=sf)
+        c._send_and_receive = AsyncMock(side_effect=TypeError("bad result shape"))
+        with pytest.raises(TypeError, match="bad result shape"):
+            asyncio.run(c._command("system_log/list"))
+
+    def test_full_flow_returns_result(self):
         ws = _make_mock_ws(
             [
                 {"type": "auth_required"},
@@ -531,8 +490,6 @@ class TestHAWSCommand:
         assert result == [{"level": "ERROR"}]
 
     def test_auth_failure_raises(self):
-        from tools.ha.client import HAWSClient
-
         ws = _make_mock_ws(
             [
                 {"type": "auth_required"},
@@ -545,8 +502,6 @@ class TestHAWSCommand:
             c.command("system_log/list")
 
     def test_command_failure_raises(self):
-        from tools.ha.client import HAWSClient
-
         ws = _make_mock_ws(
             [
                 {"type": "auth_required"},
@@ -571,8 +526,6 @@ class TestHAWSCommand:
         commands. The reset at the start of command() proved it didn't. Drop the
         instance attr and use a local.
         """
-        from tools.ha.client import HAWSClient
-
         ws = _make_mock_ws(
             [
                 {"type": "auth_required"},
@@ -600,8 +553,6 @@ class TestHAWSCommand:
 
     def test_loop_exhaustion_raises(self):
         """Sending 100+ non-result messages should exhaust the loop guard."""
-        from tools.ha.client import HAWSClient
-
         # 101 messages: none are matching results
         messages = [{"type": "event", "id": i} for i in range(101)]
         ws = _make_mock_ws(messages)

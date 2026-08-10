@@ -28,16 +28,22 @@ class TestBuildParser:
             "trace",
         ]
 
-    def test_has_validate_subcommand(self):
+    @pytest.mark.parametrize(
+        ("argv", "expected"),
+        [
+            (["validate"], {"command": "validate"}),
+            (["reload"], {"command": "reload"}),
+            (["stale-sensors"], {"command": "stale-sensors"}),
+            (["curl", "/api/"], {"command": "curl", "endpoint": "/api/"}),
+            (["edit", "automations"], {"command": "edit", "file": "automations"}),
+            (["trace"], {"command": "trace"}),
+        ],
+    )
+    def test_registered_subcommand(self, argv, expected):
         parser = build_parser()
-        args = parser.parse_args(["validate"])
-        assert args.command == "validate"
-        assert callable(args.func)
-
-    def test_has_reload_subcommand(self):
-        parser = build_parser()
-        args = parser.parse_args(["reload"])
-        assert args.command == "reload"
+        args = parser.parse_args(argv)
+        for field, value in expected.items():
+            assert getattr(args, field) == value
         assert callable(args.func)
 
     def test_entities_removed(self):
@@ -45,34 +51,6 @@ class TestBuildParser:
         parser = build_parser()
         with pytest.raises(SystemExit):
             parser.parse_args(["entities"])
-
-    def test_has_stale_sensors_subcommand(self):
-        parser = build_parser()
-        args = parser.parse_args(["stale-sensors"])
-        assert args.command == "stale-sensors"
-        assert callable(args.func)
-
-    def test_has_curl_subcommand(self):
-        parser = build_parser()
-        args = parser.parse_args(["curl", "/api/"])
-        assert args.command == "curl"
-        assert args.endpoint == "/api/"
-        assert callable(args.func)
-
-    def test_has_edit_subcommand(self):
-        """L5: the edit subcommand is registered with a func callable."""
-        parser = build_parser()
-        args = parser.parse_args(["edit", "automations"])
-        assert args.command == "edit"
-        assert args.file == "automations"
-        assert callable(args.func)
-
-    def test_has_trace_subcommand(self):
-        """L5: the trace subcommand is registered."""
-        parser = build_parser()
-        args = parser.parse_args(["trace"])
-        assert args.command == "trace"
-        assert callable(args.func)
 
     def test_validate_accepts_config_flag(self):
         parser = build_parser()

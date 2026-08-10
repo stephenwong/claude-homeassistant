@@ -19,6 +19,19 @@ from tools.generate_changelog import (
 )
 
 
+@pytest.fixture(autouse=True)
+def clear_extract_files_cache():
+    """Prevent archive extraction cache state from leaking between tests."""
+    extract_files.cache_clear()
+    yield
+    extract_files.cache_clear()
+
+
+def _backup_record(path, filename, timestamp):
+    """Build the common backup metadata used by changelog tests."""
+    return {"path": path, "filename": filename, "timestamp": timestamp}
+
+
 @pytest.mark.parametrize(
     "path,expected",
     [
@@ -99,7 +112,6 @@ class TestExtractFiles:
     def test_same_path_not_re_extracted(self, tmp_path):
         """extract_files caches results so the same archive is only opened once."""
         tar_path = make_tar(tmp_path, {"config/test.yaml": "content\n"})
-        extract_files.cache_clear()
         with patch(
             "tools.generate_changelog.tarfile.open", wraps=tarfile.open
         ) as mock_open:
@@ -166,11 +178,11 @@ class TestGenerateChangelog:
 
     def test_initial_backup(self, tmp_path):
         tar_path = make_tar(tmp_path, {"config/test.yaml": "key: value\n"})
-        backup = {
-            "path": tar_path,
-            "filename": "ha_config_20260201_120000.tar.gz",
-            "timestamp": datetime(2026, 2, 1, 12, 0, 0),
-        }
+        backup = _backup_record(
+            tar_path,
+            "ha_config_20260201_120000.tar.gz",
+            datetime(2026, 2, 1, 12, 0, 0),
+        )
         content = generate_changelog(backup, None)
         assert "Initial backup" in content
         assert "config/test.yaml" in content
@@ -183,97 +195,45 @@ class TestGenerateChangelog:
         tar_path_1 = make_tar(sub1, {"config/test.yaml": "same"})
         tar_path_2 = make_tar(sub2, {"config/test.yaml": "same"})
 
-        prev = {
-            "path": tar_path_1,
-            "filename": "prev.tar.gz",
-            "timestamp": datetime(2026, 2, 1, 12, 0, 0),
-        }
-        curr = {
-            "path": tar_path_2,
-            "filename": "curr.tar.gz",
-            "timestamp": datetime(2026, 2, 2, 12, 0, 0),
-        }
+        prev = _backup_record(tar_path_1, "prev.tar.gz", datetime(2026, 2, 1, 12))
+        curr = _backup_record(tar_path_2, "curr.tar.gz", datetime(2026, 2, 2, 12))
         content = generate_changelog(curr, prev)
         assert "No changes detected" in content
 
     def test_modified_file(self, tmp_path):
-        tar_path_1 = tmp_path / "b1.tar.gz"
-        tar_path_2 = tmp_path / "b2.tar.gz"
+        tar_path_1 = make_tar(
+            tmp_path, {"config/test.yaml": "old content\n"}, name="b1.tar.gz"
+        )
+        tar_path_2 = make_tar(
+            tmp_path,
+            {"config/test.yaml": "new content\nmore lines\n"},
+            name="b2.tar.gz",
+        )
 
-        with tarfile.open(tar_path_1, "w:gz") as tar:
-            data = b"old content\n"
-            info = tarfile.TarInfo(name="config/test.yaml")
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
-
-        with tarfile.open(tar_path_2, "w:gz") as tar:
-            data = b"new content\nmore lines\n"
-            info = tarfile.TarInfo(name="config/test.yaml")
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
-
-        prev = {
-            "path": tar_path_1,
-            "filename": "prev.tar.gz",
-            "timestamp": datetime(2026, 2, 1, 12, 0, 0),
-        }
-        curr = {
-            "path": tar_path_2,
-            "filename": "curr.tar.gz",
-            "timestamp": datetime(2026, 2, 2, 12, 0, 0),
-        }
+        prev = _backup_record(tar_path_1, "prev.tar.gz", datetime(2026, 2, 1, 12))
+        curr = _backup_record(tar_path_2, "curr.tar.gz", datetime(2026, 2, 2, 12))
         content = generate_changelog(curr, prev)
         assert "M config/test.yaml" in content
 
     def test_added_file(self, tmp_path):
-        tar_path_1 = tmp_path / "b1.tar.gz"
-        tar_path_2 = tmp_path / "b2.tar.gz"
+        tar_path_1 = make_tar(tmp_path, {}, name="b1.tar.gz")
+        tar_path_2 = make_tar(
+            tmp_path, {"config/new.yaml": "new file\n"}, name="b2.tar.gz"
+        )
 
-        with tarfile.open(tar_path_1, "w:gz") as tar:
-            pass  # empty archive
-
-        with tarfile.open(tar_path_2, "w:gz") as tar:
-            data = b"new file\n"
-            info = tarfile.TarInfo(name="config/new.yaml")
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
-
-        prev = {
-            "path": tar_path_1,
-            "filename": "prev.tar.gz",
-            "timestamp": datetime(2026, 2, 1, 12, 0, 0),
-        }
-        curr = {
-            "path": tar_path_2,
-            "filename": "curr.tar.gz",
-            "timestamp": datetime(2026, 2, 2, 12, 0, 0),
-        }
+        prev = _backup_record(tar_path_1, "prev.tar.gz", datetime(2026, 2, 1, 12))
+        curr = _backup_record(tar_path_2, "curr.tar.gz", datetime(2026, 2, 2, 12))
         content = generate_changelog(curr, prev)
         assert "A config/new.yaml" in content
 
     def test_deleted_file(self, tmp_path):
-        tar_path_1 = tmp_path / "b1.tar.gz"
-        tar_path_2 = tmp_path / "b2.tar.gz"
+        tar_path_1 = make_tar(
+            tmp_path, {"config/old.yaml": "old file\n"}, name="b1.tar.gz"
+        )
+        tar_path_2 = make_tar(tmp_path, {}, name="b2.tar.gz")
 
-        with tarfile.open(tar_path_1, "w:gz") as tar:
-            data = b"old file\n"
-            info = tarfile.TarInfo(name="config/old.yaml")
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
-
-        with tarfile.open(tar_path_2, "w:gz") as tar:
-            pass  # empty archive
-
-        prev = {
-            "path": tar_path_1,
-            "filename": "prev.tar.gz",
-            "timestamp": datetime(2026, 2, 1, 12, 0, 0),
-        }
-        curr = {
-            "path": tar_path_2,
-            "filename": "curr.tar.gz",
-            "timestamp": datetime(2026, 2, 2, 12, 0, 0),
-        }
+        prev = _backup_record(tar_path_1, "prev.tar.gz", datetime(2026, 2, 1, 12))
+        curr = _backup_record(tar_path_2, "curr.tar.gz", datetime(2026, 2, 2, 12))
         content = generate_changelog(curr, prev)
         assert "D config/old.yaml" in content
 

@@ -7,6 +7,13 @@ import pytest
 
 from tests.helpers import parse_command_args
 from tools.commands import curl as curl_cmd
+from tools.commands.curl import (
+    _CurlError,
+    _CurlRequest,
+    _emit_output,
+    _execute_request,
+    _validate_args,
+)
 from tools.common import HARequestError
 from tools.ha.client import HAClient
 
@@ -1319,7 +1326,7 @@ class TestValidateArgs:
     """Direct unit tests for the extracted _validate_args helper.
 
     Pins the conflict checks and endpoint/method normalization that were
-    previously inlined in run().
+    previously inlined in run(); invalid combinations raise ``_CurlError``.
     """
 
     def _args(self, **overrides):
@@ -1327,53 +1334,39 @@ class TestValidateArgs:
         defaults.update(overrides)
         return make_args(**defaults)
 
-    def test_raw_and_pretty_returns_1(self):
-        from tools.commands.curl import _CurlError, _validate_args
-
+    def test_raw_and_pretty_raises_curl_error(self):
         args = self._args(raw=True, pretty=True)
         with pytest.raises(_CurlError, match="Cannot combine --raw with --pretty"):
             _validate_args(args, summary=False)
 
-    def test_pick_with_count_returns_1(self):
-        from tools.commands.curl import _CurlError, _validate_args
-
+    def test_pick_with_count_raises_curl_error(self):
         args = self._args(pick="state", count=True)
         with pytest.raises(_CurlError, match="Cannot combine --pick"):
             _validate_args(args, summary=False)
 
     def test_entity_sets_endpoint_and_forces_get(self):
-        from tools.commands.curl import _validate_args
-
         args = self._args(entity="sensor.foo")
         result = _validate_args(args, summary=False)
         assert result.method == "GET"
         assert result.endpoint == "/api/states/sensor.foo"
         assert args.endpoint is None
 
-    def test_entity_with_invalid_id_returns_1(self):
-        from tools.commands.curl import _CurlError, _validate_args
-
+    def test_entity_with_invalid_id_raises_curl_error(self):
         args = self._args(entity="not-an-entity-id")
         with pytest.raises(_CurlError, match="Invalid entity_id"):
             _validate_args(args, summary=False)
 
-    def test_domain_with_entity_returns_1(self):
-        from tools.commands.curl import _CurlError, _validate_args
-
+    def test_domain_with_entity_raises_curl_error(self):
         args = self._args(entity="sensor.foo", domain="light")
         with pytest.raises(_CurlError, match="Cannot combine --domain"):
             _validate_args(args, summary=False)
 
-    def test_missing_endpoint_returns_1(self):
-        from tools.commands.curl import _CurlError, _validate_args
-
+    def test_missing_endpoint_raises_curl_error(self):
         args = self._args()
         with pytest.raises(_CurlError, match="endpoint path is required"):
             _validate_args(args, summary=False)
 
     def test_explicit_endpoint_passthrough(self):
-        from tools.commands.curl import _validate_args
-
         args = self._args(endpoint="/api/services")
         request = _validate_args(args, summary=False)
         assert request.method == "GET"
@@ -1393,37 +1386,26 @@ class TestExecuteRequest:
         return client
 
     def test_get_calls_client_get(self):
-        from tools.commands.curl import _execute_request
-
         client = self._client()
         _execute_request(client, "GET", "/api/states", None)
         client.get.assert_called_once_with("/api/states")
 
     def test_post_calls_client_post_with_json(self):
-        from tools.commands.curl import _execute_request
-
         client = self._client()
         _execute_request(client, "POST", "/api/services/x/y", {"foo": 1})
         client.post.assert_called_once_with("/api/services/x/y", json={"foo": 1})
 
     def test_delete_passes_json_kwarg(self):
-        from tools.commands.curl import _execute_request
-
         client = self._client()
         _execute_request(client, "DELETE", "/api/x", None)
         client.delete.assert_called_once_with("/api/x", json=None)
 
-    def test_unknown_method_returns_1(self):
-        from tools.commands.curl import _CurlError, _execute_request
-
+    def test_unknown_method_raises_curl_error(self):
         client = self._client()
         with pytest.raises(_CurlError, match="Unknown HTTP method"):
             _execute_request(client, "HEAD", "/api/x", None)
 
-    def test_harequesterror_returns_1(self):
-        from tools.commands.curl import _CurlError, _execute_request
-        from tools.common import HARequestError
-
+    def test_harequesterror_raises_curl_error(self):
         client = MagicMock()
         client.get.side_effect = HARequestError("boom")
         with pytest.raises(_CurlError, match="boom"):
@@ -1434,11 +1416,7 @@ class TestEmitOutput:
     """Direct unit tests for the extracted _emit_output helper."""
 
     def test_count_handler_prints_length_and_returns_0(self, capsys):
-        from tools.commands.curl import _emit_output
-
         args = make_args(count=True, endpoint="/api/any")
-        from tools.commands.curl import _CurlRequest
-
         result = _emit_output(
             args,
             _CurlRequest("GET", "/api/any"),
@@ -1451,11 +1429,7 @@ class TestEmitOutput:
         assert capsys.readouterr().out.strip() == "3"
 
     def test_raw_handler_prints_raw_text(self, capsys):
-        from tools.commands.curl import _emit_output
-
         args = make_args(raw=True, endpoint="/api/any")
-        from tools.commands.curl import _CurlRequest
-
         result = _emit_output(
             args,
             _CurlRequest("GET", "/api/any"),

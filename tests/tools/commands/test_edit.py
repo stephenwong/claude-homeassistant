@@ -3,6 +3,7 @@
 from unittest.mock import patch
 
 import pytest
+import yaml
 
 from tests.helpers import make_parser, parse_command_args
 from tools.commands.edit import add_parser, run
@@ -31,37 +32,29 @@ class TestAddParser:
 
     def test_alias_positional_parsed_correctly(self):
         """edit <file> <alias> --show should parse alias as a positional."""
-        parser, subparsers = make_parser()
-        add_parser(subparsers)
-        args = parser.parse_args(["edit", "automations", "Turn on Alarm", "--show"])
+        args = parse_command_args(
+            "edit", add_parser, ["automations", "Turn on Alarm", "--show"]
+        )
         assert args.file == "automations"
         assert args.alias == "Turn on Alarm"
         assert args.show is True
 
     def test_config_dir_flag_defaults(self):
         """--config should default to 'config'."""
-        parser, subparsers = make_parser()
-        add_parser(subparsers)
-        args = parser.parse_args(["edit", "automations", "--show"])
+        args = parse_command_args("edit", add_parser, ["automations", "--show"])
         assert args.config == "config"
         assert args.file == "automations"
 
     def test_summary_flag_registered(self):
-        parser, subparsers = make_parser()
-        add_parser(subparsers)
-        args = parser.parse_args(["edit", "automations", "--summary"])
+        args = parse_command_args("edit", add_parser, ["automations", "--summary"])
         assert args.summary is True
 
     def test_no_summary_flag_registered(self):
-        parser, subparsers = make_parser()
-        add_parser(subparsers)
-        args = parser.parse_args(["edit", "automations", "--no-summary"])
+        args = parse_command_args("edit", add_parser, ["automations", "--no-summary"])
         assert args.no_summary is True
 
     def test_summary_defaults_false(self):
-        parser, subparsers = make_parser()
-        add_parser(subparsers)
-        args = parser.parse_args(["edit", "automations"])
+        args = parse_command_args("edit", add_parser, ["automations"])
         assert args.summary is False
         assert args.no_summary is False
 
@@ -71,6 +64,11 @@ def _write_file(cfg_dir, basename, content):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     return path
+
+
+def _read_yaml(config_dir, basename):
+    """Read one edited YAML document for serialization assertions."""
+    return yaml.safe_load((config_dir / f"{basename}.yaml").read_text(encoding="utf-8"))
 
 
 class TestDispatchByFiletype:
@@ -236,9 +234,7 @@ class TestRunSet:
 """,
         )
         run(self._args(tmp_path, alias="Target", kvs=["description=Updated"]))
-        import yaml
-
-        reloaded = yaml.safe_load((tmp_path / "automations.yaml").read_text())
+        reloaded = _read_yaml(tmp_path, "automations")
         assert reloaded[0]["description"] == "Updated"
 
     def test_set_missing_alias_returns_error(self, tmp_path, capsys):
@@ -272,9 +268,7 @@ class TestRunAdd:
                 json_str='{"alias":"New","id":"new_id","triggers":[],"conditions":[],"actions":[],"mode":"single"}',
             )
         )
-        import yaml
-
-        reloaded = yaml.safe_load((tmp_path / "automations.yaml").read_text())
+        reloaded = _read_yaml(tmp_path, "automations")
         assert len(reloaded) == 2
         assert reloaded[1]["alias"] == "New"
 
@@ -334,9 +328,7 @@ class TestRunRemove:
 """,
         )
         run(self._args(tmp_path, alias="Delete Me"))
-        import yaml
-
-        reloaded = yaml.safe_load((tmp_path / "automations.yaml").read_text())
+        reloaded = _read_yaml(tmp_path, "automations")
         assert len(reloaded) == 1
         assert reloaded[0]["alias"] == "Keep Me"
 
@@ -421,9 +413,7 @@ class TestEdgeCases:
         )
         result = run(args)
         assert result == 0
-        import yaml
-
-        data = yaml.safe_load((tmp_path / "automations.yaml").read_text())
+        data = _read_yaml(tmp_path, "automations")
         assert data[0]["alias"] == "New"
 
     def test_add_to_scripts_file(self, tmp_path):
@@ -436,9 +426,7 @@ class TestEdgeCases:
         )
         result = run(args)
         assert result == 0
-        import yaml
-
-        data = yaml.safe_load((tmp_path / "scripts.yaml").read_text())
+        data = _read_yaml(tmp_path, "scripts")
         assert isinstance(data, dict)
         assert "notify" in data
 
@@ -451,9 +439,7 @@ class TestEdgeCases:
         )
         result = run(args)
         assert result == 0
-        import yaml
-
-        data = yaml.safe_load((tmp_path / "scripts.yaml").read_text())
+        data = _read_yaml(tmp_path, "scripts")
         assert isinstance(data, dict)
         assert "notify" in data
 
@@ -491,9 +477,7 @@ morning:
         )
         result = run(args)
         assert result == 0
-        import yaml
-
-        data = yaml.safe_load((tmp_path / "scripts.yaml").read_text())
+        data = _read_yaml(tmp_path, "scripts")
         assert data["morning"]["description"] == "Updated"
 
     def test_remove_on_scripts_file(self, tmp_path):
@@ -518,9 +502,7 @@ delete:
         )
         result = run(args)
         assert result == 0
-        import yaml
-
-        data = yaml.safe_load((tmp_path / "scripts.yaml").read_text())
+        data = _read_yaml(tmp_path, "scripts")
         assert "delete" not in data
         assert "keep" in data
 

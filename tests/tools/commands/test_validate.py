@@ -1,13 +1,28 @@
 """Tests for tools/commands/validate.py — in-process validator runner."""
 
+import hashlib
 import json
 from argparse import Namespace
 from unittest.mock import patch
 
-from tests.helpers import make_parser
+from tests.helpers import parse_command_args
 from tools.commands import validate
 from tools.commands.validate import ValidatorResult, _run_one, run, run_validators
 from tools.validators.yaml import YAMLValidator
+
+_FAKE_VALIDATOR_SOURCE = "class YAMLValidator:\n    pass"
+
+
+def _fake_source_hash(source: str = _FAKE_VALIDATOR_SOURCE) -> str:
+    return hashlib.sha1("\n".join((source, source)).encode()).hexdigest()
+
+
+def _raise_value_error(*_args, **_kwargs):
+    raise ValueError("bug")
+
+
+def _raise_runtime_error(*_args, **_kwargs):
+    raise RuntimeError("boom")
 
 
 class TestValidatorResult:
@@ -145,22 +160,17 @@ class TestRunOne:
     def test_cache_hit_returns_cached_result(self, config_dir):
         """When file hash matches cache, validation is skipped.
         M1: fhash now includes source hash component — mock it too."""
-        import hashlib
-
         from tools.validators.yaml import YAMLValidator
 
-        fake_source = "class YAMLValidator:\n    pass"
-        fake_src_hash = hashlib.sha1(
-            "\n".join((fake_source, fake_source)).encode()
-        ).hexdigest()
-        hash_val = f"abc123:{fake_src_hash}"
+        hash_val = f"abc123:{_fake_source_hash()}"
         with (
             patch(
                 "tools.commands.validate._compute_hash_status",
                 return_value=("abc123", True),
             ),
             patch(
-                "tools.commands.validate.inspect.getsource", return_value=fake_source
+                "tools.commands.validate.inspect.getsource",
+                return_value=_FAKE_VALIDATOR_SOURCE,
             ),
             patch(
                 "tools.commands.validate.load_cache",
@@ -176,22 +186,17 @@ class TestRunOne:
 
     def test_cache_hit_preserves_saved_diagnostics(self, config_dir):
         """A cached pass retains diagnostics from its original validation."""
-        import hashlib
-
         from tools.validators.yaml import YAMLValidator
 
-        fake_source = "class YAMLValidator:\n    pass"
-        fake_src_hash = hashlib.sha1(
-            "\n".join((fake_source, fake_source)).encode()
-        ).hexdigest()
-        hash_val = f"abc123:{fake_src_hash}"
+        hash_val = f"abc123:{_fake_source_hash()}"
         with (
             patch(
                 "tools.commands.validate._compute_hash_status",
                 return_value=("abc123", True),
             ),
             patch(
-                "tools.commands.validate.inspect.getsource", return_value=fake_source
+                "tools.commands.validate.inspect.getsource",
+                return_value=_FAKE_VALIDATOR_SOURCE,
             ),
             patch(
                 "tools.commands.validate.load_cache",
@@ -261,23 +266,18 @@ class TestRunOne:
 
     def test_save_cache_called_on_success(self, config_dir):
         """On pass, result is cached (hash now includes source component)."""
-        import hashlib
-
         from tools.validators.yaml import YAMLValidator
 
-        fake_source = "class YAMLValidator:\n    pass"
-        fake_src_hash = hashlib.sha1(
-            "\n".join((fake_source, fake_source)).encode()
-        ).hexdigest()
         file_hash = "hash123"
-        combined_hash = f"{file_hash}:{fake_src_hash}"
+        combined_hash = f"{file_hash}:{_fake_source_hash()}"
         with (
             patch(
                 "tools.commands.validate._compute_hash_status",
                 return_value=(file_hash, True),
             ),
             patch(
-                "tools.commands.validate.inspect.getsource", return_value=fake_source
+                "tools.commands.validate.inspect.getsource",
+                return_value=_FAKE_VALIDATOR_SOURCE,
             ),
             patch("tools.commands.validate.load_cache", return_value=None),
             patch("tools.commands.validate.save_cache") as mock_save,
@@ -318,7 +318,7 @@ class TestRunOne:
         monkeypatch.setattr(
             mod,
             "_compute_hash_status",
-            lambda *a, **k: (_ for _ in ()).throw(ValueError("bug")),
+            _raise_value_error,
         )
         result = mod._run_one(YAMLValidator, "YAML", str(tmp_path), True, True)
         assert result.passed is False
@@ -338,7 +338,7 @@ class TestRunOne:
         monkeypatch.setattr(
             mod,
             "save_cache",
-            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
+            _raise_runtime_error,
         )
         result = mod._run_one(YAMLValidator, "YAML", str(tmp_path), True, False)
         assert result.passed is False
@@ -373,15 +373,11 @@ class TestRunOne:
 
         # Now mutate the perceived source of YAMLValidator — cache must miss.
         original_getsource = vmod.inspect.getsource
-        call_count = {"n": 0}
-
-        def fake_getsource(obj):
-            call_count["n"] += 1
-            return original_getsource(obj) + (
-                f" # edit {call_count['n']}" if call_count["n"] > 0 else ""
-            )
-
-        monkeypatch.setattr(vmod.inspect, "getsource", fake_getsource)
+        monkeypatch.setattr(
+            vmod.inspect,
+            "getsource",
+            lambda obj: original_getsource(obj) + " # changed",
+        )
         r3 = _run_one(YAMLValidator, "YAML", config_dir, quiet=True, force=False)
         assert not r3.cached, "validator source change must invalidate cache"
 
@@ -818,46 +814,32 @@ class TestRun:
 class TestAddParser:
     def test_subparser_registered_with_validate_name(self):
         """add_parser should register a 'validate' subcommand."""
-        parser, subparsers = make_parser()
-        validate.add_parser(subparsers)
-        args = parser.parse_args(["validate"])
+        args = parse_command_args("validate", validate.add_parser, [])
         assert args.command == "validate"
 
     def test_add_parser_attaches_run_func(self):
-        parser, subparsers = make_parser()
-        validate.add_parser(subparsers)
-        args = parser.parse_args(["validate"])
+        args = parse_command_args("validate", validate.add_parser, [])
         assert callable(args.func)
 
     def test_force_flag_defaults_false(self):
-        parser, subparsers = make_parser()
-        validate.add_parser(subparsers)
-        args = parser.parse_args(["validate"])
+        args = parse_command_args("validate", validate.add_parser, [])
         assert args.force is False
 
     def test_force_flag_set_true(self):
-        parser, subparsers = make_parser()
-        validate.add_parser(subparsers)
-        args = parser.parse_args(["validate", "--force"])
+        args = parse_command_args("validate", validate.add_parser, ["--force"])
         assert args.force is True
 
     def test_summary_flag_defaults_false(self):
-        parser, subparsers = make_parser()
-        validate.add_parser(subparsers)
-        args = parser.parse_args(["validate"])
+        args = parse_command_args("validate", validate.add_parser, [])
         assert args.summary is False
         assert args.no_summary is False
 
     def test_summary_flag_set_true(self):
-        parser, subparsers = make_parser()
-        validate.add_parser(subparsers)
-        args = parser.parse_args(["validate", "--summary"])
+        args = parse_command_args("validate", validate.add_parser, ["--summary"])
         assert args.summary is True
 
     def test_no_summary_flag_set_true(self):
-        parser, subparsers = make_parser()
-        validate.add_parser(subparsers)
-        args = parser.parse_args(["validate", "--no-summary"])
+        args = parse_command_args("validate", validate.add_parser, ["--no-summary"])
         assert args.no_summary is True
 
 

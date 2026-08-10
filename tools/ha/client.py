@@ -7,8 +7,7 @@ lived in `tools/reload_config.py` and `tools/ha_api_diagnostic.py`.
 import asyncio
 import os
 import sys
-from collections.abc import Callable
-from typing import Any
+from typing import Any, Protocol, cast
 
 import aiohttp
 import requests
@@ -21,6 +20,15 @@ from tools.common import (
     load_env_file,
     validate_ha_url,
 )
+
+DEFAULT_HA_TIMEOUT = 10
+_MAX_RESULT_MESSAGES = 100
+
+
+class _ClientConstructor[ClientT](Protocol):
+    """Callable constructor accepted by the shared environment factory."""
+
+    def __call__(self, url: str, token: str, *, timeout: int) -> ClientT: ...
 
 
 def _validate_connection(url: str, token: str) -> str:
@@ -45,13 +53,13 @@ def _env_config() -> tuple[str, str, int]:
     load_env_file()
     url = os.getenv("HA_URL", DEFAULT_HA_URL)
     token = os.getenv("HA_TOKEN", "")
-    timeout, warning = get_env_int("HA_REQUEST_TIMEOUT", 10)
+    timeout, warning = get_env_int("HA_REQUEST_TIMEOUT", DEFAULT_HA_TIMEOUT)
     if warning:
         print(f"\u26a0\ufe0f  {warning}", file=sys.stderr)
     return url, token, timeout
 
 
-def _client_from_env(client_cls: Callable[..., Any]) -> Any:
+def _client_from_env[ClientT](client_cls: _ClientConstructor[ClientT]) -> ClientT:
     """Construct a client class from the shared environment configuration."""
     url, token, timeout = _env_config()
     return client_cls(url, token, timeout=timeout)
@@ -65,7 +73,7 @@ class HAClient:
         url: str,
         token: str,
         *,
-        timeout: int = 10,
+        timeout: int = DEFAULT_HA_TIMEOUT,
         session: requests.Session | None = None,
     ):
         """Initialize the client.
@@ -98,7 +106,7 @@ class HAClient:
         only sets env vars that are present in the file, so calling it again
         later is safe.
         """
-        return _client_from_env(cls)
+        return _client_from_env(cast(_ClientConstructor[HAClient], cls))
 
     def close(self) -> None:
         """Close the underlying requests.Session, releasing pooled connections."""
@@ -186,7 +194,7 @@ class HAWSClient:
         url: str,
         token: str,
         *,
-        timeout: int = 10,
+        timeout: int = DEFAULT_HA_TIMEOUT,
         session_factory=None,
     ):
         self.url = _validate_connection(url, token)
@@ -197,7 +205,7 @@ class HAWSClient:
     @classmethod
     def from_env(cls) -> HAWSClient:
         """Construct a client from HA_URL/HA_TOKEN/HA_REQUEST_TIMEOUT."""
-        return _client_from_env(cls)
+        return _client_from_env(cast(_ClientConstructor[HAWSClient], cls))
 
     @property
     def _ws_url(self) -> str:
@@ -210,8 +218,8 @@ class HAWSClient:
     def command(self, command_type: str, **params: Any) -> Any:
         """Send a WebSocket command synchronously, return the result.
 
-        Raises HARequestError on connection failure, auth failure, or
-        command failure.
+        Raises HARequestError on transport, auth, or command failure.
+        Unexpected programming errors are allowed to propagate for diagnosis.
         """
         return asyncio.run(self._command(command_type, **params))
 
@@ -230,7 +238,7 @@ class HAWSClient:
             ):
                 await self._authenticate(ws)
                 return await self._send_and_receive(ws, command_type, **params)
-        except (OSError, aiohttp.ClientError, ValueError, TypeError, RuntimeError) as e:
+        except (OSError, aiohttp.ClientError) as e:
             raise HARequestError(
                 f"cannot connect to HA WebSocket at {self._ws_url}: {e}"
             ) from e
@@ -260,7 +268,7 @@ class HAWSClient:
         msg_id = 1
         await ws.send_json({"id": msg_id, "type": command_type, **params})
 
-        for _ in range(100):
+        for _ in range(_MAX_RESULT_MESSAGES):
             msg = await ws.receive_json()
             if msg.get("type") == "result" and msg.get("id") == msg_id:
                 if not msg.get("success", False):

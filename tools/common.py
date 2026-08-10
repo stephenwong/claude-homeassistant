@@ -151,14 +151,9 @@ def resolve_max_chars(args: argparse.Namespace, summary: bool) -> int | None:
     if explicit is not None:
         return explicit if explicit > 0 else None
 
-    env_val = os.getenv("HA_CLI_MAX_CHARS")
-    if env_val:
-        try:
-            n = int(env_val)
-            if n > 0:
-                return n
-        except ValueError:
-            pass
+    env_val, _warning = get_env_int("HA_CLI_MAX_CHARS", 0)
+    if env_val > 0:
+        return env_val
 
     if summary:
         return DEFAULT_SUMMARY_MAX_CHARS

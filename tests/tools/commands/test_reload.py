@@ -3,7 +3,7 @@
 from argparse import Namespace
 from unittest.mock import patch
 
-from tests.helpers import make_parser
+from tests.helpers import make_parser, parse_command_args
 from tools.commands import reload as reload_cmd
 
 
@@ -16,21 +16,15 @@ class TestAddParser:
         assert callable(args.func)
 
     def test_summary_flag_registered(self):
-        parser, subparsers = make_parser()
-        reload_cmd.add_parser(subparsers)
-        args = parser.parse_args(["reload", "--summary"])
+        args = parse_command_args("reload", reload_cmd.add_parser, ["--summary"])
         assert args.summary is True
 
     def test_no_summary_flag_registered(self):
-        parser, subparsers = make_parser()
-        reload_cmd.add_parser(subparsers)
-        args = parser.parse_args(["reload", "--no-summary"])
+        args = parse_command_args("reload", reload_cmd.add_parser, ["--no-summary"])
         assert args.no_summary is True
 
     def test_summary_defaults_false(self):
-        parser, subparsers = make_parser()
-        reload_cmd.add_parser(subparsers)
-        args = parser.parse_args(["reload"])
+        args = parse_command_args("reload", reload_cmd.add_parser, [])
         assert args.summary is False
         assert args.no_summary is False
 

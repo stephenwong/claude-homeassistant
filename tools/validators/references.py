@@ -4,7 +4,6 @@
 Validates that all entity references in configuration files actually exist.
 """
 
-import json
 import re
 import sys
 from collections.abc import Callable
@@ -129,9 +128,14 @@ class ReferenceValidator(ValidatorBase):
         return [
             "*.yaml",
             "*.yml",
-            ".storage/core.entity_registry",
-            ".storage/core.device_registry",
-            ".storage/core.area_registry",
+            *[
+                f".storage/{spec.filename}"
+                for spec in (
+                    _ENTITY_REGISTRY_SPEC,
+                    _DEVICE_REGISTRY_SPEC,
+                    _AREA_REGISTRY_SPEC,
+                )
+            ],
             ".storage/core.zone",
             ".storage/core.restore_state",
         ]
@@ -172,13 +176,7 @@ class ReferenceValidator(ValidatorBase):
             result = load_storage_registry(
                 registry_file, list_key=spec.list_key, key_field=spec.key_field
             )
-        except (
-            OSError,
-            json.JSONDecodeError,
-            KeyError,
-            TypeError,
-            ValueError,
-        ) as e:
+        except (OSError, KeyError, TypeError, ValueError) as e:
             bucket.append(f"Failed to load {spec.label.lower()}: {e}")
             setattr(self, spec.cache_attr, {})
             return {}
@@ -204,7 +202,7 @@ class ReferenceValidator(ValidatorBase):
     _UUID_NAKED_RE = re.compile(r"^[0-9a-fA-F]{32}$")
 
     def is_uuid_format(self, value: str) -> bool:
-        """Check if a string matches UUID format (32 hex characters)."""
+        """Check if a string is a dashed or naked 32-hex-character UUID."""
         return bool(self._UUID_RE.match(value) or self._UUID_NAKED_RE.match(value))
 
     def is_template(self, value: str) -> bool:
@@ -252,35 +250,13 @@ class ReferenceValidator(ValidatorBase):
 
     def extract_entity_references(self, data: Any) -> set[str]:
         """Extract entity references from configuration data."""
-        entities = set()
-
-        if isinstance(data, dict):
-            for key, value in data.items():
-                # Common entity reference keys
-                if key in ["entity_id", "entity_ids", "entities"]:
-                    entities.update(
-                        self._collect_string_values(
-                            value, skip=self.should_skip_entity_validation
-                        )
-                    )
-
-                # Device/area IDs — handled by separate extractors
-                elif key in ["device_id", "device_ids", "area_id", "area_ids"]:
-                    pass
-
-                # Templates might contain entity references
-                elif isinstance(value, str) and is_jinja_template(value):
-                    entities.update(self.extract_entities_from_template(value))
-
-                # Recursive search
-                else:
-                    entities.update(self.extract_entity_references(value))
-
-        elif isinstance(data, list):
-            for item in data:
-                entities.update(self.extract_entity_references(item))
-
-        return entities
+        return self._walk_references(
+            data,
+            keys={"entity_id", "entity_ids", "entities"},
+            skip=self.should_skip_entity_validation,
+            template_callback=self.extract_entities_from_template,
+            skip_keys={"device_id", "device_ids", "area_id", "area_ids"},
+        )
 
     def extract_entities_from_template(self, template: str) -> set[str]:
         """Extract entity references from Jinja2 templates."""
@@ -301,16 +277,53 @@ class ReferenceValidator(ValidatorBase):
         skip: Callable[[str], bool],
     ) -> set[str]:
         """Extract references for any of *keys* (e.g. {'device_id', 'device_ids'})."""
+        return self._walk_references(data, keys=keys, skip=skip)
+
+    def _walk_references(
+        self,
+        data: Any,
+        *,
+        keys: set[str],
+        skip: Callable[[str], bool],
+        template_callback: Callable[[str], set[str]] | None = None,
+        skip_keys: set[str] | None = None,
+    ) -> set[str]:
+        """Recursively collect string references from matching configuration keys."""
         refs: set[str] = set()
+        skip_keys = skip_keys or set()
         if isinstance(data, dict):
             for key, value in data.items():
                 if key in keys:
                     refs.update(self._collect_string_values(value, skip=skip))
+                elif key in skip_keys:
+                    continue
+                elif (
+                    template_callback is not None
+                    and isinstance(value, str)
+                    and is_jinja_template(value)
+                ):
+                    refs.update(template_callback(value))
                 else:
-                    refs.update(self._extract_id_references(value, keys, skip=skip))
+                    refs.update(
+                        self._walk_references(
+                            value,
+                            keys=keys,
+                            skip=skip,
+                            template_callback=template_callback,
+                            skip_keys=skip_keys,
+                        )
+                    )
         elif isinstance(data, list):
             for item in data:
-                refs.update(self._extract_id_references(item, keys, skip=skip))
+                refs.update(
+                    self._walk_references(
+                        item,
+                        keys=keys,
+                        skip=skip,
+                        template_callback=template_callback,
+                        skip_keys=skip_keys,
+                    )
+                )
         return refs
 
     def extract_device_references(self, data: Any) -> set[str]:
@@ -330,7 +343,7 @@ class ReferenceValidator(ValidatorBase):
         )
 
     def extract_entity_registry_ids(self, data: Any) -> set[str]:
-        """Extract entity registry UUID references from configuration data."""
+        """Extract dashed or naked entity-registry UUID references."""
         return self._extract_id_references(
             data,
             {"entity_id", "entity_ids"},
@@ -576,18 +589,16 @@ class ReferenceValidator(ValidatorBase):
 
         if self.summary:
             if self.errors:
-                print("FAIL Entity/device references")
-                diagnostics = format_diagnostics(self.errors, self.warnings)
-                if diagnostics:
-                    for line in diagnostics.splitlines():
-                        print(f"  {line}", file=sys.stderr)
+                status = "FAIL Entity/device references"
             elif self.warnings:
-                print("PASS Entity/device references (with warnings)")
-                diagnostics = format_diagnostics([], self.warnings)
+                status = "PASS Entity/device references (with warnings)"
+            else:
+                status = "PASS Entity/device references"
+            print(status)
+            diagnostics = format_diagnostics(self.errors, self.warnings)
+            if diagnostics:
                 for line in diagnostics.splitlines():
                     print(f"  {line}", file=sys.stderr)
-            else:
-                print("PASS Entity/device references")
             return
 
         super().print_results()

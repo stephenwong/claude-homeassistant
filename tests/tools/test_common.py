@@ -2,8 +2,6 @@
 
 import argparse
 import os
-import shutil
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -59,7 +57,7 @@ def test_load_env_file_parses(content, key, expected, tmp_path, monkeypatch):
     fake.parent.mkdir()
     fake.touch()
     monkeypatch.setattr(tools_common, "__file__", str(fake))
-    monkeypatch.setattr("os.environ", {})
+    monkeypatch.delenv(key, raising=False)
     load_env_file()
     assert os.environ.get(key) == expected
 
@@ -324,12 +322,9 @@ class TestValidatorBase:
         assert v.validate_all() is False
         assert any("does not exist" in e for e in v.errors)
 
-    def setup_method(self):
-        self.temp_dir = tempfile.mkdtemp()
-        self.config_dir = Path(self.temp_dir)
-
-    def teardown_method(self):
-        shutil.rmtree(self.temp_dir)
+    @pytest.fixture(autouse=True)
+    def _config_dir(self, tmp_path):
+        self.config_dir = Path(tmp_path)
 
     def test_init_sets_defaults(self):
         v = _ConcreteValidator(str(self.config_dir))

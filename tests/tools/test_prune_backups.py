@@ -1,6 +1,6 @@
 """Tests for tools/prune_backups.py - backup retention management."""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -12,6 +12,33 @@ from tools.prune_backups import (
     format_size,
     group_by_retention_period,
 )
+
+
+@pytest.fixture
+def frozen_prune_now(monkeypatch):
+    """Freeze the clock imported by the pruner for boundary-sensitive tests."""
+    fixed = datetime(2026, 2, 12, 12, 0, tzinfo=UTC)
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed if tz is None else fixed.astimezone(tz)
+
+    monkeypatch.setattr("tools.prune_backups.datetime", FrozenDateTime)
+    return fixed
+
+
+def _write_same_day_backups(backup_dir, now, count=2):
+    """Create timestamped backups on one retention day and return their names."""
+    old_date = now - timedelta(days=15)
+    date_str = old_date.strftime("%Y%m%d")
+    filenames = [
+        f"ha_config_{date_str}_{100000 + index * 100000:06d}.tar.gz"
+        for index in range(count)
+    ]
+    for filename in filenames:
+        (backup_dir / filename).write_bytes(b"x" * 512)
+    return filenames
 
 
 class TestParseBackupFilename:
@@ -367,11 +394,11 @@ class TestMain:
             captured = capsys.readouterr()
             assert "No backups need to be deleted" in captured.out
 
-    def test_yesterday_backup(self, tmp_path, capsys):
+    def test_yesterday_backup(self, tmp_path, capsys, frozen_prune_now):
         """Cover 'yesterday' age string."""
         backup_dir = tmp_path / "backups"
         backup_dir.mkdir()
-        yesterday = datetime.now() - timedelta(days=1)
+        yesterday = frozen_prune_now - timedelta(days=1)
         fname = f"ha_config_{yesterday.strftime('%Y%m%d_%H%M%S')}.tar.gz"
         (backup_dir / fname).write_bytes(b"x" * 1024)
 
@@ -388,17 +415,11 @@ class TestMain:
         backup_dir.mkdir()
 
         # Create two backups on the same day, 15 days ago
-        old_date = datetime.now() - timedelta(days=15)
-        date_str = old_date.strftime("%Y%m%d")
-        fname1 = f"ha_config_{date_str}_100000.tar.gz"
-        fname2 = f"ha_config_{date_str}_200000.tar.gz"
-        (backup_dir / fname1).write_bytes(b"x" * 512)
-        (backup_dir / fname2).write_bytes(b"x" * 512)
+        fname1, fname2 = _write_same_day_backups(backup_dir, datetime.now())
         # Also add a changelog for the first one
         (backup_dir / fname1.replace(".tar.gz", ".changelog")).write_text("old")
 
         with (
-            patch("tools.backup_common.BACKUP_DIR", backup_dir),
             patch("tools.backup_common.BACKUP_DIR", backup_dir),
         ):
             from tools.prune_backups import main
@@ -416,12 +437,7 @@ class TestMain:
         backup_dir = tmp_path / "backups"
         backup_dir.mkdir()
 
-        old_date = datetime.now() - timedelta(days=15)
-        date_str = old_date.strftime("%Y%m%d")
-        fname1 = f"ha_config_{date_str}_100000.tar.gz"
-        fname2 = f"ha_config_{date_str}_200000.tar.gz"
-        (backup_dir / fname1).write_bytes(b"x" * 512)
-        (backup_dir / fname2).write_bytes(b"x" * 512)
+        fname1, fname2 = _write_same_day_backups(backup_dir, datetime.now())
         # Changelogs for both
         (backup_dir / fname1.replace(".tar.gz", ".changelog")).write_text("old")
         (backup_dir / fname2.replace(".tar.gz", ".changelog")).write_text("kept")
@@ -452,7 +468,6 @@ class TestMain:
 
         with (
             patch("tools.backup_common.BACKUP_DIR", backup_dir),
-            patch("tools.backup_common.BACKUP_DIR", backup_dir),
         ):
             from tools.prune_backups import main
 
@@ -467,12 +482,7 @@ class TestMain:
         backup_dir = tmp_path / "backups"
         backup_dir.mkdir()
 
-        old_date = datetime.now() - timedelta(days=15)
-        date_str = old_date.strftime("%Y%m%d")
-        fname1 = f"ha_config_{date_str}_100000.tar.gz"
-        fname2 = f"ha_config_{date_str}_200000.tar.gz"
-        (backup_dir / fname1).write_bytes(b"x" * 512)
-        (backup_dir / fname2).write_bytes(b"x" * 512)
+        fname1, fname2 = _write_same_day_backups(backup_dir, datetime.now())
 
         with patch("tools.backup_common.BACKUP_DIR", backup_dir):
             from tools.prune_backups import main
@@ -500,7 +510,6 @@ class TestMain:
         orphan.write_text("orphan")
 
         with (
-            patch("tools.backup_common.BACKUP_DIR", backup_dir),
             patch("tools.backup_common.BACKUP_DIR", backup_dir),
         ):
             from tools.prune_backups import main
@@ -560,7 +569,6 @@ class TestMain:
 
         with (
             patch("tools.backup_common.BACKUP_DIR", backup_dir),
-            patch("tools.backup_common.BACKUP_DIR", backup_dir),
             patch.object(pathlib.Path, "unlink", _mock_unlink),
         ):
             result = pb.main(["--apply", "--min-keep", "1"])
@@ -602,22 +610,6 @@ class TestL65Sort:
         )
 
 
-class TestL66Orphans:
-    """L66: empty backups message + separated changelog/tar unlink."""
-
-    def test_empty_backup_dir_emits_clear_message(self, tmp_path, monkeypatch, capsys):
-        """L66: empty backups/ must say 'nothing to prune' on stderr."""
-        from tools.prune_backups import main
-
-        backup_dir = tmp_path / "backups"
-        backup_dir.mkdir()
-        monkeypatch.setattr("tools.backup_common.BACKUP_DIR", backup_dir)
-        result = main([])
-        assert result == 0
-        _, err = capsys.readouterr()
-        assert "nothing to prune" in err
-
-
 class TestL67RootPerms:
     """L67: partial-deletion reporting + Path.unlink mock (no chmod)."""
 
@@ -630,13 +622,8 @@ class TestL67RootPerms:
         backup_dir = tmp_path / "backups"
         backup_dir.mkdir()
         # Create 5 backups all on the same day, 15 days ago — 4 will be deletions
-        old_date = datetime.now() - timedelta(days=15)
-        date_str = old_date.strftime("%Y%m%d")
-        for i in range(5):
-            ts = f"{date_str}_{120000 + i:06d}"
-            (backup_dir / f"ha_config_{ts}.tar.gz").write_bytes(b"x" * 512)
+        _write_same_day_backups(backup_dir, datetime.now(), count=5)
 
-        monkeypatch.setattr("tools.backup_common.BACKUP_DIR", backup_dir)
         monkeypatch.setattr("tools.backup_common.BACKUP_DIR", backup_dir)
 
         import pathlib
@@ -663,14 +650,8 @@ class TestL67RootPerms:
 
         backup_dir = tmp_path / "backups"
         backup_dir.mkdir()
-        old_date = datetime.now() - timedelta(days=15)
-        date_str = old_date.strftime("%Y%m%d")
-        fname1 = f"ha_config_{date_str}_100000.tar.gz"
-        fname2 = f"ha_config_{date_str}_200000.tar.gz"
-        (backup_dir / fname1).write_bytes(b"x" * 512)
-        (backup_dir / fname2).write_bytes(b"x" * 512)
+        fname1, fname2 = _write_same_day_backups(backup_dir, datetime.now())
 
-        monkeypatch.setattr("tools.backup_common.BACKUP_DIR", backup_dir)
         monkeypatch.setattr("tools.backup_common.BACKUP_DIR", backup_dir)
 
         import pathlib

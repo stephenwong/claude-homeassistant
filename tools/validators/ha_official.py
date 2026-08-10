@@ -27,12 +27,8 @@ _IGNORABLE_STDOUT_SUBSTRINGS = (
     "TurboJPEGSingleton",
     "selector']['reorder']",
     "Traceback (most recent call last):",
-    "Unable to install package",
-    "No solution found when resolving",
-    "requirements are unsatisfiable",
-    "Requirements for",
     "could not be loaded",
-)
+) + _BENIGN_PACKAGE_INSTALL_MARKERS
 
 
 class HAOfficialValidator(ValidatorBase):

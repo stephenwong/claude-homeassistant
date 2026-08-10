@@ -435,6 +435,7 @@ For Python scripts and tests, import from the package directly:
 
 ```python
 from tools.ha.client import HAClient              # REST API client
+from tools.ha.client import HAWSClient             # WebSocket API client
 from tools.ha.yaml_editor import YAMLEditor        # Round-trip YAML editing
 from tools.output_shape import apply_output_shape # --first/--pick/--max-chars
 from tools.common import positive_int             # argparse type validators
@@ -448,6 +449,7 @@ from tools.validators.stale_sensors import StaleSensorValidator
 ```
 
 `HAClient` is constructed via `HAClient.from_env()` (reads `.env` for `HA_TOKEN`/`HA_URL`). OpenCode reads the MCP URL from the ignored `.ha-mcp-url` file referenced by `opencode.json`.
+`HAWSClient` translates transport failures into `HARequestError`; deliberate API errors and unexpected programming errors propagate for diagnosis.
 
 ## 🤖 AI Assistant Integration
 

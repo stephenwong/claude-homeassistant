@@ -72,6 +72,8 @@ doubles latency (~200ms Python-startup per `ha_cli` call) and tokens.
 **Golden rule:** discovery + state reads → **MCP**; edits + validation + deploy
 → **`ha_cli`**. Programmatic access: `from tools.ha.client import HAClient`.
 
+`HAWSClient` translates transport failures into `HARequestError`; deliberate API errors and unexpected programming errors propagate for diagnosis.
+
 ```mermaid
 flowchart TD
     start{"What do you<br/>need to do?"}

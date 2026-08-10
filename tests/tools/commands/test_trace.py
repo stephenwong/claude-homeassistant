@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tests.helpers import make_parser
+from tests.helpers import make_parser, parse_command_args
 from tools.commands import trace as trace_cmd
 from tools.common import HARequestError
 
@@ -70,6 +70,28 @@ def mock_client():
         mock_rest_from_env.return_value = rest_client
         client.rest_client = rest_client
         yield client
+
+
+def _configure_single_trace(mock_client, trace, item_id="test"):
+    """Configure the shared list/get response for a single-trace test."""
+    mock_client.command.side_effect = [
+        [{"item_id": item_id, "run_id": "r1"}],
+        trace,
+    ]
+
+
+def _iter_changed_variables(data):
+    """Yield well-formed changed-variable mappings from a shaped trace."""
+    trace = data.get("trace", {})
+    for entries in trace.values():
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            changed_variables = entry.get("changed_variables")
+            if isinstance(changed_variables, dict):
+                yield changed_variables
 
 
 SAMPLE_TRACES = [
@@ -164,21 +186,15 @@ class TestAddParser:
         assert args.entity_id is None
 
     def test_registered_with_entity(self):
-        parser, subparsers = make_parser()
-        trace_cmd.add_parser(subparsers)
-        args = parser.parse_args(["trace", "automation.foo"])
+        args = parse_command_args("trace", trace_cmd.add_parser, ["automation.foo"])
         assert args.entity_id == "automation.foo"
 
     def test_has_first_flag(self):
-        parser, subparsers = make_parser()
-        trace_cmd.add_parser(subparsers)
-        args = parser.parse_args(["trace", "--first", "5"])
+        args = parse_command_args("trace", trace_cmd.add_parser, ["--first", "5"])
         assert args.first == 5
 
     def test_has_summary_flags(self):
-        parser, subparsers = make_parser()
-        trace_cmd.add_parser(subparsers)
-        args = parser.parse_args(["trace", "--summary"])
+        args = parse_command_args("trace", trace_cmd.add_parser, ["--summary"])
         assert args.summary is True
 
 
@@ -198,7 +214,7 @@ class TestRun:
         assert len(parsed) == 2
         assert "    " not in out  # compact
 
-    def test_list_mode_calls_trace_list(self, mock_client, capsys):
+    def test_list_mode_calls_trace_list(self, mock_client):
         mock_client.command.return_value = []
         args = make_args()
         trace_cmd.run(args)
@@ -489,92 +505,62 @@ class TestSummaryModeSingle:
 
     def test_summary_strips_this_attributes(self, mock_client, capsys):
         """Summary mode strips changed_variables.this.attributes."""
-        mock_client.command.side_effect = [
-            [{"item_id": "test", "run_id": "r1"}],
-            self.FULL_TRACE,
-        ]
+        _configure_single_trace(mock_client, self.FULL_TRACE)
         args = make_args(entity_id="automation.test", summary=True, no_summary=False)
         assert trace_cmd.run(args) == 0
         result = json.loads(capsys.readouterr().out)
-        trace = result.get("trace", {})
-        for entries in trace.values():
-            if isinstance(entries, list):
-                for entry in entries:
-                    cv = entry.get("changed_variables") or {}
-                    this = cv.get("this") or {}
-                    assert "attributes" not in this, (
-                        f"this.attributes should be stripped: {this}"
-                    )
-                    # Should keep entity_id and state
-                    if "entity_id" in this:
-                        assert this["entity_id"] == "automation.test"
+        for cv in _iter_changed_variables(result):
+            this = cv.get("this") or {}
+            assert "attributes" not in this, (
+                f"this.attributes should be stripped: {this}"
+            )
+            if "entity_id" in this:
+                assert this["entity_id"] == "automation.test"
 
     def test_summary_strips_all_attributes_in_changed_variables(
         self, mock_client, capsys
     ):
         """Summary strips .attributes from ALL changed_variables, not just this."""
-        mock_client.command.side_effect = [
-            [{"item_id": "test", "run_id": "r1"}],
-            self.FULL_TRACE,
-        ]
+        _configure_single_trace(mock_client, self.FULL_TRACE)
         args = make_args(entity_id="automation.test", summary=True, no_summary=False)
         assert trace_cmd.run(args) == 0
         result = json.loads(capsys.readouterr().out)
-        trace = result.get("trace", {})
-        for entries in trace.values():
-            if isinstance(entries, list):
-                for entry in entries:
-                    cv = entry.get("changed_variables") or {}
-                    for key, val in cv.items():
-                        if isinstance(val, dict):
-                            assert "attributes" not in val, (
-                                f"{key}.attributes stripped in summary: {val}"
-                            )
-                            # entity_id / state survive for debugging context
+        for cv in _iter_changed_variables(result):
+            for key, val in cv.items():
+                if isinstance(val, dict):
+                    assert "attributes" not in val, (
+                        f"{key}.attributes stripped in summary: {val}"
+                    )
 
     def test_no_summary_keeps_all_attributes_in_changed_variables(
         self, mock_client, capsys
     ):
         """Verbose keeps .attributes in ALL changed_variables, not just this."""
-        mock_client.command.side_effect = [
-            [{"item_id": "test", "run_id": "r1"}],
-            self.FULL_TRACE,
-        ]
+        _configure_single_trace(mock_client, self.FULL_TRACE)
         args = make_args(entity_id="automation.test")
         assert trace_cmd.run(args) == 0
         result = json.loads(capsys.readouterr().out)
-        trace = result.get("trace", {})
         attrs_found = {"this": False, "trigger": False, "other_var": False}
-        for entries in trace.values():
-            if isinstance(entries, list):
-                for entry in entries:
-                    cv = entry.get("changed_variables") or {}
-                    for key in attrs_found:
-                        val = cv.get(key)
-                        if isinstance(val, dict) and "attributes" in val:
-                            attrs_found[key] = True
+        for cv in _iter_changed_variables(result):
+            for key in attrs_found:
+                val = cv.get(key)
+                if isinstance(val, dict) and "attributes" in val:
+                    attrs_found[key] = True
         assert all(attrs_found.values()), (
             f"all cv keys should have .attributes in verbose: {attrs_found}"
         )
 
     def test_no_summary_keeps_this_attributes(self, mock_client, capsys):
         """Verbose mode keeps this.attributes intact."""
-        mock_client.command.side_effect = [
-            [{"item_id": "test", "run_id": "r1"}],
-            self.FULL_TRACE,
-        ]
+        _configure_single_trace(mock_client, self.FULL_TRACE)
         args = make_args(entity_id="automation.test")
         assert trace_cmd.run(args) == 0
         result = json.loads(capsys.readouterr().out)
-        trace = result.get("trace", {})
         attrs_found = False
-        for entries in trace.values():
-            if isinstance(entries, list):
-                for entry in entries:
-                    cv = entry.get("changed_variables") or {}
-                    this = cv.get("this") or {}
-                    if "attributes" in this:
-                        attrs_found = True
+        for cv in _iter_changed_variables(result):
+            this = cv.get("this") or {}
+            if "attributes" in this:
+                attrs_found = True
         assert attrs_found, "this.attributes should survive in verbose mode"
 
     def test_summary_with_pretty_keeps_this_attributes(self, mock_client, capsys):
@@ -599,7 +585,7 @@ class TestSummaryModeSingle:
                         attrs_found = True
         assert attrs_found, "this.attributes should survive with --pretty"
 
-    def test_prune_malformed_trace_does_not_crash(self, mock_client, capsys):
+    def test_prune_malformed_trace_does_not_crash(self, mock_client):
         """Malformed trace entries (non-list values, missing cv) should not crash."""
         weird_trace = {
             "trace": {
@@ -636,7 +622,7 @@ class TestSummaryModeSingle:
         ]
         args = make_args(summary=True, no_summary=False)
         assert trace_cmd.run(args) == 0
-        result = __import__("json").loads(capsys.readouterr().out)
+        result = json.loads(capsys.readouterr().out)
         assert result[0]["timestamp"] == "2026-07-02T13:00:00+00:00"
 
     def test_pick_keeps_fields(self, mock_client, capsys):
@@ -650,7 +636,7 @@ class TestSummaryModeSingle:
         ]
         args = make_args(pick="item_id,state")
         assert trace_cmd.run(args) == 0
-        result = __import__("json").loads(capsys.readouterr().out)
+        result = json.loads(capsys.readouterr().out)
         assert result == [{"item_id": "x", "state": "stopped"}]
 
     def test_single_entity_max_chars_caps_dict(self, mock_client, capsys):
@@ -724,7 +710,7 @@ class TestSummaryModeSingle:
         assert trace_cmd.run(args) == 0
         out = capsys.readouterr().out
         assert len(out) <= 8000
-        result = __import__("json").loads(out)
+        result = json.loads(out)
         assert result[-1].get("_truncated") is True
 
 

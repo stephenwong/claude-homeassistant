@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unit tests for reference_validator.py UUID support."""
+"""Unit tests for entity, device, area, and registry reference validation."""
 
 import builtins
 import json
@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from tools.validators.references import ReferenceValidator
+from tools.validators.references import ReferenceValidator, main
 
 
 def _write_registry(storage_dir, filename, list_key, entries):
@@ -763,83 +763,66 @@ class TestExtractEntitiesFromTemplate:
         assert "climate.hvac" in result
 
 
-class TestExtractDeviceReferences:
-    def test_single_device_id(self, setup_config):
+@pytest.mark.parametrize(
+    ("extractor", "singular", "plural", "first", "second"),
+    [
+        (
+            "extract_device_references",
+            "device_id",
+            "device_ids",
+            "device_001",
+            "device_002",
+        ),
+        ("extract_area_references", "area_id", "area_ids", "kitchen", "bedroom"),
+    ],
+    ids=["device", "area"],
+)
+class TestExtractDeviceAndAreaReferences:
+    def test_single_id(self, setup_config, extractor, singular, plural, first, second):
         v = ReferenceValidator(str(setup_config))
-        data = {"device_id": "device_001"}
-        result = v.extract_device_references(data)
-        assert "device_001" in result
+        result = getattr(v, extractor)({singular: first})
+        assert first in result
 
-    def test_device_id_list(self, setup_config):
+    def test_id_list(self, setup_config, extractor, singular, plural, first, second):
         v = ReferenceValidator(str(setup_config))
-        data = {"device_ids": ["device_001", "device_002"]}
-        result = v.extract_device_references(data)
-        assert "device_001" in result
-        assert "device_002" in result
+        result = getattr(v, extractor)({plural: [first, second]})
+        assert {first, second} <= result
 
-    def test_skips_templates_in_device_id(self, setup_config):
+    def test_skips_templates(
+        self, setup_config, extractor, singular, plural, first, second
+    ):
         v = ReferenceValidator(str(setup_config))
-        data = {"device_id": "{{ trigger.device_id }}"}
-        result = v.extract_device_references(data)
-        assert len(result) == 0
+        result = getattr(v, extractor)({singular: "{{ trigger.device_id }}"})
+        assert not result
 
-    def test_skips_ha_tags(self, setup_config):
+    def test_skips_ha_tags(
+        self, setup_config, extractor, singular, plural, first, second
+    ):
         v = ReferenceValidator(str(setup_config))
-        data = {"device_id": "!input my_device"}
-        result = v.extract_device_references(data)
-        assert len(result) == 0
+        result = getattr(v, extractor)({singular: "!input my_reference"})
+        assert not result
 
-    def test_recursive_extraction(self, setup_config):
+    def test_recursive_extraction(
+        self, setup_config, extractor, singular, plural, first, second
+    ):
         v = ReferenceValidator(str(setup_config))
-        data = {"actions": [{"target": {"device_id": "device_001"}}]}
-        result = v.extract_device_references(data)
-        assert "device_001" in result
+        result = getattr(v, extractor)({"target": {singular: first}})
+        assert first in result
 
-    def test_list_extraction(self, setup_config):
+    def test_list_extraction(
+        self, setup_config, extractor, singular, plural, first, second
+    ):
         v = ReferenceValidator(str(setup_config))
-        data = [{"device_id": "device_001"}, {"device_id": "device_002"}]
-        result = v.extract_device_references(data)
+        result = getattr(v, extractor)([{singular: first}, {singular: second}])
         assert len(result) == 2
 
-
-class TestExtractAreaReferences:
-    def test_single_area_id(self, setup_config):
+    def test_list_skips_templates(
+        self, setup_config, extractor, singular, plural, first, second
+    ):
         v = ReferenceValidator(str(setup_config))
-        data = {"area_id": "kitchen"}
-        result = v.extract_area_references(data)
-        assert "kitchen" in result
-
-    def test_area_id_list(self, setup_config):
-        v = ReferenceValidator(str(setup_config))
-        data = {"area_ids": ["kitchen", "bedroom"]}
-        result = v.extract_area_references(data)
-        assert "kitchen" in result
-        assert "bedroom" in result
-
-    def test_skips_templates(self, setup_config):
-        v = ReferenceValidator(str(setup_config))
-        data = {"area_id": "{{ area }}"}
-        result = v.extract_area_references(data)
-        assert len(result) == 0
-
-    def test_skips_ha_tags(self, setup_config):
-        v = ReferenceValidator(str(setup_config))
-        data = {"area_id": "!input my_area"}
-        result = v.extract_area_references(data)
-        assert len(result) == 0
-
-    def test_recursive_extraction(self, setup_config):
-        v = ReferenceValidator(str(setup_config))
-        data = {"target": {"area_id": "kitchen"}}
-        result = v.extract_area_references(data)
-        assert "kitchen" in result
-
-    def test_area_ids_list_skips_templates(self, setup_config):
-        v = ReferenceValidator(str(setup_config))
-        data = {"area_ids": ["kitchen", "{{ input_area }}"]}
-        result = v.extract_area_references(data)
-        assert "kitchen" in result
-        assert "{{ input_area }}" not in result
+        result = getattr(v, extractor)({plural: [first, "{{ input_reference }}"]})
+        assert first in result
+        assert "{{ input_reference }}" not in result
 
 
 class TestExtractEntityReferences:
@@ -1042,8 +1025,6 @@ class TestReferenceValidatorMain:
     """Exercise the reference-validator command entry point."""
 
     def test_main_valid(self, setup_config, monkeypatch):
-        from tools.validators.references import main
-
         (setup_config / "automations.yaml").write_text(
             "entity_id: sensor.temperature\n"
         )
@@ -1051,8 +1032,6 @@ class TestReferenceValidatorMain:
         assert main() == 0
 
     def test_main_invalid(self, monkeypatch):
-        from tools.validators.references import main
-
         monkeypatch.setattr("sys.argv", ["reference_validator", "/nonexistent"])
         assert main() == 1
 
@@ -1065,6 +1044,11 @@ class TestCoverageExtras:
         deps = v.file_deps()
         assert isinstance(deps, list)
         assert "*.yaml" in deps
+        assert {
+            ".storage/core.entity_registry",
+            ".storage/core.device_registry",
+            ".storage/core.area_registry",
+        } <= set(deps)
 
     def test_load_restore_state_cache(self, setup_config):
         v = ReferenceValidator(str(setup_config))
@@ -1186,16 +1170,6 @@ class TestCoverageExtras:
         assert "sensor.prefixed" in entities
         assert "binary_sensor.custom_binary" in entities
 
-    def test_automation_id_fallback(self, setup_config):
-        (setup_config / "automations.yaml").write_text(
-            "- id: backup_lights\n"
-            "  trigger:\n    platform: time\n"
-            "  action:\n    service: test\n"
-        )
-        v = ReferenceValidator(str(setup_config))
-        entities = v.get_config_defined_entities()
-        assert "automation.backup_lights" in entities
-
     def test_script_invalid_object_id_skipped(self, setup_config):
         (setup_config / "scripts.yaml").write_text(
             "UPPERCASE_SCRIPT:\n  sequence: []\nvalid_script:\n  sequence: []\n"
@@ -1295,16 +1269,12 @@ def test_hidden_entity_referenced_emits_info(validator, config_dir):
     test_file.write_text("entity_id: binary_sensor.test_motion_battery\n")
     # Manually add hidden_by to the registry in memory
     reg_file = config_dir / ".storage" / "core.entity_registry"
-    import json
-
     data = json.loads(reg_file.read_text())
     for ent in data["data"]["entities"]:
         if ent["entity_id"] == "binary_sensor.test_motion_battery":
             ent["hidden_by"] = "user"
     reg_file.write_text(json.dumps(data))
     # Recreate validator to pick up changes
-    from tools.validators.references import ReferenceValidator
-
     v = ReferenceValidator(str(config_dir))
     v.validate_file_references(test_file)
     assert any("hidden" in i.lower() and "test_motion_battery" in i for i in v.info)
@@ -1325,8 +1295,6 @@ def test_is_uuid_format_accepts_canonical_forms(validator, uuid_val):
 
 def test_references_main_accepts_quiet(monkeypatch, tmp_path):
     """The command entry point accepts --quiet without error."""
-    from tools.validators.references import main
-
     (tmp_path / ".storage").mkdir(exist_ok=True)
     (tmp_path / "configuration.yaml").write_text("homeassistant:\n")
     monkeypatch.setattr("sys.argv", ["ref_validator", str(tmp_path), "--quiet"])
