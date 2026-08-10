@@ -179,7 +179,7 @@ from tools.validators.entity_definitions import EntityDefinitionExtractor
 - **Graphify freshness:** Before using graphify for any query, path, explain, or graph-backed analysis, run `graphify . --update --code-only` from the repository root. Treat `graphify-out/graph.json` as stale until that refresh completes; never use the existing-graph fast path without first updating it.
 - **Automations:** `home-assistant-automation` skill; scripts/scenes: `home-assistant-best-practices` skill
 - **Debugging:** `home-assistant-debugging` skill
-- **Upgrade readiness:** `check-upgrade` skill; provide a target HA version to review all intervening release notes and produce an instance-specific report
+- **Upgrade readiness:** `check-upgrade` skill; require a target version in `YYYY.M.P` form, review every intervening release, and produce a read-only instance-specific report without syncing or deploying HA configuration
 - **Python changes:** **Always TDD** — write tests first, confirm red, then implement.
 - **After tests pass:** update `README.md`, this context file (`AGENTS.md`), and relevant skills to reflect any behavior, entity, or workflow changes.
 - **Before committing:** `make lint` (or `make lint-fix`; runs ruff + mypy)

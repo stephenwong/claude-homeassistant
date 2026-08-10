@@ -475,6 +475,7 @@ Pre-built skill workflows in `.agents/skills/` guide AI assistants through commo
 | **home-assistant-automation** | Structured workflow for creating and modifying automations |
 | **home-assistant-backup** | Pull → backup → prune with smart retention |
 | **home-assistant-debugging** | Systematic approach to investigating HA issues |
+| **check-upgrade** | Read-only, instance-specific review of every intervening HA release before a Core upgrade |
 | **reflect** | Capture learnings after completing work to prevent recurrence |
 
 ### 📡 HA API Access Tiers
