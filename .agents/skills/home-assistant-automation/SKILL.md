@@ -323,7 +323,7 @@ make push
 | Rapid-fire Zigbee commands to same device | Add 250ms `delay` between each command (see AGENTS.md → Zigbee Command Timing) |
 | Using raw `state`/`numeric_state` trigger where a purpose-specific one exists (2026.7+) | Prefer `battery.became_low`, area motion, etc. — handles unavailable + supports area targets |
 | `ha_cli edit --add` writes JSON strings as bare YAML (`to: on` parsed as bool, `to: null` as None) | After `--add`, re-read with `ha_cli edit automations "Name"` and quote YAML 1.1 booleans/nulls (`on`/`off`/`yes`/`no`/`true`/`false`/`null`), then `make validate` |
-| `camera.snapshot` to file + `allowlist_external_dirs` fails local validator (no `/config` on dev box) | Use mobile-app notification `data.entity_id: camera.xxx` for auto-snapshot; no file management needed |
+| `camera.snapshot` to file + `allowlist_external_dirs` fails local validator (no `/config` on dev box) | Use mobile-app notification `data.image: /api/camera_proxy/camera.xxx` for an automatic snapshot; no file management needed |
 | `Edit` tool fails on indentation mismatch | Always `Read` exact lines immediately before `Edit` — don't reuse a stale view |
 
 ## Red Flags - You're Doing It Wrong

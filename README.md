@@ -12,6 +12,7 @@ A toolkit for managing Home Assistant configurations — automated validation, s
 - 🪶 **Token-Efficient Output** — Compact summary mode (auto-detected for pipes/agents), field projection (`--pick`), result limiting (`--first`, `--max-chars`), and guardrails to prevent AI context overload
 - 📦 **Importable Python Modules** — `HAClient`, `YAMLEditor`, and validators for scripts and tests
 - 💾 **Backup System** — Timestamped config backups with changelogs and full-text search
+- 🔎 **Upgrade Readiness** — `check-upgrade` skill reviews intervening Home Assistant releases for breaking changes and instance-relevant features
 
 ## 🔄 How It Works
 
