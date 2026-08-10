@@ -16,7 +16,7 @@ Systematic approach to debugging Home Assistant issues. Find root cause before p
 **NEVER read these files directly:**
 - `config/.storage/core.entity_registry` (1.7MB JSON)
 - `config/.storage/core.device_registry` (96KB JSON)
-- `config/automations.yaml` (59KB / 1,815 lines — targeted grep only)
+- `config/automations.yaml` (large runtime snapshot — targeted grep only)
 
 ### Common mistakes
 
@@ -68,16 +68,16 @@ curl's ~670 unprojected).
    `ha_get_state("sensor.entity_name")`
 
 2. **Check automation status — look for "last_triggered":**
-   `ha_get_state("automation.automation_name", fields=["state", "attributes.last_triggered"])`
+   `ha_get_state("automation.automation_name", fields=["state", "attributes"], attribute_keys=["last_triggered"])`
 
 3. **Check when an entity last changed state:**
    `ha_get_state("binary_sensor.entity_name", fields=["state", "last_changed", "last_updated"])`
 
-**`last_triggered` and `last_changed` are your fastest debugging tools:**
+**`last_triggered` and `last_changed` are useful first checks:**
 - If `last_triggered` is `null` or old, the automation never fired → check triggers
 - If `last_triggered` is recent but nothing happened → check conditions/actions
-- If `last_changed` is old, the entity state isn't updating → check source
-- If `last_changed == last_updated` and both are old, the sensor is **frozen** — reporting a plausible value but never updating (still shows "available", often healthy battery).     Confirm with `ha_get_state("<id>", fields=["state","last_changed","last_updated"])`. See Common Failure Patterns: "Sensor value frozen"
+- If `last_changed` is old, the entity state may not be updating → check source and expected reporting cadence
+- If `last_changed == last_updated` and both are old, treat the sensor as a **stale candidate** — a stable entity can also have equal timestamps. Corroborate with expected reporting cadence, history, heartbeat attributes, and integration diagnostics. Confirm with `ha_get_state("<id>", fields=["state","last_changed","last_updated"])`. See Common Failure Patterns: "Sensor value frozen"
 
 **Note:**
 - Device class (moisture, occupancy, presence) hints at sensor type
@@ -86,7 +86,7 @@ curl's ~670 unprojected).
 ## Phase 2: Locate the Definition
 
 1. **Find where an entity is defined or referenced:**
-   `ha_search("entity_name")` — searches config bodies (configuration.yaml, automations.yaml, helpers)
+   `ha_search("entity_name")` — searches config bodies (`config/configuration.yaml`, `config/automations.yaml`, helpers)
 
 2. **Narrow to a specific config type:**
    `ha_search("entity_name", search_types=["automation", "helper"])`
@@ -95,9 +95,9 @@ curl's ~670 unprojected).
 
 | Entity Pattern | Defined In | Modifiable |
 |----------------|------------|------------|
-| `binary_sensor.*` / `sensor.*` (template) | `configuration.yaml` (`template:` section) | Yes |
-| `input_boolean.*`, `timer.*`, `input_datetime.*` | `configuration.yaml` (helpers section) | Yes |
-| Automations | `automations.yaml` | Yes |
+| `binary_sensor.*` / `sensor.*` (template) | `config/configuration.yaml` (`template:` section) | Yes |
+| `input_boolean.*`, `timer.*`, `input_datetime.*` | `config/configuration.yaml` (helpers section) | Yes |
+| Automations | `config/automations.yaml` | Yes |
 | `binary_sensor.*` / `sensor.*` (integration) | Integration (e.g., Z2M, Frigate) | No* |
 
 *Integration entities can only be modified via integration config. For debugging integration entities, see "Integration Debugging" below.
@@ -136,13 +136,13 @@ cat backups/ha_config_YYYYMMDD_HHMMSS.changelog
 
 | Symptom | Likely Cause | Where to Look |
 |---------|--------------|---------------|
-| Wrong state after restart | Template doesn't handle `unavailable` | `configuration.yaml` template |
-| Automation not triggering | Trigger condition never met | `automations.yaml` triggers |
-| Entity always "on" | Template logic flaw | `configuration.yaml` template |
+| Wrong state after restart | Template doesn't handle `unavailable` | `config/configuration.yaml` template |
+| Automation not triggering | Trigger condition never met | `config/automations.yaml` triggers |
+| Entity always "on" | Template logic flaw | `config/configuration.yaml` template |
 | "unavailable" persists | Source entity offline | Check source entity status |
-| Sensor value frozen (plausible reading, never updates; battery reports healthy) | Stale Zigbee/mesh sensor — dropped offline while reporting a value (common after restart) | `ha_get_state("<id>", fields=["state","last_changed","last_updated"])`; if `last_changed == last_updated` and old, it's frozen. Re-interview/re-pair in Z2M (see AGENTS.md → Zigbee Stale Sensors) |
+| Sensor value frozen (plausible reading, never updates; battery reports healthy) | Possible stale Zigbee/mesh sensor — corroborate with cadence, history, and integration diagnostics | `ha_get_state("<id>", fields=["state","last_changed","last_updated"])`; equal old timestamps are a stale candidate, not proof. Re-interview/re-pair in Z2M only after confirming the source (see AGENTS.md → Zigbee Stale Sensors) |
 | State flip-flops | Missing debounce/delay_off | Template or automation |
-| User says "X on all day" but recorder shows off | Post-restart Zigbee actuator desync (bulb on, HA off — Z2M didn't resync) | Physical light; `core.restore_state`; add startup reconciliation automation (see AGENTS.md → Post-restart Zigbee actuator desync) |
+| User says "X on all day" but recorder shows off | Possible post-restart Zigbee actuator desync (bulb on, HA off — Z2M didn't resync) | Check the physical light and HA state; consider startup reconciliation only after confirming the mismatch (see AGENTS.md → Post-restart Zigbee actuator desync) |
 
 ### Template Sensor Debugging
 
@@ -182,11 +182,11 @@ state: >
 
 **Check automation traces** for execution history:
 - HA UI: Settings > Automations > find automation > three-dot menu > Traces
-- **MCP: `ha_get_automation_traces("automation.<name>")`** — preferred. Returns recent runs; pass a `run_id` for full step-by-step detail (trigger matched, conditions evaluated, actions executed).
+- **MCP: `ha_get_automation_traces("automation.<name>")`** — preferred. Returns retained recent runs; pass a `run_id` for full step-by-step detail (trigger matched, conditions evaluated, actions executed).
 - CLI: `ha_cli trace` (no arg) — lists traces across ALL automations. `ha_cli trace automation.<name>` — fetch a specific automation's trace.
-- If no traces exist, the trigger never fired
+- If no traces exist, there is no retained evidence; the trigger may not have fired or the trace may have expired
 - If traces show condition failure, read the condition values at that timestamp
-- **(HA 2026.7+)** Traces now *always* include template errors, so a clean trace means templates didn't error — not that templates weren't evaluated.
+- **(HA 2026.7+, when supported by the running version)** Traces include template errors, so a clean trace means templates didn't error — not that templates weren't evaluated.
 
 **Common automation issues:**
 - `for:` duration prevents quick triggers
@@ -206,7 +206,7 @@ state: >
 
 When a service call doesn't work as expected:
 
-1. **Test the service directly** via MCP `ha_call_service` to isolate automation vs service issue
+1. **Test the service directly** via MCP `ha_call_service` only with explicit user approval and a safe target; service calls can affect real devices
 2. **Check entity states** via `ha_get_state` - is the target in expected state?
 3. **Check automation traces** (Settings > Automations > Traces) - did the automation run? Did each step succeed?
 4. **Check HA logs** — via SSH (full logs with follow):
@@ -234,22 +234,13 @@ This isolates whether the problem is:
 | Check entity state | `ha_get_state("X", fields=["state","last_changed"])` | `ha_cli curl /api/states/X --pretty` |
 | Fetch automation trace | `ha_get_automation_traces("automation.X")` | `ha_cli trace automation.X` |
 | List all traces | No MCP equivalent | `ha_cli trace` (no arg) |
-| Fetch system logs | `ha_get_logs(source="system", level="ERROR", limit=30)` | `ha_cli curl "/api/logbook/YYYY-MM-DDT00:00:00Z"` |
+| Fetch system logs | `ha_get_logs(source="system", level="ERROR", limit=30)` | SSH `ha core logs`; `/api/logbook/...` is entity activity, not system logs |
 
-### Bypass Validation for New Entities
+### When New Entities Need a Reload
 
-**LAST RESORT** - only when `make push` validation fails because new helpers/templates don't exist yet (chicken-and-egg with reload):
+If validation fails because new helpers/templates do not exist yet, do not assume a raw transfer is safe:
 
-```bash
-# DANGER: Bypasses all local validation. Only use if:
-# 1. Official HA validation (`make validate`) passed
-# 2. Errors are ONLY for entities that will exist after reload
-# Risk: Pushing invalid config can break HA startup
-rsync -avz config/ homeassistant:/config/
-# Then reload the specific domains via MCP:
-ha_call_service("automation", "reload")
-ha_call_service("template", "reload")
-```
+There is no supported validation-bypass target. Do not use an unfiltered `rsync`: it would bypass `.rsync-excludes-push` and could overwrite HA-managed runtime state. Prefer fixing the validator or using a targeted, explicitly approved hotfix that reproduces the configured push exclusions, then reload the affected domains.
 
 ## Common Mistakes
 
@@ -266,11 +257,11 @@ ha_call_service("template", "reload")
 
 | Inefficiency | Better path |
 |--------------|-------------|
-| Looping a light group's members serially | Query the group entity once (e.g. `light.outside_downlights`) — covers all members |
-| Post-deploy entity verification via MCP `ha_search` | Go straight to `ha_get_state("<guessed_slug>")` — the search index lags right after a reload, so direct state lookup is reliable when the slug is predictable from the alias |
+| Looping a light group's members serially | Query the group entity once for aggregate state; bulk-query members with `ha_get_state` when individual states matter |
+| Post-deploy entity verification via MCP `ha_search` | Use the canonical entity ID returned by the write/search/registry lookup, then call `ha_get_state`; do not guess slugs |
 | Inline `uv run python -c "..."` to filter JSON | Use the CLI's `--pick` / `--first` / `--max-chars` flags — avoids spawning a full interpreter per filter |
 | Speculative MCP `/api/logbook` calls with no hypothesis | Skip unless you have a specific question; they usually return noise |
-| Pulling `ha_get_history` for an entity you have no hypothesis about (e.g., the light's on/off log while diagnosing a *guard* sensor failure) | Skip it — `history` answers "when did X change," so only pull it for the entity your hypothesis targets. For a "is this sensor stale?" question, lead with `ha_get_state("<id>", fields=["state","last_changed","last_updated"])` (the `last_changed == last_updated` tell), then use `ha_get_history` only to find *when* it froze |
+| Pulling `ha_get_history` for an entity you have no hypothesis about (e.g., the light's on/off log while diagnosing a *guard* sensor failure) | Skip it — `history` answers "when did X change," so only pull it for the entity your hypothesis targets. For a "is this sensor stale?" question, lead with `ha_get_state("<id>", fields=["state","last_changed","last_updated"])`, then use `ha_get_history` only to compare it with the expected reporting cadence |
 
 ## Red Flags - You're Doing It Wrong
 

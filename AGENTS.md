@@ -11,7 +11,7 @@ This repository manages Home Assistant configuration files with automated valida
 ## Project Structure
 
 ### HA Configuration Files
-- `config/automations.yaml` — **Primary file for automation work** (use `ha_cli edit automations` or MCP tools)
+- `config/automations.yaml` — **Primary file for automation work** in the ignored local runtime snapshot (use `ha_cli edit automations` or MCP tools)
 - `config/scripts.yaml`, `config/scenes.yaml`, `config/configuration.yaml`
 - `config/blueprints/` — HA blueprints (automation/, script/, template/)
 - `config/.storage/core.entity_registry` — **1.7MB JSON, never read directly.** Use `ha_search` MCP tool or `grep` for known exact IDs.
@@ -30,24 +30,25 @@ This repository manages Home Assistant configuration files with automated valida
 
 ## Environment Setup
 
-Configure `.env` (copy from `.env.example`): `HA_TOKEN`, `HA_URL`, `HA_HOST`, `HA_MCP_URL`
+Configure `.env` (copy from `.env.example`) for repository tools: `HA_TOKEN`, `HA_URL`, `HA_HOST`, `HA_MCP_URL`. OpenCode's MCP configuration reads the URL separately from the ignored `.ha-mcp-url` file.
 
 ## Commands
 
 ```
 make pull           Sync config from HA
 make push           Push config (with validation)
-make backup         Timestamped backup (auto-changelog)
+make backup         Timestamped backup (attempts changelog generation)
 make validate       Run all validators
 make reload         Reload HA config via API
-make status         Config status + validation summary
-make lint / lint-fix    Ruff format + check, mypy type check
+make status         Config/filesystem status + entity-reference summary
+make lint           Ruff format + check and mypy type check
+make lint-fix       Auto-fix Ruff format and lint issues only
 make test-ssh       Test SSH connection
-make clean          Remove temp/cache
+make clean          Remove Python bytecode and log files
 ```
 
 CLI: `uv run python tools/ha_cli.py {validate|reload|curl|edit|stale-sensors|trace}`
-Flags: `--summary` (compact output, auto for agents/pipes), `--no-summary` (force verbose), `--force` (bypass cache)
+Flags are subcommand-specific: `--summary` (compact output, auto for agents/pipes), `--no-summary` (force verbose), and `validate --force` (bypass validator caches).
 
 ### HA API Access — Pick ONE per task (don't double-call)
 
@@ -64,7 +65,7 @@ doubles latency (~200ms Python-startup per `ha_cli` call) and tokens.
 | System/logbook/addon/supervisor logs | **MCP `ha_get_logs`** | 6 sources + filtering. |
 | Trace a **specific** automation | **MCP `ha_get_automation_traces`** or `ha_cli trace <id>` | Either works.
 | List traces across **all** automations | **`ha_cli trace`** (no arg) | MCP requires an `automation_id`. |
-| **Edit automations/scripts** (git source of truth) | **`ha_cli edit`** | Writes local YAML → `make push`. MCP `ha_config_set_automation` writes **live HA, bypasses git** — next `make pull` overwrites it. |
+| **Edit automations/scripts** (local source) | **`ha_cli edit`** | Writes the ignored local YAML snapshot → `make push`. MCP `ha_config_set_automation` writes **live HA**; back-sync it if the local snapshot must reflect the change. |
 | Live/hotfix automation edit | MCP `ha_config_set_automation` | Then back-sync to YAML. |
 | Validate / stale-sensors / reload | **`ha_cli` / `make`** | No MCP equivalent — these are local-file/Makefile operations. |
 
@@ -103,18 +104,18 @@ uv run python tools/ha_cli.py curl /api/states --pick state,entity_id  # keep on
 uv run python tools/ha_cli.py curl /api/states --entity sensor.temp   # single entity fetch
 uv run python tools/ha_cli.py curl /api/states --domain light --pick state  # filter by domain
 uv run python tools/ha_cli.py curl /api/states --max-chars 500       # truncate output when >500 chars
-uv run python tools/ha_cli.py curl /api/states --no-guard            # disable guardrail AND max-chars cap (dump all)
+uv run python tools/ha_cli.py curl /api/states --no-guard            # disable guardrail and default max-chars cap
 uv run python tools/ha_cli.py curl --post /api/services/light/turn_on -d '{"entity_id":"light.kitchen"}'
 ```
 
 ### ha_cli trace
 ```bash
 uv run python tools/ha_cli.py trace                                   # list all automation traces (WebSocket)
-uv run python tools/ha_cli.py trace automation.morning_routine        # specific automation trace
+uv run python tools/ha_cli.py trace automation.outside_downlights_startup_off  # specific automation trace
 uv run python tools/ha_cli.py trace --first 5                         # first 5 traces only (after dedupe in summary)
 uv run python tools/ha_cli.py trace automation.foo --pretty           # pretty-print trace
 ```
-Summary mode dedupes by item_id (keeps most-recent run), adds `runs` field when N>1. Single-entity traces strip `config`/`blueprint_inputs` plus all nested `.attributes` from `changed_variables` entity-state dicts. `--max-chars` is now enforced on single-entity dicts by dropping the largest trace step keys (with `_truncated`/`dropped_steps`/`kept_steps` markers and stderr notice).
+Summary mode without `--pretty` dedupes by item_id (keeps most-recent run), adds `runs` field when N>1. Single-entity traces strip `config`/`blueprint_inputs` plus all nested `.attributes` from `changed_variables` entity-state dicts. `--max-chars` is enforced on single-entity dicts by dropping the largest trace step keys (with `_truncated`/`dropped_steps`/`kept_steps` markers and stderr notice).
 
 ### Compact Output (--summary)
 
@@ -122,6 +123,7 @@ Auto-detected when stdout is not a TTY (agents, pipes). `--summary` forces on, `
 Curl summary mode: suppresses informational stderr warnings (data-ignored, pretty-no-effect, overcount notes).
 
 ```
+# Illustrative output; labels and durations vary by command and environment.
 PASS YAML Syntax Validation C                                  RELOADED 4/4 (core, automations, scripts, scenes) 2.3s
 PASS Service Reference Validation (0.27s)
 FAIL Service Reference Validation (0.08s)                     PASS Entity/device references
@@ -131,7 +133,7 @@ PASSED 7/7 (9.69s)    FAILED 6/7 (5.02s)
 
 ### Validator Caching
 
-SHA256-hash cache in `config/.cache/validators/<ClassName>.json`. Cache keys combine dependent-file content with the concrete validator and shared `ValidatorBase` implementation source. Unchanged files use cache; unreadable matched dependencies and malformed cache records are cache misses. `--force` re-runs all. Failures always re-run. Clear with `git clean -fdX config/.cache/`.
+SHA256-hash cache in `config/.cache/validators/<ClassName>.json`. Cache keys combine dependent-file content with the concrete validator and shared `ValidatorBase` implementation source. File-backed validators use cache; live and time-sensitive validators declare no file dependencies and always re-run. Unreadable matched dependencies and malformed cache records are cache misses. `validate --force` re-runs all. Failures always re-run. Clear with `rm -rf config/.cache/validators/`.
 
 ### YAML Editing (ha_cli edit)
 
@@ -175,15 +177,15 @@ from tools.validators.entity_definitions import EntityDefinitionExtractor
 
 ## Development Workflow
 
-- **Before work:** `home-assistant-backup` skill (pull → backup → prune)
+- **Before HA configuration work:** `home-assistant-backup` skill (pull → backup → preview/apply prune). Read-only audits and `check-upgrade` are exempt.
 - **Graphify freshness:** Before using graphify for any query, path, explain, or graph-backed analysis, run `graphify . --update --code-only` from the repository root. Treat `graphify-out/graph.json` as stale until that refresh completes; never use the existing-graph fast path without first updating it.
-- **Automations:** `home-assistant-automation` skill; scripts/scenes: `home-assistant-best-practices` skill
+- **Automations:** `home-assistant-automation` skill; scripts/scenes: the external `home-assistant-best-practices` skill supplied by ha-mcp
 - **Debugging:** `home-assistant-debugging` skill
 - **Upgrade readiness:** `check-upgrade` skill; require a target version in `YYYY.M.P` form, review every intervening release, and produce a read-only instance-specific report without syncing or deploying HA configuration
 - **Python changes:** **Always TDD** — write tests first, confirm red, then implement.
 - **After tests pass:** update `README.md`, this context file (`AGENTS.md`), and relevant skills to reflect any behavior, entity, or workflow changes.
-- **Before committing:** `make lint` (or `make lint-fix`; runs ruff + mypy)
-- **After concurrency/parallel/error-handling changes:** `code-review:code-review` as "State Machine Auditor"
+- **Before committing:** `make lint` (or `make lint-fix` followed by `make lint`; `lint-fix` runs Ruff only, while `lint` also runs mypy)
+- **After concurrency/parallel/error-handling changes:** perform a state-machine review of entry points, transitions, cancellation/error paths, and tests; use an installed review skill when available.
 - **Rubber duck review:** invoke the `rubber-duck-review` skill when wanted (explicit, not automatic).
 - **Before finishing:** `reflect` skill to capture learnings.
 
@@ -191,7 +193,7 @@ from tools.validators.entity_definitions import EntityDefinitionExtractor
 
 - **`contextlib.redirect_stdout` is NOT thread-safe** — mutates `sys.stdout` globally. For parallel validators, read `instance.errors`/`warnings`/`info` lists directly.
 - **Removed backward-compat shims:** legacy `tools/*_validator.py` paths no longer exist. `test_shims_missing.py` asserts each raises `ImportError` — keep it updated when retiring compat layers.
-- **`load_env_file()` in tests:** Overrides monkeypatched env vars. Patch `tools.ha.client.load_env_file` (and `tools.validators.stale_sensors.load_env_file` if testing stale sensors) to a no-op. The autouse `_stub_load_env_file` fixture in `tests/conftest.py` covers both.
+- **`load_env_file()` in tests:** Reads `.env` only for variables not already present, but patch it to prevent file-based test leakage when environment isolation matters. Patch `tools.ha.client.load_env_file` (and `tools.validators.stale_sensors.load_env_file` if testing stale sensors); the autouse `_stub_load_env_file` fixture in `tests/conftest.py` covers both.
 - **`main()` returns `int`:** Validator/command `main()` returns 0 (pass) or 1 (fail). `__main__` blocks use `raise SystemExit(main())`.
 - **Stream separation:** Results/summaries → stdout; diagnostics/errors/warnings/verbose → stderr. Tests assert `captured.out` vs `captured.err`.
 - **`from __future__ import annotations` removed:** Python 3.14 lazy annotations are enabled by default — no longer needed.
@@ -200,8 +202,8 @@ from tools.validators.entity_definitions import EntityDefinitionExtractor
 - **Python 3.14 `except A, B, C:`** is canonical (no parens). `ruff format` targeting `py314` removes them. Not a bug.
 - **Boolean/int collision:** `bool` subclasses `int`; `isinstance(val, (int,float))` matches `True`. Guard with `isinstance(val, bool)` first for epoch timestamps.
 - **Naive vs timezone-aware datetimes:** Enforce UTC via `dt.replace(tzinfo=timezone.utc)` if `dt.tzinfo is None`.
-- **Registry concurrency:** Atomic writes to `.storage/` can cause transient `JSONDecodeError`. Retry (100ms sleep), degrade gracefully.
-- **Validator exception contracts:** Handle expected filesystem, JSON/schema, and malformed-input failures with diagnostics; let unexpected loader or timestamp-parser exceptions propagate so programming defects remain visible.
+- **Registry concurrency:** Stale-sensor registry loading retries after 100ms when atomic `.storage/` writes cause a transient `JSONDecodeError`; scope any similar retry to the loader that needs it.
+- **Validator exception contracts:** Direct validators should handle expected filesystem, JSON/schema, and malformed-input failures with diagnostics; the aggregate `ha_cli validate` runner converts unexpected validator exceptions into failed results so sibling validators complete.
 - **Threshold-selection tests:** When testing timestamp min/max selection against a threshold, place candidate values on opposite sides of the threshold so the assertion distinguishes the selected value.
 
 ### Git Commit Trailers
@@ -239,7 +241,7 @@ Dell OptiPlex 7010 Micro (i5-13600, 32GB DDR5, Hailo-8 26 TOPS, QuickSync). Zigb
 
 ## Integrations
 
-- **Zigbee2MQTT** (addon `45df7312_zigbee2mqtt`): pulled locally, excluded from push except `configuration.yaml`
+- **Zigbee2MQTT** (addon `45df7312_zigbee2mqtt`): pulled locally; push excludes its database, state, logs, and coordinator backup
 - **Frigate**: `frigate/config.yml`, camera notifications via automations
 - **Recorder**: 7-day retention
 
@@ -261,15 +263,15 @@ Dell OptiPlex 7010 Micro (i5-13600, 32GB DDR5, Hailo-8 26 TOPS, QuickSync). Zigb
 | `sensor.<camera>_<zone>_<object>_count` | Objects in specific zone |
 | `sensor.<camera>_<object>_count` | Objects anywhere on camera |
 
-Zone tuning: increase `inertia`/`loitering_time` for false alerts. After changes: `make push` + restart Frigate addon.
+Zone tuning: increase `inertia`/`loitering_time` for false alerts. After changes: `make push`, then separately restart the Frigate add-on if required.
 
 ## Critical Gotchas
 
 **Zigbee command timing:** Add 250ms delays between commands to the same device. Applies to `select.select_option`, `switch.turn_on/off`, `number.set_value`, etc.
 
-**Rsync:** Separate exclude files for pull vs push. Repo manages: `automations.yaml`, `scripts.yaml`, `scenes.yaml`, `configuration.yaml`, `secrets.yaml`. `.storage/` is read-only reference — use MCP or `grep`, never modify locally.
+**Rsync:** Separate exclude files for pull vs push. `make push` transfers the local config tree subject to `.rsync-excludes-push`; it excludes `.storage/` and runtime files. `.storage/` is a read-only reference — use MCP or `grep` for known exact IDs, never modify it locally.
 
-**HA Jinja2:** Curated subset only — NO `hash` filter. Available: `lower`, `upper`, `replace`, `truncate`, `length`, `int`, `float`, `round`, `default`, `select`, `map`, `join`, `sort`. For content-change fingerprint, use `| length`.
+**HA Jinja2:** Validate templates against the live Home Assistant renderer; do not treat a short example list of filters as an allowlist. Filter availability is HA-version-specific. For a portable content-change fingerprint, use `| length` rather than relying on a non-portable filter such as `hash`.
 
 **Template whitespace:** NEVER multi-line for URLs/entity IDs. Use single-line with quotes.
 
@@ -277,7 +279,7 @@ Zone tuning: increase `inertia`/`loitering_time` for false alerts. After changes
 
 **Helper Entity Reload:** New helpers in `configuration.yaml` require "Reload all YAML configuration" (Dev Tools > YAML), not just `make push`.
 
-**Shell commands:** HA doesn't run through a shell. Use `/bin/sh -c "..."` or helper script. BusyBox: no `date +%N`, use `date +%H:%M:%S`.
+**Shell commands:** Commands run inside the Home Assistant container. `command_line` supports shell syntax; use `/bin/sh -c "..."` or a helper script only when a shell wrapper is needed, and prefer helper scripts for complex quoting or pipelines. BusyBox: no `date +%N`, use `date +%H:%M:%S`.
 
 **Helper scripts:** Must exist locally — rsync push deletes server files not in local repo.
 
@@ -289,13 +291,13 @@ Zone tuning: increase `inertia`/`loitering_time` for false alerts. After changes
 
 **Zigbee Stale Sensors:** Battery sensors can drop offline while reporting 100% battery. On restart: `unavailable` → `unknown` → stale state. Check `last_updated`/`last_changed`. Tuya mmWave: `select.*_temp_and_humidity_sampling` set to `off` freezes readings; change to `medium`/`high`.
 
-**Post-restart Zigbee actuator desync:** After HA restart, a light/switch can be physically ON while HA records OFF — Z2M doesn't always resync actuator state, and `core.restore_state` only restores HA's last *recorded* state, not the bulb's physical state. Recorder `history`/`last_changed` reflects HA's **belief**, not physical truth. So when a user reports "X was on all day" but the recorder shows off, suspect desync rather than dismissing it. Defensive fix: a startup-reconciliation automation (`trigger: homeassistant` `event: start`, ~2 min delay for Z2M rejoin, then force a known-safe state gated by a condition — e.g. force-off outside lights only when sun is above horizon). See `automation.startup_outside_downlights_off_daytime_reconciliation`.
+**Post-restart Zigbee actuator desync:** After HA restart, a light/switch can be physically ON while HA records OFF — Z2M doesn't always resync actuator state, and `core.restore_state` only restores HA's last *recorded* state, not the bulb's physical state. Recorder `history`/`last_changed` reflects HA's **belief**, not physical truth. So when a user reports "X was on all day" but the recorder shows off, suspect desync rather than dismissing it. Defensive fix: a startup-reconciliation automation (`trigger: homeassistant` `event: start`, ~2 min delay for Z2M rejoin, then force a known-safe state gated by a condition — e.g. force-off outside lights only when sun is above horizon). See `automation.outside_downlights_startup_off`.
 
 **HA 2026.7 triggers:** Purpose-specific triggers/conditions are the new default (graduated from Labs). Old Labs keys are dead — `battery.low`→`battery.became_low`, `vacuum.docked`→`vacuum.returned_to_dock`, `schedule.turned_on`→`schedule.block_started`, `timer.time_remaining`→`timer.remaining_time_reached`, `update.update_became_available`→`update.became_available`, `climate.target_temperature`→`climate.is_target_temperature` (full list: automation skill). Person entities now expose `in_zones`; a person can count in multiple zones simultaneously.
 
 ## Troubleshooting
 
-1. Validation fails → check YAML syntax, then entity refs
+1. Validation fails → inspect YAML and entity-reference diagnostics first; the seven-validator suite runs in parallel
 2. SSH issues → `chmod 600 ~/.ssh/key`, `make test-ssh`
 3. Missing deps → `uv sync`
 4. Tests → `uv run pytest tests/`
@@ -303,4 +305,4 @@ Zone tuning: increase `inertia`/`loitering_time` for false alerts. After changes
 6. False Frigate alerts → check zoned vs unzoned, increase `inertia`/`loitering_time`
 7. Restart Frigate addon → SSH: `ssh homeassistant "ha apps restart ccab4aaf_frigate-fa-beta"`. Supervisor API returns 401.
 8. Z2M entity_ids stuck as hex → stop HA, clean entries from `entities`+`deleted_entities` in `core.entity_registry`, and `devices`+`deleted_devices` in `core.device_registry`, restart.
-9. "Incorrect config" / package install errors → expected false positives from pip version conflicts. Filtered in `tools/validators/ha_official.py`. "Successful config (partial)" with exit 0 is correct.
+9. "Incorrect config" / package-install output → only known package-resolution noise is filtered in `tools/validators/ha_official.py`. A "Successful config (partial)" result with exit 0 is a passing result; other nonzero HA check failures remain failures.

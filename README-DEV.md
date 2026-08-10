@@ -33,7 +33,7 @@ This directory contains a complete Python development environment with modern to
 
 ### Automation
 - **pre-commit** - Git hooks for automated checks
-- **yamllint** - YAML file validation (for HA configs)
+- **pre-commit-hooks** - YAML syntax, whitespace, and repository hygiene checks
 
 ## File Structure
 
@@ -93,7 +93,7 @@ make -f Makefile.dev dev-clean-dev
 
 ### Ruff (Formatting & Linting)
 - Line length: 88 characters
-- Target Python version: 3.13+
+- Target Python version: 3.14.2 (project minimum)
 - Lint rules: pycodestyle (E/W), pyflakes (F), isort (I), pyupgrade (UP), bugbear (B), simplify (SIM)
 - Import sorting: first-party = `tools`
 - Config: `pyproject.toml` under `[tool.ruff]`
@@ -113,8 +113,8 @@ make -f Makefile.dev dev-clean-dev
 
 This development setup works seamlessly with the existing Home Assistant validation tools:
 
-- **YAML Validation**: Pre-commit hooks validate HA-specific YAML syntax
-- **Full Validator Suite**: `make validate` runs 6 validators (YAML syntax, entity/device/area references, duplicate automation IDs, service references, Jinja2 templates, official HA `check_config`)
+- **YAML Validation**: Pre-commit's `check-yaml --unsafe` hook accepts Home Assistant-specific YAML tags
+- **Full Validator Suite**: `make validate` runs 7 validators (YAML syntax, entity/device/area references, duplicate automation IDs, service references, Jinja2 templates, stale sensors, and official HA `check_config`)
 - **Official HA Validation**: Integrated with Home Assistant's own validators
 
 ## Pre-commit Hooks
@@ -126,7 +126,6 @@ Automatically runs on git commits:
 - Code formatting and linting (Ruff)
 - Type checking (mypy)
 - Spell checking (codespell)
-- HA-specific YAML validation
 
 ## Tips for Development
 
@@ -143,6 +142,7 @@ Automatically runs on git commits:
 3. **Use coverage reports to identify untested code:**
    ```bash
    make -f Makefile.dev dev-test-coverage
+   # macOS; use a browser or file manager on other platforms
    open htmlcov/index.html
    ```
 

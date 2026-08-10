@@ -14,7 +14,7 @@ Structured workflow for creating and modifying Home Assistant automations and sc
 **NEVER read these files directly:**
 - `config/.storage/core.entity_registry` (1.7MB JSON)
 - `config/.storage/core.device_registry` (96KB JSON)
-- `config/automations.yaml` (59KB / 1,815 lines — targeted grep only)
+- `config/automations.yaml` (large runtime snapshot — targeted grep only)
 
 ### Common mistakes
 
@@ -44,7 +44,7 @@ directly.
 
 **When NOT to use:**
 - Dashboard-only changes (no automation involved)
-- Integration setup (configuration.yaml changes without automations)
+- Integration setup (`config/configuration.yaml` changes without automations)
 - Debugging broken automations — use `home-assistant-debugging` skill instead
 
 ## Workflow
@@ -59,8 +59,8 @@ directly.
 | Phase | Tools/Commands | Purpose |
 |-------|----------------|---------|
 | Discovery | `ha_search` MCP, `grep` registry | Find entities, existing automations/scripts |
-| Clarify | `question` | Resolve ambiguity, confirm intent |
-| Design | `Read configuration.yaml` | Check helpers (small file, safe to read) |
+| Clarify | Ask the user directly | Resolve ambiguity, confirm intent |
+| Design | `Read config/configuration.yaml` | Check helpers (small file, safe to read) |
 | Implement | `ha_cli edit`, `Edit` | Modify YAML files |
 | Deploy | `make validate`, `make push` | Test and deploy |
 | Reflect | `reflect` skill | Capture learnings (gotchas, corrections, patterns) |
@@ -69,7 +69,7 @@ directly.
 
 **Always start here.** Before writing ANY automation or script:
 
-**Always** use `home-assistant-backup` skill first (pull, backup, prune) — even for small changes. No exceptions.
+**Always** use `home-assistant-backup` skill first (pull, backup, preview/apply prune) for configuration changes — even small ones. Read-only audits, including `check-upgrade`, are exempt.
 
 **Don't double-search:** MCP `ha_search` and `grep` hit different indexes. Use MCP first, then `grep` the registry if MCP misses.
 
@@ -77,13 +77,13 @@ directly.
    `ha_search("motion")` — one call searches entity registry AND config bodies
 
 2. **List all automations:**
-   `ha_search(domain_filter="automation")`
+   `ha_search(domain_filter="automation", limit=100)`, then paginate with `offset=next_offset` while `has_more` is true.
 
 3. **Find a specific automation by name or keyword:**
    `ha_search("doorbell")`
 
 4. **Find entities by area or room:**
-   `ha_search("bathroom", domain_filter="binary_sensor")`
+   `ha_search(area_filter="bathroom", domain_filter="binary_sensor")`
 
 5. **Verify a specific entity exists:**
    `ha_search("bathroom_motion")`
@@ -138,7 +138,7 @@ Choose `mode:` based on behavior needs (default is `single`):
 
 **`from:` constraint drops post-restart events:** After HA restarts, entities start in `unknown`/`unavailable`. Triggers with `from: ['off']` miss the first transition (e.g., `unknown -> on`). Only use `from:` when you specifically need to ignore startup transitions. For motion sensors, omit `from:`.
 
-**`for:` duration on triggers:** The entity must remain in the target state for the entire duration. If state flickers, the timer resets. Useful for "door open for 5 minutes" alerts, not for instant triggers.
+**`for:` duration on triggers:** The entity must remain in the target state for the entire duration. If state flickers, HA restarts, or automations reload, the timer resets. Useful for "door open for 5 minutes" alerts, not for instant triggers.
 
 ### Purpose-specific Triggers & Conditions (HA 2026.7+)
 
@@ -182,6 +182,7 @@ actions:
   - action: timer.start
     target:
       entity_id: timer.room_timer
+# Add a timer.finished trigger/branch to turn the light off.
 ```
 
 **Multi-trigger with choose:**
@@ -202,11 +203,15 @@ actions:
         id: single_press
       sequence:
         - action: light.toggle
+          target:
+            entity_id: light.room
     - conditions:
       - condition: trigger
         id: double_press
       sequence:
         - action: scene.turn_on
+          target:
+            entity_id: scene.room
 ```
 
 **Toggle-gated automation:**
@@ -219,7 +224,7 @@ conditions:
 
 ### Helper Entities
 
-If automation needs state tracking, add helpers to `configuration.yaml`:
+If automation needs state tracking, add YAML-managed helpers to `config/configuration.yaml`:
 
 ```yaml
 input_boolean:
@@ -233,7 +238,7 @@ timer:
     duration: "00:10:00"
 ```
 
-**Note:** New helpers require "Reload all YAML configuration" in HA to appear.
+**Note:** New YAML-managed helpers require "Reload all YAML configuration" in HA to appear. UI/storage helpers should be managed through the HA UI or the appropriate MCP helper tool instead.
 
 ### Scripts
 
@@ -252,12 +257,12 @@ debug_log:
         message: "{{ message }}"
 ```
 
-**Parameter name gotcha:** Parameter names must match exactly between automation `data:` and script `fields:`. With `| default(omit)` patterns, mismatches silently fail.
+**Parameter name gotcha:** Template variable names must match the keys passed in the automation or script `data:`. `fields` documents UI inputs but does not enforce them. With `| default(omit)` patterns, mismatches silently fail.
 
 ## Phase 4: Implement
 
 **Rules for editing:**
-1. **Prefer `ha_cli edit`** for automations/scripts — it uses `ruamel.yaml` for round-trip editing that preserves comments, formatting, and key ordering. Manual `Edit` is fine for `configuration.yaml` or small targeted changes.
+1. **Prefer `ha_cli edit`** for automations/scripts — it uses `ruamel.yaml` for round-trip editing that preserves comments, formatting, and key ordering. Manual `Edit` is fine for `config/configuration.yaml` or small targeted changes.
 2. Make focused, targeted edits (not wholesale rewrites)
 3. Preserve existing automation IDs
 4. Use exact string matching for the `Edit` tool
@@ -299,16 +304,16 @@ make push
 - Official HA configuration validation
 
 **Post-deploy verification:**
-- Check `last_triggered` timestamp via `ha_get_state("automation.X", fields=["attributes.last_triggered"])` after testing
+- Check `last_triggered` after testing with `ha_get_state("automation.X", fields=["state", "attributes"], attribute_keys=["last_triggered"])`
 - Confirm expected behavior with user
-- For time-based triggers, verify next scheduled run
+- For time-based triggers, verify the schedule through the HA UI, a trace, or an actual test run; do not assume a `next_trigger` state field exists.
 
 ## Common Mistakes
 
 | Mistake | Fix |
 |---------|-----|
 | Reading entire entity_registry (1.7MB JSON) | Use `ha_search` MCP or `Grep` |
-| Reading entire automations.yaml | Use `Grep` or `ha_cli edit automations` to find specific sections |
+| Reading entire `config/automations.yaml` | Use `Grep` or `ha_cli edit automations` to find specific sections |
 | Using entity without verifying existence | Use `ha_search` MCP to validate |
 | Assuming which sensor to use | Ask user when multiple options |
 | Large wholesale file rewrites | Use targeted Edit calls |
@@ -328,7 +333,7 @@ make push
 
 ## Red Flags - You're Doing It Wrong
 
-- Writing automation without searching automations.yaml first
+- Writing automation without searching `config/automations.yaml` first
 - Assuming entity exists without verification
 - Not asking when multiple sensors/devices could work
 - Pushing without validation

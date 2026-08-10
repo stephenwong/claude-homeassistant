@@ -6,12 +6,12 @@ A toolkit for managing Home Assistant configurations — automated validation, s
 
 - 🛡️ **Multi-Layer Validation** — YAML syntax, entity references, and official HA `check_config` — runs before any push
 - ✏️ **Safe YAML Editing** — `ha_cli edit` preserves comments, formatting, and key ordering (ruamel.yaml round-trip)
-- ⚡ **Validator Caching** — SHA256-based caching skips re-validation when files haven't changed
+- ⚡ **Validator Caching** — SHA256-based caching skips re-validation for file-backed validators when their inputs haven't changed
 - 🚀 **Safe Deployments** — `make push` validates first, blocks invalid configs from reaching HA
 - 🤖 **AI Assistant Ready** — MCP server integration, instruction files, and pre-built skills for AI coding assistants
 - 🪶 **Token-Efficient Output** — Compact summary mode (auto-detected for pipes/agents), field projection (`--pick`), result limiting (`--first`, `--max-chars`), and guardrails to prevent AI context overload
 - 📦 **Importable Python Modules** — `HAClient`, `YAMLEditor`, and validators for scripts and tests
-- 💾 **Backup System** — Timestamped config backups with changelogs and full-text search
+- 💾 **Backup System** — Timestamped config backups, changelog tooling, and full-text search
 - 🔎 **Upgrade Readiness** — `check-upgrade` skill reviews intervening Home Assistant releases for breaking changes and instance-relevant features
 
 ## 🔄 How It Works
@@ -38,10 +38,10 @@ flowchart LR
     push --> ha
 ```
 
-> **1. Pull** — `make pull` syncs config from HA via rsync, triggers validation for integrity.  
-> **2. Backup** — `make backup` creates a timestamped tarball + changelog before making changes.  
+> **1. Pull** — `make pull` syncs config from HA via rsync, triggers validation for integrity.
+> **2. Backup** — Run `make backup` explicitly before making changes; it creates a timestamped tarball and attempts changelog generation.
 > **3. Edit** — Modify config files locally. `ha_cli edit` preserves YAML formatting. MCP tools provide live lookups and debugging data.<br>
-> **4. Validate** — `make validate` runs 7 validators: YAML syntax, entity/device/area references, duplicate automation IDs, service references, Jinja2 template linting, stale sensor detection, and official HA `check_config`.  
+> **4. Validate** — `make validate` runs 7 validators: YAML syntax, entity/device/area references, duplicate automation IDs, service references, Jinja2 template linting, stale sensor detection, and official HA `check_config`.
 > **5. Push** — `make push` validates then rsyncs to HA, blocking broken configs from reaching the server. HA reloads the new configuration automatically.
 
 ### 🔍 Debugging
@@ -59,11 +59,11 @@ flowchart LR
     validate -->|"pass"| push
 ```
 
-> **1. Pull** — `make pull` syncs the latest config to ensure you're investigating the current state.  
-> **2. Search backups** — `make backup-search PATTERN='text'` finds when an entity or automation last changed.  
-> **3. Compare versions** — Extract old config from a backup tarball (`tar -xzOf backups/... config/automations.yaml`) and diff against the current version.  
+> **1. Pull** — `make pull` syncs the latest config to ensure you're investigating the current state.
+> **2. Search backups** — `make backup-search PATTERN='text'` finds when an entity or automation last changed.
+> **3. Compare versions** — Extract old config from a backup tarball (`tar -xzOf backups/... config/automations.yaml`) and diff against the current version.
 > **4. Inspect logs** — Prefer MCP log/history tools; use `ssh homeassistant "ha core logs --follow"` or the REST API as fallbacks.<br>
-> **5. Trace root cause** — Use MCP tools for live entity state, automation traces, and template rendering.  
+> **5. Trace root cause** — Use MCP tools for live entity state, automation traces, and template rendering.
 > **6. Fix, validate, push** — Once the root cause is found, apply the fix and resume the normal create/edit flow above.
 
 ### 📡 Access Points
@@ -72,9 +72,9 @@ The toolkit communicates with Home Assistant through four distinct channels, eac
 
 | Access Method | Protocol | Config | Used By | Why It's Needed |
 |---------------|----------|--------|---------|-----------------|
-| **rsync** over SSH | SSH/SFTP | `HA_HOST` | `make pull`, `make push` | Bulk transfer of the entire config directory tree. Rsync is incremental (only changed files) and is the only way to move `.storage/` registries, `zigbee2mqtt/` config, and YAML files between HA and the dev machine. |
+| **rsync** over SSH | SSH/SFTP | `HA_HOST` | `make pull`, `make push` | Bulk transfer of the config directory tree. Rsync is incremental (only changed files); it pulls `.storage/` registries and YAML/integration config, while push applies `.rsync-excludes-push` and excludes `.storage/`. |
 | **REST API** | HTTP (port 8123) | `HA_URL` + `HA_TOKEN` | `HAClient`, `ha_cli curl`, `make reload`, ServiceValidator, TemplateValidator | Standard HA programmatic interface. Service calls, state queries, config reloads, and template rendering. Validators query `/api/services` and `/api/template` at validation time to catch issues before they reach the server. |
-| **MCP Server** | HTTP (port 9583) | `HA_MCP_URL` | AI assistants (opencode, Claude Code) | High-level natural-language HA control designed for AI agents. 88+ tools for entity listing, config inspection, automation management, history queries, and service calls — without needing raw API requests. Triggered by the automation, backup, and debugging skills. |
+| **MCP Server** | HTTP (port 9583) | `HA_MCP_URL` or `.ha-mcp-url` for OpenCode | AI assistants (opencode, Claude Code) | High-level natural-language HA control designed for AI agents. 88+ tools for entity listing, config inspection, automation management, history queries, and service calls — without needing raw API requests. Used by the automation and debugging workflows; the backup workflow uses Make/CLI commands. |
 | **SSH shell** | SSH | `HA_HOST` | `ha core logs`, addon restart, Lovelace edits | Server-side commands that the REST API can't do. Log viewing (`ha core logs --follow`), addon management (`ha apps restart` for Frigate/Z2M), and direct `.storage/` file edits for Lovelace (which returns 404 from the REST API in storage mode). |
 
 > **One host, four channels.** `HA_HOST` powers both rsync and SSH shell via the same [Advanced SSH & Web Terminal](https://github.com/hassio-addons/addon-ssh) add-on. `HA_URL` and `HA_MCP_URL` are separate HTTP endpoints on the same HA instance.
@@ -104,15 +104,15 @@ flowchart TB
     ha_z2m ==>|"make pull"| loc_z2m
     ha_yaml ==>|"make pull"| loc_yaml
 
-    %% Push — restrictive (only YAML + z2m config go up)
-    loc_yaml -->|"make push"| ha_yaml
-    loc_z2m -->|"make push<br/>(config only)"| ha_z2m
+    %% Push — filtered config tree (runtime files excluded)
+    loc_yaml -->|"make push<br/>(filtered config)"| ha_yaml
+    loc_z2m -->|"make push<br/>(filtered config)"| ha_z2m
 
     %% .storage/ NEVER pushed
     loc_storage -.->|"⛔ blocked"| ha_storage
 ```
 
-> **Asymmetric by design.** Pull is permissive — it snapshots `.storage/` registries (minus auth/secrets) for local reference so the entity-reference validator can check entity existence offline. Push is restrictive — it **never** touches `.storage/` (HA-managed runtime state: integration configs, entity/device registries, UI dashboards, auth). Pushing `.storage/` would overwrite HA's live state with a stale snapshot. Zigbee2MQTT pulls config + coordinator backup but pushes only `configuration.yaml`.
+> **Asymmetric by design.** Pull is permissive — it snapshots `.storage/` registries (minus excluded auth/secrets files) for local reference so the entity-reference validator can check entity existence offline. Push transfers the local config tree subject to `.rsync-excludes-push`; it **never** touches `.storage/` (HA-managed runtime state: integration configs, entity/device registries, UI dashboards, auth). Pushing `.storage/` would overwrite HA's live state with a stale snapshot. Zigbee2MQTT pulls its configuration and coordinator backup, while push excludes its database, state, logs, and coordinator backup.
 
 ## 🚀 Quick Start
 
@@ -233,7 +233,7 @@ make push  # Validates then uploads to HA
 ├── tests/                       # Unit tests (pytest)
 ├── .github/                     # CI/CD workflows (lint, test, CodeQL)
 ├── .agents/skills/              # Harness-agnostic AI skill workflows
-├── .pre-commit-config.yaml      # Pre-commit hooks (ruff, yamllint, mypy, codespell)
+├── .pre-commit-config.yaml      # Pre-commit hooks (Ruff, mypy, codespell, repository checks)
 ├── AGENTS.md                    # AI assistant instructions (harness-agnostic)
 ├── README-DEV.md                # Development environment setup
 ├── opencode.json                # MCP server configuration for opencode
@@ -247,7 +247,7 @@ make push  # Validates then uploads to HA
 > **Runtime directories** (gitignored, created by setup commands):
 > - `config/` — HA configuration, created by `make pull` (includes `automations.yaml`, `scripts.yaml`, `scenes.yaml`, `configuration.yaml`, `.storage/`, `zigbee2mqtt/`)
 > - `backups/` — Timestamped config backups, created by `make backup`
-> - `frigate/` — Frigate NVR config, pulled from HA add-on
+> - `frigate/` — Frigate NVR config snapshot; `frigate/config.yml` is ignored
 
 ## 🛠️ Commands
 
@@ -271,18 +271,18 @@ uv run python tools/ha_cli.py curl /api/states --pick state,entity_id
 uv run python tools/ha_cli.py curl /api/states --entity sensor.temp
 uv run python tools/ha_cli.py curl /api/states --domain light --first 5
 uv run python tools/ha_cli.py curl /api/states --max-chars 500
-uv run python tools/ha_cli.py curl /api/states --no-guard          # bypass guardrail AND max-chars cap
+uv run python tools/ha_cli.py curl /api/states --no-guard          # bypass guardrail and default max-chars cap
 uv run python tools/ha_cli.py curl /api/services/light/turn_on --post --data '{"entity_id":"light.kitchen"}'
 
 # Automation Traces
 uv run python tools/ha_cli.py trace                             # list all automation traces
-uv run python tools/ha_cli.py trace automation.morning_routine  # specific automation trace
+uv run python tools/ha_cli.py trace automation.outside_downlights_startup_off  # specific automation trace
 uv run python tools/ha_cli.py trace --pretty                    # pretty-print trace
 uv run python tools/ha_cli.py trace --first 5                   # first 5 traces only (after dedupe in summary)
 
 # Summary mode: dedupes by item_id (adds runs field when N>1), drops config/blueprint_inputs
-#   from single-entity traces, and strips changed_variables.this.attributes  
-#   (updated: strips .attributes from ALL changed_variables dicts, not just this;  
+#   from single-entity traces, and strips changed_variables.this.attributes
+#   (updated: strips .attributes from ALL changed_variables dicts, not just this;
 #   --max-chars now enforced on single-entity dicts via step-key dropping)
 uv run python tools/ha_cli.py trace --summary
 
@@ -301,17 +301,17 @@ uv run python tools/ha_cli.py reload
 | `make pull` | Sync config from HA (includes Z2M and Frigate configs) |
 | `make push` | Push config (validates first, then rsyncs) |
 | `make validate` | Run all validation tests |
-| `make backup` | Create timestamped backup (with auto-changelog) |
+| `make backup` | Create timestamped backup and attempt changelog generation |
 | `make setup` | Install Python dependencies via uv |
-| `make status` | Show config status and validation summary |
+| `make status` | Show config/filesystem status and an entity-reference summary |
 | `make reload` | Reload HA config via API (no push) |
 
-| `make lint` | Run ruff format check + lint |
-| `make lint-fix` | Auto-fix ruff format and lint issues |
+| `make lint` | Run Ruff format check, Ruff lint, and mypy |
+| `make lint-fix` | Auto-fix Ruff format and lint issues (does not run mypy) |
 | `make backup-search PATTERN='text'` | Search all backups for a pattern |
 | `make changelog BACKUP='path'` | Generate changelog for a backup |
 | `make test-ssh` | Test SSH connection to HA |
-| `make clean` | Remove temp files and caches |
+| `make clean` | Remove Python bytecode and log files |
 
 ### 💾 Backup Pruning (`prune_backups.py`)
 
@@ -351,8 +351,9 @@ uv run python tools/ha_cli.py edit automations "Old Automation" --remove
 Programmatic editing is also available:
 ```python
 from tools.ha.yaml_editor import YAMLEditor
-editor = YAMLEditor("config")
+editor = YAMLEditor("config/automations.yaml")
 editor.add_automation({"alias": "...", "trigger": [...], "action": [...]})
+editor.save()
 ```
 
 ## 🛡️ Validation System
@@ -392,7 +393,7 @@ flowchart TB
     gate -->|"no"| block["🛑 push blocked — fix & re-validate"]
 ```
 
-> **Offline degradation:** When HA is unreachable, online validators degrade instead of failing — Service Refs falls back to a format-only regex check, Templates falls back to brace-balance checking, and Stale Sensors is skipped entirely (also auto-skipped in CI). Cached validators return instantly on cache hits; failures are never cached and always re-run.
+> **Offline degradation:** When HA is unreachable, online validators degrade instead of failing — Service Refs falls back to a format-only regex check, Templates falls back to brace-balance checking, and Stale Sensors is skipped entirely (also auto-skipped in CI). File-backed validators return instantly on cache hits; live/time-sensitive validators are never cached. Failures are never cached and always re-run.
 
 ### 📝 1. YAML Syntax
 Validates YAML syntax with HA-specific tags (`!include`, `!secret`, `!input`), file encoding, and basic HA file structures.
@@ -419,12 +420,12 @@ Uses Home Assistant's own `check_config`. **"Successful config (partial)"** is t
 
 ### ⚡ Validator Caching
 
-Validators cache results in `config/.cache/validators/` keyed by the SHA256 of dependent-file content plus validator implementation source (including shared `ValidatorBase` behavior). Unchanged files return cached results instantly; unreadable dependencies and malformed cache records are treated as cache misses.
+Eligible file-backed validators cache results in `config/.cache/validators/` keyed by the SHA256 of dependent-file content plus validator implementation source (including shared `ValidatorBase` behavior). Unchanged dependencies return cached results instantly; live/time-sensitive validators do not cache. Unreadable dependencies and malformed cache records are treated as cache misses.
 
 - **Automatic:** Caching is transparent — no action needed
 - **Force refresh:** `ha_cli validate --force` re-runs all validators
 - **Only successful results cached:** Failures always re-run
-- **Clear cache:** Delete `config/.cache/validators/` (or `git clean -fdX config/.cache/`)
+- **Clear cache:** Delete `config/.cache/validators/` with `rm -rf config/.cache/validators/`
 
 ## 📦 Importable Modules
 
@@ -444,7 +445,7 @@ from tools.validators.yaml import YAMLValidator
 from tools.validators.stale_sensors import StaleSensorValidator
 ```
 
-`HAClient` is constructed via `HAClient.from_env()` (reads `.env` for `HA_TOKEN`/`HA_URL`).
+`HAClient` is constructed via `HAClient.from_env()` (reads `.env` for `HA_TOKEN`/`HA_URL`). OpenCode reads the MCP URL from the ignored `.ha-mcp-url` file referenced by `opencode.json`.
 
 ## 🤖 AI Assistant Integration
 
@@ -457,8 +458,8 @@ The [ha-mcp](https://github.com/homeassistant-ai/ha-mcp) add-on provides 88+ MCP
 **Setup:**
 1. Install the "Home Assistant MCP Server" add-on
 2. Start it and copy the MCP URL from add-on logs (format: `http://<ip>:9583/private_<token>`)
-3. Set `HA_MCP_URL` in `.env`
-4. Configure your AI tool's MCP settings to point to this URL
+3. Set `HA_MCP_URL` in `.env` for repository tools, or put the URL in `.ha-mcp-url` for OpenCode
+4. Configure other AI tools' MCP settings to point to this URL
 
 Compatible with any AI coding assistant that supports MCP (opencode, Claude Code, etc.).
 
@@ -498,11 +499,11 @@ Examples: `binary_sensor.home_basement_motion_battery`, `climate.office_living_r
 
 ## 🔒 Security
 
-- 🔐 **Secrets Management**: `secrets.yaml` is excluded from validation
+- 🔐 **Secrets Management**: `secrets.yaml` is excluded from direct YAML-payload validation and remains ignored with the rest of the pulled config; the official HA validator may still process the full config directory
 - 🔑 **SSH Authentication**: Uses SSH keys for secure HA access
 - 🕵️ **No Credentials Stored**: Repository contains no sensitive data
 - 🛡️ **Pre-Push Validation**: Prevents broken configs from reaching HA
-- 💾 **Backup System**: Automatic timestamped backups before changes
+- 💾 **Backup System**: Explicit timestamped backups via `make backup` before changes
 
 ## 🔧 Troubleshooting
 
@@ -529,8 +530,8 @@ uv sync
 
 ### ✅ Before Pushing Code
 ```bash
-make lint        # Check formatting and lint
-make lint-fix    # Auto-fix issues
+make lint        # Ruff formatting/lint plus mypy
+make lint-fix    # Auto-fix Ruff formatting/lint only
 ```
 
 ## 📄 License

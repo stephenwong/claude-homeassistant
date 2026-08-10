@@ -54,7 +54,7 @@ dev-setup: dev-install dev-pre-commit
 # Install development dependencies
 dev-install:
 	@echo "$(GREEN)Installing development dependencies...$(NC)"
-	@uv sync --extra dev
+	@uv sync --group dev
 	@echo "$(GREEN)Development dependencies installed!$(NC)"
 
 # Format code
@@ -125,7 +125,7 @@ dev-clean-dev: clean
 # Update development dependencies
 dev-update-deps:
 	@echo "$(GREEN)Updating development dependencies...$(NC)"
-	@uv sync --extra dev --upgrade
+	@uv sync --group dev --upgrade
 	@echo "$(GREEN)Dependencies updated!$(NC)"
 
 # Create test directory structure if it doesn't exist

@@ -20,8 +20,9 @@ The current version is determined in this order:
 1. Read the live Home Assistant version with `ha_get_overview(fields=["system_info"])`.
 2. Fall back to `config/.HA_VERSION` if live Home Assistant is unavailable.
 3. If both sources exist and disagree, use the live version for the comparison and report the mismatch prominently.
+4. If neither source is available, ask the user for the current version and record it as user-provided evidence. Do not infer it from the target or silently use the latest release.
 
-Reject prereleases and malformed versions unless the user explicitly asks for a prerelease review. If the target is not newer than the current version, report that there is no upgrade range instead of pretending to review one.
+Reject prereleases and malformed versions. If the target is not newer than the current version, report that there is no upgrade range instead of pretending to review one.
 
 Record the evidence source and retrieval timestamp for the current version. If the live version is unavailable and the local fallback is used, record the local file path and whether its freshness could be verified.
 

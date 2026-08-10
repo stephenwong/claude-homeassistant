@@ -1,6 +1,6 @@
 ---
 name: reflect
-description: Use before finishing work (committing, creating PRs) and after completing any task, fixing bugs, debugging, or when something unexpected happened — captures learnings into AGENTS.md, MEMORY.md, or skills to prevent recurrence
+description: Use after every non-trivial task and before finishing work; capture learnings in AGENTS.md or the relevant skill to prevent recurrence
 ---
 
 # Reflect
@@ -8,6 +8,8 @@ description: Use before finishing work (committing, creating PRs) and after comp
 Capture learnings before they're lost. Two modes depending on context.
 
 ## When to Use
+
+After every non-trivial task, run the Quick Check. Use Full Reflection only when the check identifies a learning worth documenting.
 
 - **Before committing or creating PRs** (quick check)
 - After debugging a non-trivial issue
@@ -43,7 +45,7 @@ Before documenting, check these locations — slot into the right place:
 |--------------|----------|----------|
 | HA platform gotchas | `AGENTS.md` → Critical Gotchas | Template whitespace, required_zones format, shell_command subprocess |
 | Camera/streaming patterns | `AGENTS.md` → Streaming/Frigate sections | go2rtc config, play_stream vs play_media |
-| Session-to-session context | `MEMORY.md` | Entity refs, historical decisions, transition notes |
+| Session-specific context | `AGENTS.md` or the relevant skill | Entity refs, historical decisions, transition notes |
 | Automation workflow pitfalls | `home-assistant-automation` skill → Common Mistakes | Entity discovery, validation, deployment |
 | Debugging patterns | `home-assistant-debugging` skill → Common Mistakes/Failure Patterns | Template issues, restart behavior |
 | Backup/deployment process | `home-assistant-backup` skill | Retention, sync issues |

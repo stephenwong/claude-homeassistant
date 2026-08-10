@@ -30,14 +30,6 @@ repos:
         additional_dependencies: [types-PyYAML, types-requests]
         exclude: ^(tests/|.*_test\.py$|tools/_dev/)
 
-  - repo: local
-    hooks:
-      - id: yamllint-claude-only
-        name: yamllint (Claude-generated files only)
-        entry: .claude-code/hooks/yamllint-claude-only.sh
-        language: script
-        files: \.(yaml|yml)$
-
   - repo: https://github.com/codespell-project/codespell
     rev: v2.4.2
     hooks:
