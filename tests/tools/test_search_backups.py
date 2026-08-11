@@ -189,8 +189,8 @@ class TestSearchBackup:
         matches, _u = search_backup(backup, re.compile("match"))
         assert matches == []
 
-    def test_retains_matches_before_binary_data(self, tmp_path):
-        """A decode failure after a match keeps the earlier match."""
+    def test_decode_failure_discards_partial_matches(self, tmp_path):
+        """A decode failure marks the archive unreadable, not partially matched."""
         tar_path = tmp_path / "test.tar.gz"
         with tarfile.open(tar_path, "w:gz") as tar:
             data = b"match\n\xff\n"
@@ -203,9 +203,9 @@ class TestSearchBackup:
             "filename": tar_path.name,
             "timestamp": datetime(2026, 2, 1),
         }
-        matches, _u = search_backup(backup, re.compile("match"))
-        assert len(matches) == 1
-        assert matches[0]["line_num"] == 1
+        matches, unreadable = search_backup(backup, re.compile("match"))
+        assert matches == []
+        assert unreadable is True
 
 
 class TestRegexSafety:
@@ -385,6 +385,19 @@ class TestMatchResultShape:
             assert "_remaining_after" not in m
             assert "context_before" in m
             assert "context_after" in m
+
+
+class TestSearchTypeContracts:
+    def test_search_inputs_are_typed_as_text_patterns_and_binary_streams(self):
+        from typing import IO, get_type_hints
+
+        from tools.search_backups import _search_file, search_backup
+
+        search_file_hints = get_type_hints(_search_file)
+        search_backup_hints = get_type_hints(search_backup)
+        assert search_file_hints["extracted"] == IO[bytes]
+        assert search_file_hints["pattern"] == re.Pattern[str]
+        assert search_backup_hints["pattern"] == re.Pattern[str]
 
 
 class TestTarExtractionSafety:

@@ -283,6 +283,22 @@ class TestApplyRetention:
 
 
 class TestCleanOrphanedChangelogs:
+    def test_orphan_discovery_is_pure(self, tmp_path):
+        from tools import prune_backups as prune
+
+        backup_dir = tmp_path / "backups"
+        backup_dir.mkdir()
+        orphan = backup_dir / "ha_config_20260101_120000.changelog"
+        orphan.write_text("orphan")
+        matched = backup_dir / "ha_config_20260201_120000.changelog"
+        matched.write_text("matched")
+        (backup_dir / "ha_config_20260201_120000.tar.gz").write_bytes(b"data")
+
+        with patch("tools.backup_common.BACKUP_DIR", backup_dir):
+            assert prune._find_orphaned_changelogs() == [orphan]
+        assert orphan.exists()
+        assert matched.exists()
+
     def test_removes_orphaned_changelogs(self, tmp_path):
         backup_dir = tmp_path / "backups"
         backup_dir.mkdir()
@@ -740,6 +756,36 @@ class TestFormatLines:
 
         backup = self._backup(tmp_path, datetime(2024, 1, 1))
         assert expected in _format_keep_line(backup, now)
+
+    def test_delete_preview_uses_one_stat_snapshot(self, tmp_path, capsys):
+        from types import SimpleNamespace
+
+        from tools import prune_backups as prune
+
+        class ChangingPath:
+            name = "ha_config_20240101_000000.tar.gz"
+
+            def __init__(self):
+                self.stat_calls = 0
+
+            def stat(self):
+                self.stat_calls += 1
+                size = 1024 if self.stat_calls == 1 else 2 * 1024
+                return SimpleNamespace(st_size=size)
+
+        path = ChangingPath()
+        backup = {
+            "filename": path.name,
+            "path": path,
+            "timestamp": datetime(2024, 1, 1),
+        }
+
+        prune._print_delete_preview([backup], datetime(2024, 1, 8))
+
+        assert path.stat_calls == 1
+        output = capsys.readouterr()
+        assert "1.0KB" in output.out
+        assert "2.0KB" not in output.out
 
 
 class TestValidateDeletionSafety:

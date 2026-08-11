@@ -37,7 +37,7 @@ class YAMLEditor:
             The parsed YAML data (list, dict, or None for empty).
             Raises FileNotFoundError if the path does not exist.
         """
-        with open(self.path, encoding="utf-8") as f:
+        with self.path.open(encoding="utf-8") as f:
             self._data = self._yaml.load(f)
         self._loaded = True
         return self._data
@@ -89,9 +89,10 @@ class YAMLEditor:
             if tmp_path is not None and tmp_path.exists():
                 tmp_path.unlink()
 
-    def dump(self, data, path: Path) -> None:
+    def dump(self, data, path: Path | str) -> None:
         """Write YAML data to a file path."""
-        with open(path, "w", encoding="utf-8") as f:
+        path = Path(path)
+        with path.open("w", encoding="utf-8") as f:
             self._yaml.dump(data, f)
 
     def dump_to(self, data, stream) -> None:
@@ -186,11 +187,7 @@ class YAMLEditor:
         """
         data, idx = self._find_automation(alias, "update automation")
         target = data[idx]
-        if not isinstance(target, dict):
-            raise TypeError(
-                f"Automation '{alias}' is not a dict (got {type(target).__name__})"
-            )
-        target.update(updates)
+        self._update_mapping(target, updates, f"Automation '{alias}'")
 
     def update_script(self, key: str, updates: dict) -> None:
         """Merge updates into a script entry. Does NOT save.
@@ -201,10 +198,13 @@ class YAMLEditor:
         """
         data = self._find_script(key, "update script")
         target = data[key]
+        self._update_mapping(target, updates, f"Script '{key}'")
+
+    @staticmethod
+    def _update_mapping(target: object, updates: dict, label: str) -> None:
+        """Merge *updates* into a mapping while preserving stable errors."""
         if not isinstance(target, dict):
-            raise TypeError(
-                f"Script '{key}' is not a dict (got {type(target).__name__})"
-            )
+            raise TypeError(f"{label} is not a dict (got {type(target).__name__})")
         target.update(updates)
 
     def remove_automation(self, alias: str) -> None:

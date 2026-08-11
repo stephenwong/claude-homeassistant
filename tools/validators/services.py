@@ -104,9 +104,11 @@ class ServiceValidator(ValidatorBase):
         if not found:
             return all_ok
 
+        references = sorted(set(found))
+
         # L45: report non-domain info even when catalog fetch is skipped
-        has_domain = any("." in svc for svc, _ in found)
-        for svc, path in sorted(set(found)):
+        has_domain = any("." in svc for svc, _ in references)
+        for svc, path in references:
             if "." not in svc:
                 self.info.append(
                     f"{path}: Ignoring non-domain value '{svc}' (service reference?)"
@@ -117,7 +119,7 @@ class ServiceValidator(ValidatorBase):
 
         valid = self._get_services()
 
-        for svc, path in sorted(set(found)):
+        for svc, path in references:
             if "." in svc and not _SERVICE_RE.fullmatch(svc):
                 self.errors.append(f"{path}: Malformed service '{svc}'")
                 all_ok = False

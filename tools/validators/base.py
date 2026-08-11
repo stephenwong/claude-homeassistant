@@ -87,7 +87,7 @@ class ValidatorBase(ABC):
         yaml_files: list[Path] = []
         for pattern in _YAML_GLOB_PATTERNS:
             yaml_files.extend(self.config_dir.glob(pattern))
-        return yaml_files
+        return sorted(yaml_files)
 
     def iter_yaml_payloads(self) -> Iterator[tuple[Path, Any]]:
         """Yield ``(path, data)`` for each non-secrets YAML file in ``config_dir``.

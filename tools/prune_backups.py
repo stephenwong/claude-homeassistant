@@ -9,11 +9,11 @@ Retention rules:
 """
 
 import argparse
-import contextlib
 import sys
 from collections import defaultdict
 from collections.abc import Mapping
 from datetime import datetime
+from pathlib import Path
 from typing import TypedDict
 
 from tools import backup_common
@@ -105,10 +105,11 @@ def _backup_size_and_age(backup: BackupRecord, now: datetime) -> tuple[int, int]
     return size, (now - backup["timestamp"]).days
 
 
-def clean_orphaned_changelogs(dry_run: bool = False) -> int:
-    """Remove changelog files that have no matching backup tar.gz."""
+def _find_orphaned_changelogs() -> list[Path]:
+    """Return managed changelogs that have no matching backup archive."""
     if not backup_common.BACKUP_DIR.exists():
-        return 0
+        return []
+
     orphans = []
     for changelog in backup_common.BACKUP_DIR.glob("*.changelog"):
         if not backup_common._is_managed_artifact(changelog, "changelog"):
@@ -116,6 +117,12 @@ def clean_orphaned_changelogs(dry_run: bool = False) -> int:
         tar_path = backup_common.backup_path_for_changelog(changelog)
         if not backup_common._is_managed_artifact(tar_path, "backup"):
             orphans.append(changelog)
+    return orphans
+
+
+def clean_orphaned_changelogs(dry_run: bool = False) -> int:
+    """Remove changelog files that have no matching backup tar.gz."""
+    orphans = _find_orphaned_changelogs()
     if orphans:
         print(f"\nOrphaned changelogs: {len(orphans)}", file=sys.stderr)
         for orphan in orphans:
@@ -150,15 +157,23 @@ def _clean_orphans_and_check(dry_run: bool) -> bool:
     return True
 
 
-def _format_delete_line(backup: BackupRecord, now: datetime) -> str:
+def _format_delete_line(
+    backup: BackupRecord,
+    now: datetime,
+    stats: tuple[int, int] | None = None,
+) -> str:
     """Format a to-be-deleted backup for display."""
-    size, age_days = _backup_size_and_age(backup, now)
+    size, age_days = _backup_size_and_age(backup, now) if stats is None else stats
     return f"  - {backup['filename']} ({format_size(size)}, {age_days} days old)"
 
 
-def _format_keep_line(backup: BackupRecord, now: datetime) -> str:
+def _format_keep_line(
+    backup: BackupRecord,
+    now: datetime,
+    stats: tuple[int, int] | None = None,
+) -> str:
     """Format a retained backup for display."""
-    size, age_days = _backup_size_and_age(backup, now)
+    size, age_days = _backup_size_and_age(backup, now) if stats is None else stats
     if age_days == 0:
         age_str = "today"
     elif age_days == 1:
@@ -225,9 +240,9 @@ def _print_delete_preview(to_delete: list[BackupRecord], now: datetime) -> None:
     print("\nBackups to delete:", file=sys.stderr)
     total_size = 0
     for backup in sorted(to_delete, key=lambda x: x["timestamp"]):
-        with contextlib.suppress(OSError):
-            total_size += backup["path"].stat().st_size
-        print(_format_delete_line(backup, now))
+        stats = _backup_size_and_age(backup, now)
+        total_size += stats[0]
+        print(_format_delete_line(backup, now, stats))
     print(f"\nTotal space to free: {format_size(total_size)}")
 
 
@@ -235,7 +250,8 @@ def _print_keep_summary(to_keep: list[BackupRecord], now: datetime) -> None:
     """Print the retained backup summary."""
     print("\nRetained backups:", file=sys.stderr)
     for backup in sorted(to_keep, key=lambda x: x["timestamp"], reverse=True):
-        print(_format_keep_line(backup, now), file=sys.stderr)
+        stats = _backup_size_and_age(backup, now)
+        print(_format_keep_line(backup, now, stats), file=sys.stderr)
 
 
 def main(argv: list[str] | None = None) -> int:

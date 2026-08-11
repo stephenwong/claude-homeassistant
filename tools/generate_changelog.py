@@ -92,10 +92,10 @@ def _unified_diff(name: str, old: list[str], new: list[str]) -> list[str]:
 def _count_diff(lines: list[str]) -> tuple[int, int]:
     """Return (added, removed) line counts from a unified-diff list."""
     added = sum(
-        1 for line in lines if line.startswith("+") and not line.startswith("+++")
+        1 for line in lines if line.startswith("+") and not line.startswith("+++ ")
     )
     removed = sum(
-        1 for line in lines if line.startswith("-") and not line.startswith("---")
+        1 for line in lines if line.startswith("-") and not line.startswith("--- ")
     )
     return added, removed
 
@@ -104,18 +104,21 @@ def _describe_file_change(
     name: str, previous: str | None, current: str | None
 ) -> tuple[str | None, str | None]:
     """Return a changed-file summary and its optional unified diff."""
+    previous_lines = previous.splitlines() if previous is not None else []
+    current_lines = current.splitlines() if current is not None else []
+
     if current is not None and previous is None:
-        line_count = len(current.splitlines())
-        diff = _unified_diff(name, [], current.splitlines())
+        line_count = len(current_lines)
+        diff = _unified_diff(name, previous_lines, current_lines)
         return f"  A {name} (+{line_count})", "\n".join(diff)
 
     if current is None and previous is not None:
-        line_count = len(previous.splitlines())
-        diff = _unified_diff(name, previous.splitlines(), [])
+        line_count = len(previous_lines)
+        diff = _unified_diff(name, previous_lines, current_lines)
         return f"  D {name} (-{line_count})", "\n".join(diff)
 
-    if current is not None and previous is not None and current != previous:
-        diff_lines = _unified_diff(name, previous.splitlines(), current.splitlines())
+    if current is not None and previous is not None and current_lines != previous_lines:
+        diff_lines = _unified_diff(name, previous_lines, current_lines)
         if diff_lines:
             added, removed = _count_diff(diff_lines)
             return (
@@ -244,13 +247,13 @@ def main() -> int:
     if args.generate_all:
         generated = 0
         skipped = 0
-        for backup in backups:
+        for index, backup in enumerate(backups):
             cl_path = changelog_path_for(backup)
             if cl_path.exists() and not args.force:
                 skipped += 1
                 continue
             print(f"Generating changelog for {backup['filename']}...", file=sys.stderr)
-            previous = _select_predecessor(backup, backups)
+            previous = backups[index - 1] if index else None
             _write_changelog(backup, previous)
             generated += 1
 

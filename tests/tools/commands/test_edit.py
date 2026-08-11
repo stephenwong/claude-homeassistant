@@ -6,6 +6,7 @@ import pytest
 import yaml
 
 from tests.helpers import make_parser, parse_command_args
+from tools.commands import stale_sensors as stale_cmd
 from tools.commands.edit import add_parser, run
 
 
@@ -57,6 +58,51 @@ class TestAddParser:
         args = parse_command_args("edit", add_parser, ["automations"])
         assert args.summary is False
         assert args.no_summary is False
+
+    def test_edit_and_stale_sensors_config_namespaces_match(self):
+        parser, subparsers = make_parser()
+        add_parser(subparsers)
+        stale_cmd.add_parser(subparsers)
+
+        edit_args = parser.parse_args(["edit", "automations"])
+        stale_args = parser.parse_args(["stale-sensors"])
+        assert edit_args.config == stale_args.config == "config"
+
+        edit_action = next(
+            action
+            for action in subparsers.choices["edit"]._actions
+            if action.dest == "config"
+        )
+        stale_action = next(
+            action
+            for action in subparsers.choices["stale-sensors"]._actions
+            if action.dest == "config"
+        )
+        assert (
+            edit_action.option_strings
+            == stale_action.option_strings
+            == [
+                "--config",
+                "-c",
+            ]
+        )
+        assert edit_action.default == stale_action.default == "config"
+
+    @pytest.mark.parametrize("command", ["edit", "stale-sensors"])
+    def test_config_help_documents_shared_default(self, command, capsys):
+        parser, subparsers = make_parser()
+        if command == "edit":
+            add_parser(subparsers)
+            argv = ["edit", "--help"]
+        else:
+            stale_cmd.add_parser(subparsers)
+            argv = ["stale-sensors", "--help"]
+        with pytest.raises(SystemExit):
+            parser.parse_args(argv)
+        help_text = capsys.readouterr().out
+        assert "--config" in help_text
+        assert "-c" in help_text
+        assert "default: config" in help_text
 
 
 def _write_file(cfg_dir, basename, content):
@@ -213,6 +259,22 @@ class TestRunShow:
         assert rc == 0
         err = capsys.readouterr().err
         assert "empty" in err.lower()
+
+    def test_show_uses_public_load_result_when_file_type_is_known(self, capsys):
+        from tools.commands.edit import _run_show
+
+        class PublicOnlyEditor:
+            def __init__(self):
+                self.load_calls = 0
+
+            def load(self):
+                self.load_calls += 1
+                return [{"alias": "Public API"}]
+
+        editor = PublicOnlyEditor()
+        assert _run_show(editor, None, file_type="list") == 0
+        assert editor.load_calls == 1
+        assert capsys.readouterr().out.strip() == "Public API"
 
 
 class TestRunSet:
@@ -415,6 +477,12 @@ class TestEdgeCases:
         assert result == 0
         data = _read_yaml(tmp_path, "automations")
         assert data[0]["alias"] == "New"
+
+    def test_empty_add_value_is_parsed_and_rejected(self, tmp_path, capsys):
+        args = self._ns(config=str(tmp_path), add="")
+
+        assert run(args) == 1
+        assert "json" in capsys.readouterr().err.lower()
 
     def test_add_to_scripts_file(self, tmp_path):
         """--add on a scripts (dict) file adds as a new key."""

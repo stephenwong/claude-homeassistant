@@ -2,6 +2,8 @@
 
 import argparse
 import sys
+from datetime import UTC, datetime
+from typing import cast
 
 from tools.common import (
     _ENTITY_RE,
@@ -14,6 +16,7 @@ from tools.common import (
 )
 from tools.ha.client import HAClient, HAWSClient
 from tools.output_shape import (
+    JSONValue,
     apply_output_shape,
     print_json,
     truncate_dict_by_key_size,
@@ -65,30 +68,61 @@ class _TraceNotFoundError(Exception):
     """Raised when an automation has no trace-list entries."""
 
 
+def _trace_timestamp_key(value: object) -> float:
+    """Return a timezone-normalized sort key for a trace timestamp."""
+    if not isinstance(value, str):
+        return float("-inf")
+    try:
+        timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return float("-inf")
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=UTC)
+    return timestamp.astimezone(UTC).timestamp()
+
+
+def _trace_start(trace: dict) -> object:
+    """Extract a trace start value from dict- or string-shaped timestamps."""
+    timestamp = trace.get("timestamp")
+    if isinstance(timestamp, dict):
+        return timestamp.get("start")
+    return timestamp
+
+
 def _fetch_single_trace(ws_client: HAWSClient, entity_id: str) -> dict:
     """Resolve an automation entity and fetch its newest trace run."""
     entity_short = entity_id.split(".", 1)[1]
     try:
         with HAClient.from_env() as rest_client:
             state = rest_client.get_json(f"/api/states/{entity_id}")
-        item_id = (state.get("attributes") or {}).get("id") or entity_short
+        attributes = state.get("attributes") if isinstance(state, dict) else {}
+        item_id = (
+            attributes.get("id") if isinstance(attributes, dict) else None
+        ) or entity_short
     except HARequestError:
         item_id = entity_short
 
     traces = ws_client.command("trace/list", domain="automation", item_id=item_id)
+    if not isinstance(traces, list):
+        raise HARequestError("Invalid trace/list response")
+    traces = [trace for trace in traces if isinstance(trace, dict)]
     matching = [trace for trace in traces if trace.get("item_id") == item_id]
     if not matching:
         raise _TraceNotFoundError(entity_id)
     matching.sort(
-        key=lambda trace: trace.get("timestamp", {}).get("start", ""),
+        key=lambda trace: _trace_timestamp_key(_trace_start(trace)),
         reverse=True,
     )
     latest = matching[0]
+    latest_item_id = latest.get("item_id")
+    latest_run_id = latest.get("run_id")
+    if not isinstance(latest_item_id, str) or not isinstance(latest_run_id, str):
+        raise HARequestError("Invalid trace/list entry")
     return ws_client.command(
         "trace/get",
         domain="automation",
-        item_id=latest["item_id"],
-        run_id=latest["run_id"],
+        item_id=latest_item_id,
+        run_id=latest_run_id,
     )
 
 
@@ -99,23 +133,30 @@ def _summarize_trace_list(traces: list[dict]) -> list[dict]:
             "item_id": trace.get("item_id"),
             "state": trace.get("state"),
             "trigger": trace.get("trigger"),
-            "timestamp": (trace.get("timestamp") or {}).get("start"),
+            "timestamp": _trace_start(trace),
         }
         for trace in traces
+        if isinstance(trace, dict)
     ]
-    compact.sort(key=lambda entry: entry.get("timestamp") or "", reverse=True)
+    compact.sort(
+        key=lambda entry: _trace_timestamp_key(entry.get("timestamp")),
+        reverse=True,
+    )
 
     seen: dict[str, dict] = {}
     run_counts: dict[str, int] = {}
     for entry in compact:
-        item_id = entry.get("item_id") or ""
+        raw_item_id = entry.get("item_id")
+        item_id = raw_item_id if isinstance(raw_item_id, str) else ""
         run_counts[item_id] = run_counts.get(item_id, 0) + 1
         if item_id not in seen:
             seen[item_id] = entry
 
     data = list(seen.values())
     for entry in data:
-        runs = run_counts.get(entry.get("item_id") or "", 1)
+        raw_item_id = entry.get("item_id")
+        item_id = raw_item_id if isinstance(raw_item_id, str) else ""
+        runs = run_counts.get(item_id, 1)
         if runs > 1:
             entry["runs"] = runs
     return data
@@ -138,6 +179,8 @@ def _fetch_data(
                 return None, fail_stderr(f"No traces found for {args.entity_id}")
         else:
             data = ws_client.command("trace/list", domain="automation")
+            if not isinstance(data, list):
+                raise HARequestError("Invalid trace/list response")
             if summary and not args.pretty:
                 data = _summarize_trace_list(data)
     except HARequestError as e:
@@ -159,11 +202,16 @@ def _shape_single_entity_data(
             data["trace"] = _prune_trace_entries(data["trace"])
 
     max_chars = resolve_max_chars(args, summary)
+    if args.pick:
+        projected = apply_output_shape(data, pick=args.pick)
+        if isinstance(projected, dict):
+            data = projected
+
     if max_chars is not None:
         data = _cap_trace_dict(data, max_chars)
         if data.get("_truncated") is True:
-            dropped = len(data["dropped_steps"])
-            kept = len(data["kept_steps"])
+            dropped = len(cast(list[JSONValue], data["dropped_steps"]))
+            kept = len(cast(list[JSONValue], data["kept_steps"]))
             total = dropped + kept
             print(
                 f"# trace truncated to ~{max_chars} chars "
@@ -171,8 +219,7 @@ def _shape_single_entity_data(
                 file=sys.stderr,
             )
 
-    data = apply_output_shape(data, pick=args.pick)
-    return data
+    return cast(dict[str, JSONValue], data)
 
 
 def _shape_list_data(
@@ -181,12 +228,13 @@ def _shape_list_data(
     summary: bool,
 ) -> list:
     """Apply output shaping (--first, --pick, --max-chars) to list data."""
-    return apply_output_shape(
+    shaped = apply_output_shape(
         data,
         first=args.first,
         pick=args.pick,
         max_chars=resolve_max_chars(args, summary),
     )
+    return cast(list[JSONValue], shaped)
 
 
 def run(args: argparse.Namespace) -> int:
@@ -210,8 +258,8 @@ def run(args: argparse.Namespace) -> int:
         data = _shape_single_entity_data(data, args, summary)
     elif isinstance(data, list):
         data = _shape_list_data(data, args, summary)
-    else:
-        data = data or []
+    elif data is None:
+        data = []
 
     print_json(data, pretty=args.pretty)
     return 0

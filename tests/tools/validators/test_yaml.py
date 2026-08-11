@@ -207,6 +207,19 @@ class TestValidateAll:
         assert validator.validate_all() is False
         assert any("Configuration must be a dictionary" in e for e in validator.errors)
 
+    def test_mixed_invalid_files_collect_all_structure_diagnostics(
+        self, config_dir, validator
+    ):
+        """A failed check must not short-circuit the remaining checks."""
+        (config_dir / "configuration.yaml").write_text("- item\n")
+        (config_dir / "automations.yaml").write_text("not_a_list: true\n")
+        (config_dir / "scripts.yaml").write_text("- item\n")
+
+        assert validator.validate_all() is False
+        assert any("Configuration must be a dictionary" in e for e in validator.errors)
+        assert any("Automations must be a list" in e for e in validator.errors)
+        assert any("Scripts must be a dictionary" in e for e in validator.errors)
+
 
 class TestYAMLValidatorMain:
     """Cover lines 149-164: main() function."""

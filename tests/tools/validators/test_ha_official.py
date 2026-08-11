@@ -154,6 +154,16 @@ class TestParseCheckConfigOutput:
         )
         assert any("Invalid config" in e for e in validator.errors)
 
+    def test_explicit_error_with_ignorable_phrase_is_not_dropped(self, validator):
+        validator.parse_check_config_output(
+            "ERROR: Integration could not be loaded\n", ""
+        )
+        assert any("could not be loaded" in e for e in validator.errors)
+
+    def test_lowercase_error_prefix_is_an_error(self, validator):
+        validator.parse_check_config_output("error: invalid config\n", "")
+        assert any("invalid config" in e for e in validator.errors)
+
     def test_warning_message(self, validator):
         validator.parse_check_config_output("WARNING: Deprecated feature used\n", "")
         assert any("Deprecated" in w for w in validator.warnings)
@@ -248,6 +258,14 @@ class TestM12RuntimeErrorScoping:
         validator.parse_check_config_output(stdout, "")
         assert not any("RuntimeError" in e for e in validator.errors)
 
+    def test_runtimeerror_with_package_marker_still_survives(self, validator):
+        stdout = (
+            "Unable to install package somepkg\n"
+            "RuntimeError: real configuration failure\n"
+        )
+        validator.parse_check_config_output(stdout, "")
+        assert any("real configuration failure" in e for e in validator.errors)
+
     def test_runtimeerror_without_marker_survives(self, validator):
         stdout = (
             "Traceback (most recent call last):\n"
@@ -284,6 +302,17 @@ class TestRunHACheckConfig:
             return_value=mock_result,
         ):
             assert validator.run_ha_check_config() is False
+
+    def test_failed_check_without_output_has_diagnostic(self, validator):
+        mock_result = MagicMock(returncode=1, stdout="", stderr="")
+
+        with patch(
+            "tools.validators.ha_official.subprocess.run",
+            return_value=mock_result,
+        ):
+            assert validator.run_ha_check_config() is False
+
+        assert validator.errors
 
     def test_timeout(self, validator):
         with patch(

@@ -211,6 +211,16 @@ def add_summary_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_config_dir_arg(parser: argparse.ArgumentParser, *, help: str) -> None:
+    """Attach the shared ``--config``/``-c`` directory option to a command."""
+    parser.add_argument(
+        "--config",
+        "-c",
+        default="config",
+        help=help,
+    )
+
+
 def atomic_write_text(path: Path, content: str) -> None:
     """Write *content* to *path* atomically via temp file + ``os.replace``.
 

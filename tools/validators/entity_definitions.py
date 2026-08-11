@@ -5,7 +5,6 @@ Extracts which entities are defined by the config itself (groups, input_helpers,
 template entities, automations, scripts, scenes, zones) vs. the entity registry.
 """
 
-import concurrent.futures
 import json
 import re
 from pathlib import Path
@@ -152,23 +151,26 @@ class EntityDefinitionExtractor:
 
         try:
             payload = _load_json(restore_file)
-        except (OSError, json.JSONDecodeError) as e:
+            if "data" not in payload:
+                raise ValueError("restore state missing 'data'")
+            items = payload["data"]
+            if not isinstance(items, list):
+                raise ValueError("restore state 'data' must be a list")
+        except (OSError, json.JSONDecodeError, ValueError) as e:
             self.warnings.append(f"Failed to load restore state: {e}")
             self._restore_entities = set()
             return self._restore_entities
 
-        items = payload.get("data", [])
         entities: set[str] = set()
-        if isinstance(items, list):
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                state = item.get("state")
-                if not isinstance(state, dict):
-                    continue
-                entity_id = state.get("entity_id")
-                if isinstance(entity_id, str) and self._is_valid_entity_id(entity_id):
-                    entities.add(entity_id)
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            state = item.get("state")
+            if not isinstance(state, dict):
+                continue
+            entity_id = state.get("entity_id")
+            if isinstance(entity_id, str) and self._is_valid_entity_id(entity_id):
+                entities.add(entity_id)
 
         self._restore_entities = entities
         return self._restore_entities
@@ -193,17 +195,12 @@ class EntityDefinitionExtractor:
         # Run it inline instead of submitting to the thread pool.
         config_entities = self._extract_from_configuration(config_data)
 
-        # Run the four file-reading extractions concurrently.
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            f_auto = executor.submit(self._extract_automation_entities, config_data)
-            f_script = executor.submit(self._extract_script_entities, config_data)
-            f_scene = executor.submit(self._extract_scene_entities, config_data)
-            f_zone = executor.submit(self._extract_zone_entities, config_data)
-
-        automation_entities = f_auto.result()
-        script_entities = f_script.result()
-        scene_entities = f_scene.result()
-        zone_entities = f_zone.result()
+        # These small extractions append diagnostics to shared lists. Keep
+        # their fixed order so completion cannot reorder output.
+        automation_entities = self._extract_automation_entities(config_data)
+        script_entities = self._extract_script_entities(config_data)
+        scene_entities = self._extract_scene_entities(config_data)
+        zone_entities = self._extract_zone_entities(config_data)
 
         entities.update(config_entities)
         entities.update(automation_entities)
@@ -417,44 +414,40 @@ class EntityDefinitionExtractor:
         (automation-only), an item with empty *name_field* but a non-empty
         ``id`` falls back to slugifying the id.
         """
-        entities: set[str] = set()
-
+        items: list[Any] | None = None
         if isinstance(config_data, dict):
-            resolved = self._resolve_include(config_data.get(config_key))
-            if resolved is not None:
-                data = resolved if isinstance(resolved, list) else [resolved]
-                for item in data:
-                    if isinstance(item, dict):
-                        name = item.get(name_field, "")
-                        if name:
-                            entity_id = self._make_entity_id(domain, name)
-                            if entity_id:
-                                entities.add(entity_id)
-                        elif allow_id_fallback and item.get("id"):
-                            entity_id = self._make_entity_id(
-                                domain, "", explicit_id=item.get("id")
-                            )
-                            if entity_id:
-                                entities.add(entity_id)
-                return entities
+            include_value = config_data.get(config_key)
+            is_explicit_include = isinstance(
+                include_value, str
+            ) and include_value.startswith("!include")
+            resolved = self._resolve_include(include_value)
+            if is_explicit_include:
+                items = (
+                    []
+                    if resolved is None
+                    else (resolved if isinstance(resolved, list) else [resolved])
+                )
 
-        file_path = self.config_dir / file_name
-        if file_path.exists():
-            data = self._load_yaml_file(file_path)
-            if isinstance(data, list):
-                for item in data:
-                    if isinstance(item, dict):
-                        name = item.get(name_field, "")
-                        if name:
-                            entity_id = self._make_entity_id(domain, name)
-                            if entity_id:
-                                entities.add(entity_id)
-                        elif allow_id_fallback and item.get("id"):
-                            entity_id = self._make_entity_id(
-                                domain, "", explicit_id=item.get("id")
-                            )
-                            if entity_id:
-                                entities.add(entity_id)
+        if items is None:
+            file_path = self.config_dir / file_name
+            if file_path.exists():
+                data = self._load_yaml_file(file_path)
+                if isinstance(data, list):
+                    items = data
+
+        entities: set[str] = set()
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            name = item.get(name_field, "")
+            if name:
+                entity_id = self._make_entity_id(domain, name)
+                if entity_id:
+                    entities.add(entity_id)
+            elif allow_id_fallback and item.get("id"):
+                entity_id = self._make_entity_id(domain, "", explicit_id=item.get("id"))
+                if entity_id:
+                    entities.add(entity_id)
         return entities
 
     def _extract_automation_entities(self, config_data: dict | None = None) -> set[str]:
@@ -473,8 +466,12 @@ class EntityDefinitionExtractor:
         entities: set[str] = set()
 
         if isinstance(config_data, dict):
-            resolved = self._resolve_include(config_data.get("script"))
-            if resolved is not None:
+            include_value = config_data.get("script")
+            is_explicit_include = isinstance(
+                include_value, str
+            ) and include_value.startswith("!include")
+            resolved = self._resolve_include(include_value)
+            if is_explicit_include:
                 data = resolved if isinstance(resolved, dict) else {}
                 for script_name in data:
                     if isinstance(script_name, str) and self._is_valid_object_id(
@@ -532,11 +529,18 @@ class EntityDefinitionExtractor:
         if zone_storage.exists():
             try:
                 data = _load_json(zone_storage)
-                items = data.get("data", {}).get("items", [])
+                if "data" not in data:
+                    raise ValueError("zone storage missing 'data'")
+                envelope = data["data"]
+                if not isinstance(envelope, dict):
+                    raise ValueError("zone storage 'data' must be an object")
+                items = envelope.get("items", [])
+                if not isinstance(items, list):
+                    raise ValueError("zone storage 'items' must be a list")
                 for item in items:
                     if isinstance(item, dict):
                         name = item.get("name", "")
-                        if name:
+                        if isinstance(name, str) and name:
                             entity_id = self._make_entity_id("zone", name)
                             if entity_id:
                                 entities.add(entity_id)

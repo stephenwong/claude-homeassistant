@@ -532,3 +532,112 @@ def test_missing_automations_yaml_is_silent_skip(tmp_path):
     result = ext._extract_automation_entities()
     assert result == set()
     assert warnings == []
+
+
+@pytest.mark.parametrize(
+    ("domain", "config_key", "name_field", "file_name", "yaml_data", "expected"),
+    [
+        (
+            "automation",
+            "automation",
+            "alias",
+            "automations.yaml",
+            "- alias: Morning Lights\n- id: id_only\n- alias: '!!!'\n- invalid\n",
+            {"automation.morning_lights", "automation.id_only"},
+        ),
+        (
+            "scene",
+            "scene",
+            "name",
+            "scenes.yaml",
+            "- name: Evening Mode!!\n- name: '!!!'\n- invalid\n",
+            {"scene.evening_mode"},
+        ),
+    ],
+    ids=["automation", "scene"],
+)
+def test_named_entity_include_and_file_fallback_match(
+    tmp_path, domain, config_key, name_field, file_name, yaml_data, expected
+):
+    """Include and file-fallback inputs share the same extraction contract."""
+    include_root = tmp_path / "include"
+    fallback_root = tmp_path / "fallback"
+    for root in (include_root, fallback_root):
+        (root / ".storage").mkdir(parents=True)
+        (root / file_name).write_text(yaml_data)
+
+    kwargs = {
+        "domain": domain,
+        "config_key": config_key,
+        "name_field": name_field,
+        "file_name": file_name,
+        "allow_id_fallback": domain == "automation",
+    }
+    included = EntityDefinitionExtractor(
+        include_root, include_root / ".storage", [], []
+    )
+    fallback = EntityDefinitionExtractor(
+        fallback_root, fallback_root / ".storage", [], []
+    )
+
+    include_result = included._extract_named_entities(
+        {config_key: f"!include {file_name}"}, **kwargs
+    )
+    fallback_result = fallback._extract_named_entities(None, **kwargs)
+
+    assert include_result == expected
+    assert fallback_result == expected
+
+
+def test_missing_explicit_include_does_not_fall_back_to_sidecar(tmp_path):
+    (tmp_path / ".storage").mkdir()
+    (tmp_path / "automations.yaml").write_text("- alias: Sidecar Only\n")
+    extractor = EntityDefinitionExtractor(tmp_path, tmp_path / ".storage", [], [])
+
+    result = extractor._extract_named_entities(
+        {"automation": "!include missing.yaml"},
+        domain="automation",
+        config_key="automation",
+        name_field="alias",
+        file_name="automations.yaml",
+        allow_id_fallback=True,
+    )
+
+    assert result == set()
+
+
+def test_missing_explicit_script_include_does_not_fall_back_to_sidecar(tmp_path):
+    (tmp_path / ".storage").mkdir()
+    (tmp_path / "scripts.yaml").write_text("sidecar:\n  sequence: []\n")
+    extractor = EntityDefinitionExtractor(tmp_path, tmp_path / ".storage", [], [])
+
+    assert (
+        extractor._extract_script_entities({"script": "!include missing.yaml"}) == set()
+    )
+
+
+@pytest.mark.parametrize("payload", ["{}", "[]", "null", '"not a mapping"'])
+def test_restore_state_malformed_root_is_reported(tmp_path, payload):
+    storage = tmp_path / ".storage"
+    storage.mkdir()
+    (storage / "core.restore_state").write_text(payload)
+    warnings: list[str] = []
+    ext = EntityDefinitionExtractor(tmp_path, storage, warnings, [])
+
+    assert ext.load_restore_state_entities() == set()
+    assert any("Failed to load restore state" in warning for warning in warnings)
+
+
+@pytest.mark.parametrize("payload", ["{}", "[]", "null", '"not a mapping"'])
+def test_zone_storage_malformed_root_is_reported(tmp_path, payload):
+    storage = tmp_path / ".storage"
+    storage.mkdir()
+    zone_file = storage / "core.zone"
+    zone_file.write_text(payload)
+    warnings: list[str] = []
+    ext = EntityDefinitionExtractor(tmp_path, storage, warnings, [])
+
+    assert ext._extract_zone_entities(None) == set()
+    assert any(
+        "Failed to extract entity definitions" in warning for warning in warnings
+    )

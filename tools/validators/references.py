@@ -381,7 +381,7 @@ class ReferenceValidator(ValidatorBase):
             triggers an error.
         """
         all_valid = True
-        for entity_id in entity_refs:
+        for entity_id in sorted(entity_refs):
             if self.is_uuid_format(entity_id):
                 continue
 
@@ -427,7 +427,7 @@ class ReferenceValidator(ValidatorBase):
             UUID triggers an error.
         """
         all_valid = True
-        for registry_id in registry_ids:
+        for registry_id in sorted(registry_ids):
             if registry_id not in entity_id_mapping:
                 self.errors.append(
                     f"{file_path}: Unknown entity registry ID '{registry_id}'"
@@ -460,7 +460,7 @@ class ReferenceValidator(ValidatorBase):
             unknown device triggers an error.
         """
         all_valid = True
-        for device_id in device_refs:
+        for device_id in sorted(device_refs):
             if device_id not in devices:
                 self.errors.append(f"{file_path}: Unknown device '{device_id}'")
                 all_valid = False
@@ -486,7 +486,7 @@ class ReferenceValidator(ValidatorBase):
         Returns:
             ``None`` — area checks never fail validation.
         """
-        for area_id in area_refs:
+        for area_id in sorted(area_refs):
             if area_id not in areas:
                 self.warnings.append(f"{file_path}: Unknown area '{area_id}'")
 

@@ -7,13 +7,23 @@ Combines functionality from multiple diagnostic scripts.
 
 import json
 import os
+from typing import TypedDict
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
 from tools.common import DEFAULT_HA_URL, get_env_int, load_env_file, validate_ha_url
 
 
-def get_config():
+class DiagnosticConfig(TypedDict):
+    """Runtime configuration used by the diagnostic probes."""
+
+    ha_url: str
+    token: str
+    request_timeout: int
+
+
+def get_config() -> DiagnosticConfig:
     """Load configuration from environment."""
     load_env_file()
     request_timeout, timeout_warning = get_env_int("HA_REQUEST_TIMEOUT", 10)
@@ -24,6 +34,37 @@ def get_config():
         "token": os.getenv("HA_TOKEN", ""),
         "request_timeout": request_timeout,
     }
+
+
+def _request(
+    ha_url: str,
+    token: str,
+    endpoint: str,
+    *,
+    method: str = "GET",
+    request_timeout: int = 10,
+    payload: object | None = None,
+) -> requests.Response:
+    """Send a diagnostic request with the shared authentication settings."""
+    headers = {"Authorization": f"Bearer {token}"}
+    if method == "POST":
+        headers["Content-Type"] = "application/json"
+
+    parsed = urlsplit(ha_url)
+    url = urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            f"{parsed.path.rstrip('/')}/{endpoint.lstrip('/')}",
+            "",
+            "",
+        )
+    )
+    if payload is None:
+        return requests.request(method, url, headers=headers, timeout=request_timeout)
+    return requests.request(
+        method, url, headers=headers, timeout=request_timeout, json=payload
+    )
 
 
 def _safe_json_response(response, error_prefix: str):
@@ -40,10 +81,7 @@ def test_api_connection(ha_url, token, request_timeout: int = 10):
     """Test basic API connection."""
     print("🔗 Testing API Connection...")
     try:
-        headers = {"Authorization": f"Bearer {token}"}
-        response = requests.get(
-            f"{ha_url}/api/", headers=headers, timeout=request_timeout
-        )
+        response = _request(ha_url, token, "/api/", request_timeout=request_timeout)
 
         print(f"   Status: {response.status_code}")
         if response.status_code == 200:
@@ -64,8 +102,6 @@ def test_api_endpoints(ha_url, token, request_timeout: int = 10):
     """Test various API endpoints to find entity registry access."""
     print("\n🔍 Testing Various API Endpoints...")
 
-    headers = {"Authorization": f"Bearer {token}"}
-
     endpoints_to_test = [
         ("/api/config/entity_registry", "Entity Registry"),
         ("/api/config/entity_registry/list", "Entity Registry List"),
@@ -81,8 +117,8 @@ def test_api_endpoints(ha_url, token, request_timeout: int = 10):
     for endpoint, description in endpoints_to_test:
         try:
             print(f"\n   Testing: {endpoint} ({description})")
-            response = requests.get(
-                f"{ha_url}{endpoint}", headers=headers, timeout=request_timeout
+            response = _request(
+                ha_url, token, endpoint, request_timeout=request_timeout
             )
             print(f"   Status: {response.status_code}")
 
@@ -113,11 +149,11 @@ def test_entity_registry_read(ha_url, token, request_timeout: int = 10):
     """Test reading entity registry."""
     print("\n📋 Testing Entity Registry Read Access...")
     try:
-        headers = {"Authorization": f"Bearer {token}"}
-        response = requests.get(
-            f"{ha_url}/api/config/entity_registry",
-            headers=headers,
-            timeout=request_timeout,
+        response = _request(
+            ha_url,
+            token,
+            "/api/config/entity_registry",
+            request_timeout=request_timeout,
         )
 
         print(f"   Status: {response.status_code}")
@@ -149,9 +185,8 @@ def test_states_endpoint(ha_url, token, request_timeout: int = 10):
     """Test the /api/states endpoint to see entity data."""
     print("\n📊 Testing States Endpoint for Entity Info...")
     try:
-        headers = {"Authorization": f"Bearer {token}"}
-        response = requests.get(
-            f"{ha_url}/api/states", headers=headers, timeout=request_timeout
+        response = _request(
+            ha_url, token, "/api/states", request_timeout=request_timeout
         )
 
         print(f"   Status: {response.status_code}")
@@ -192,20 +227,17 @@ def test_entity_rename(ha_url, token, entity_data_list, request_timeout: int = 1
 
     print(f"   Testing rename: {old_id} → {new_id}")
 
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    }
-
     # Method 1: Direct entity registry update
     try:
         print("\n   Method 1: Direct registry update...")
         data = {"new_entity_id": new_id}
-        response = requests.post(
-            f"{ha_url}/api/config/entity_registry/{old_id}",
-            headers=headers,
-            json=data,
-            timeout=request_timeout,
+        response = _request(
+            ha_url,
+            token,
+            f"/api/config/entity_registry/{old_id}",
+            method="POST",
+            request_timeout=request_timeout,
+            payload=data,
         )
 
         print(f"   Status: {response.status_code}")
@@ -221,11 +253,13 @@ def test_entity_rename(ha_url, token, entity_data_list, request_timeout: int = 1
     # Method 2: Update endpoint
     try:
         print("\n   Method 2: Update endpoint...")
-        response = requests.post(
-            f"{ha_url}/api/config/entity_registry/update",
-            headers=headers,
-            json={"entity_id": old_id, "new_entity_id": new_id},
-            timeout=request_timeout,
+        response = _request(
+            ha_url,
+            token,
+            "/api/config/entity_registry/update",
+            method="POST",
+            request_timeout=request_timeout,
+            payload={"entity_id": old_id, "new_entity_id": new_id},
         )
 
         print(f"   Status: {response.status_code}")
@@ -247,11 +281,6 @@ def test_service_call_method(
     """Test if we can rename via service calls."""
     print("\n🔧 Testing Service Call Method...")
 
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    }
-
     # Use first discovered entity, or skip if none available
     if not entity_data_list:
         print("   ❌ No entity data to test with")
@@ -267,11 +296,13 @@ def test_service_call_method(
             "name": "Rename Test Temp",
         }
 
-        response = requests.post(
-            f"{ha_url}/api/services/homeassistant/update_entity",
-            headers=headers,
-            json=service_data,
-            timeout=request_timeout,
+        response = _request(
+            ha_url,
+            token,
+            "/api/services/homeassistant/update_entity",
+            method="POST",
+            request_timeout=request_timeout,
+            payload=service_data,
         )
 
         print(f"   Status: {response.status_code}")
@@ -285,11 +316,18 @@ def test_service_call_method(
         print(f"   ❌ Exception: {e}")
 
 
-def show_websocket_info():
+def show_websocket_info(ha_url: str):
     """Show information about WebSocket method."""
+    parsed = urlsplit(ha_url)
+    websocket_scheme = "wss" if parsed.scheme == "https" else "ws"
+    websocket_path = f"{parsed.path.rstrip('/')}/api/websocket"
+    websocket_url = urlunsplit(
+        (websocket_scheme, parsed.netloc, websocket_path, "", "")
+    )
+
     print("\n🌐 WebSocket API Information...")
     print("   Entity registry operations likely require WebSocket API:")
-    print("   • WebSocket URL: ws://homeassistant.local:8123/api/websocket")
+    print(f"   • WebSocket URL: {websocket_url}")
     print("   • Auth: Send auth message with Bearer token")
     print("   • List entities: {'type': 'config/entity_registry/list'}")
     print(
@@ -351,7 +389,7 @@ def main():
     test_service_call_method(ha_url, token, entity_data, request_timeout)
 
     # Test 7: WebSocket method info
-    show_websocket_info()
+    show_websocket_info(ha_url)
 
     # Summary
     print("\n" + "=" * 60)

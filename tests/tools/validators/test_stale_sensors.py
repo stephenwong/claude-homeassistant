@@ -98,6 +98,25 @@ def test_file_deps_empty():
 
 
 class TestExcludeDomains:
+    def test_default_excluded_platform_policy_is_not_shared(self, tmp_path):
+        expected = {
+            "template",
+            "group",
+            "derivative",
+            "utility_meter",
+            "min_max",
+            "threshold",
+            "integration",
+            "history_stats",
+            "filter",
+        }
+        first = StaleSensorValidator(config_dir=str(tmp_path))
+        second = StaleSensorValidator(config_dir=str(tmp_path))
+
+        assert first.exclude_platforms == expected
+        first.exclude_platforms.remove("template")
+        assert second.exclude_platforms == expected
+
     def test_exclude_subtracts_from_only_domains(self, tmp_path):
         v = StaleSensorValidator(
             config_dir=str(tmp_path),
@@ -150,6 +169,48 @@ def test_api_offline_degrades_gracefully(config_dir):
             "skipped" in info or "offline" in info or "unreachable" in info
             for info in v.info
         )
+
+
+def test_live_fetch_closes_client_on_success(config_dir):
+    client = _mock_states([])
+
+    with patch("tools.validators.stale_sensors.HAClient", return_value=client):
+        validator = StaleSensorValidator(str(config_dir))
+        assert validator._fetch_live_states() == []
+
+    client.close.assert_called_once_with()
+
+
+def test_live_fetch_closes_client_on_api_error(config_dir):
+    client = _mock_offline()
+
+    with patch("tools.validators.stale_sensors.HAClient", return_value=client):
+        validator = StaleSensorValidator(str(config_dir))
+        assert validator._fetch_live_states() is None
+
+    client.close.assert_called_once_with()
+
+
+def test_malformed_state_shapes_are_skipped(config_dir):
+    validator = StaleSensorValidator(str(config_dir))
+
+    stale, warnings = validator._scan_states(
+        [
+            {"entity_id": 123, "state": "on"},
+            {
+                "entity_id": "sensor.bad_attributes",
+                "state": "on",
+                "attributes": [],
+                "last_changed": "2020-01-01T00:00:00+00:00",
+                "last_updated": "2020-01-01T00:00:00+00:00",
+            },
+        ],
+        None,
+        datetime(2026, 6, 25, 21, 0, 0, tzinfo=UTC),
+    )
+
+    assert stale == []
+    assert warnings == []
 
 
 def test_oserror_during_states_fetch_degrades(config_dir):
@@ -523,6 +584,52 @@ def test_retry_on_registry_read_failure(config_dir):
         assert any("sensor.test_temp" in w for w in v.warnings)
         assert call_count == 2
         mock_sleep.assert_called_once_with(0.1)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        OSError("permanent read failure"),
+        KeyError("missing field"),
+        TypeError("wrong shape"),
+        ValueError("invalid envelope"),
+        AttributeError("unexpected shape"),
+    ],
+    ids=["oserror", "keyerror", "typeerror", "valueerror", "attributeerror"],
+)
+def test_permanent_registry_failures_are_not_retried(config_dir, error):
+    """Only transient JSON decoding should incur the retry delay."""
+    _write_entity_registry(config_dir, [])
+    v = StaleSensorValidator(str(config_dir))
+
+    with (
+        patch(
+            "tools.validators.stale_sensors.load_storage_registry",
+            side_effect=error,
+        ) as load_registry,
+        patch("time.sleep") as mock_sleep,
+    ):
+        assert v._load_registry() is None
+
+    load_registry.assert_called_once()
+    mock_sleep.assert_not_called()
+    assert any(
+        "Falling back to state-only analysis" in warning for warning in v.warnings
+    )
+
+
+def test_live_api_failure_does_not_load_registry(config_dir):
+    """Live-fetch failure returns before local registry work begins."""
+    client = _mock_offline()
+    with (
+        patch("tools.validators.stale_sensors.HAClient", return_value=client),
+        patch.object(StaleSensorValidator, "_load_registry") as load_registry,
+    ):
+        v = StaleSensorValidator(str(config_dir))
+
+        assert v.validate_all() is True
+
+    load_registry.assert_not_called()
 
 
 def test_unexpected_timestamp_parser_error_propagates(config_dir):

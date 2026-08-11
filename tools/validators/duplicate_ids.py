@@ -8,10 +8,10 @@ Also checks scripts.yaml for duplicate top-level keys (M10b).
 
 import yaml
 
-from tools.validators.base import ValidatorBase
+from tools.validators.base import HAYamlLoader, ValidatorBase
 
 
-class _DupKeyLoader(yaml.SafeLoader):
+class _DupKeyLoader(HAYamlLoader):
     """SafeLoader that raises on duplicate mapping keys.
 
     Used to detect duplicate top-level keys in scripts.yaml where PyYAML's
@@ -21,18 +21,24 @@ class _DupKeyLoader(yaml.SafeLoader):
     def construct_mapping(self, node, deep=False):
         seen: set = set()
         for key_node, _ in node.value:
+            if key_node is not None and key_node.tag == "tag:yaml.org,2002:merge":
+                continue
+            key = self.construct_object(key_node, deep=deep) if key_node else None
             try:
-                key = self.construct_object(key_node, deep=deep) if key_node else None
-            except Exception:
-                key = None
-            if key in seen:
+                duplicate = key in seen
+            except TypeError:
+                continue
+            if duplicate:
                 raise yaml.constructor.ConstructorError(
                     None,
                     None,
-                    f"duplicate top-level key: {key!r}",
+                    f"duplicate key: {key!r}",
                     key_node.start_mark,
                 )
-            seen.add(key)
+            try:
+                seen.add(key)
+            except TypeError:
+                continue
         return super().construct_mapping(node, deep=deep)
 
 
@@ -101,7 +107,7 @@ class DuplicateIDValidator(ValidatorBase):
         except yaml.constructor.ConstructorError as e:
             self.errors.append(f"{scripts_file}: {e.problem}")
             return False
-        except (OSError, yaml.YAMLError) as e:
+        except (OSError, TypeError, yaml.YAMLError) as e:
             self.errors.append(f"{scripts_file}: failed to parse: {e}")
             return False
         return True

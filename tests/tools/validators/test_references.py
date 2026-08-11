@@ -3,6 +3,7 @@
 
 import builtins
 import json
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -29,6 +30,13 @@ def _write_registries(config_dir, *, entities, devices, areas):
     _write_registry(storage_dir, "core.entity_registry", "entities", entities)
     _write_registry(storage_dir, "core.device_registry", "devices", devices)
     _write_registry(storage_dir, "core.area_registry", "areas", areas)
+
+
+class _ReverseSet(set):
+    """Set whose iteration order exposes callers that rely on set order."""
+
+    def __iter__(self):
+        return iter(sorted(super().__iter__(), reverse=True))
 
 
 @pytest.fixture
@@ -637,6 +645,16 @@ class TestGetConfigDefinedEntities:
 
 
 class TestLoadRegistries:
+    def test_malformed_registry_envelope_becomes_a_diagnostic(self, tmp_path):
+        storage = tmp_path / ".storage"
+        storage.mkdir()
+        (storage / "core.entity_registry").write_text("[]")
+
+        v = ReferenceValidator(str(tmp_path))
+
+        assert v.load_entity_registry() == {}
+        assert any("failed to load entity registry" in e.lower() for e in v.errors)
+
     def test_unexpected_attribute_error_propagates(self, setup_config):
         """Unexpected loader bugs must not be hidden as registry diagnostics."""
         v = ReferenceValidator(str(setup_config))
@@ -723,6 +741,57 @@ class TestLoadRegistries:
         v = ReferenceValidator(str(tmp_path))
         result = v.load_area_registry()
         assert result == {}
+
+
+class TestReferenceDiagnosticOrder:
+    def test_reference_diagnostics_are_sorted(self, validator):
+        source = Path("config.yaml")
+
+        validator._check_entity_refs(
+            source,
+            _ReverseSet({"sensor.zulu", "sensor.alpha"}),
+            {},
+            set(),
+            set(),
+        )
+        assert validator.errors == [
+            "config.yaml: Unknown entity 'sensor.alpha'",
+            "config.yaml: Unknown entity 'sensor.zulu'",
+        ]
+
+        validator.errors.clear()
+        validator._check_device_refs(
+            source,
+            _ReverseSet({"device.zulu", "device.alpha"}),
+            {},
+        )
+        assert validator.errors == [
+            "config.yaml: Unknown device 'device.alpha'",
+            "config.yaml: Unknown device 'device.zulu'",
+        ]
+
+        validator.errors.clear()
+        validator._check_registry_uuid_refs(
+            source,
+            _ReverseSet({"registry.zulu", "registry.alpha"}),
+            {},
+            {},
+        )
+        assert validator.errors == [
+            "config.yaml: Unknown entity registry ID 'registry.alpha'",
+            "config.yaml: Unknown entity registry ID 'registry.zulu'",
+        ]
+
+        validator.warnings.clear()
+        validator._check_area_refs(
+            source,
+            _ReverseSet({"area.zulu", "area.alpha"}),
+            {},
+        )
+        assert validator.warnings == [
+            "config.yaml: Unknown area 'area.alpha'",
+            "config.yaml: Unknown area 'area.zulu'",
+        ]
 
 
 class TestExtractEntitiesFromTemplate:

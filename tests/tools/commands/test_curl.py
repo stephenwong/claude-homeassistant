@@ -4,6 +4,7 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from tests.helpers import parse_command_args
 from tools.commands import curl as curl_cmd
@@ -360,6 +361,44 @@ class TestHttpMethods:
         assert curl_cmd.run(args) == 0
         assert capsys.readouterr().out == "not json"
 
+    def test_valid_json_null_remains_available_to_json_only_flags(
+        self, mock_client, capsys
+    ):
+        mock_client.get.return_value = json_resp(None)
+        args = make_args(endpoint="/api/", first=1)
+        assert curl_cmd.run(args) == 0
+        assert json.loads(capsys.readouterr().out) == [None]
+
+    @pytest.mark.parametrize(
+        ("flag", "value"),
+        [("first", 1), ("keys", True), ("pick", "state")],
+    )
+    def test_malformed_json_rejects_json_only_flags(
+        self, mock_client, capsys, flag, value
+    ):
+        response = response_mock(content_type="application/json", text='{"broken":')
+        response.json.side_effect = ValueError("invalid JSON")
+        mock_client.get.return_value = response
+        args = make_args(endpoint="/api/", **{flag: value})
+        assert curl_cmd.run(args) == 1
+        assert f"Cannot use --{flag}" in capsys.readouterr().err
+
+    def test_json_looking_text_rejects_pick_after_parse_failure(
+        self, mock_client, capsys
+    ):
+        response = response_mock(content_type="text/plain", text="{not-json}")
+        response.json.side_effect = ValueError("invalid JSON")
+        mock_client.get.return_value = response
+        assert curl_cmd.run(make_args(endpoint="/api/", pick="state")) == 1
+        assert "Cannot use --pick" in capsys.readouterr().err
+
+    def test_raw_output_keeps_malformed_json_body(self, mock_client, capsys):
+        response = response_mock(content_type="application/json", text="{broken")
+        response.json.side_effect = ValueError("invalid JSON")
+        mock_client.get.return_value = response
+        assert curl_cmd.run(make_args(endpoint="/api/", raw=True)) == 0
+        assert capsys.readouterr().out == "{broken"
+
     def test_unexpected_json_parser_failure_is_not_suppressed(self, mock_client):
         response = response_mock(content_type="application/json", text="body")
         response.json.side_effect = RuntimeError("parser bug")
@@ -434,6 +473,27 @@ class TestHttpMethods:
         args = make_args(method="PATCH", endpoint="/api/config")
         assert curl_cmd.run(args) == 0
         mock_client.patch.assert_called_once_with("/api/config", json=None)
+
+
+class TestClientCleanup:
+    def _client_with_session(self):
+        session = MagicMock()
+        client = HAClient("http://ha:8123", "tok", session=session)
+        return client, session
+
+    def test_run_closes_client_after_success(self):
+        client, session = self._client_with_session()
+        session.get.return_value = json_resp({"ok": True})
+        with patch("tools.commands.curl.HAClient.from_env", return_value=client):
+            assert curl_cmd.run(make_args(endpoint="/api/")) == 0
+        session.close.assert_called_once()
+
+    def test_run_closes_client_after_request_failure(self):
+        client, session = self._client_with_session()
+        session.get.side_effect = requests.ConnectionError("connection lost")
+        with patch("tools.commands.curl.HAClient.from_env", return_value=client):
+            assert curl_cmd.run(make_args(endpoint="/api/")) == 1
+        session.close.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -1177,6 +1237,15 @@ class TestGuardrail:
         out, err = capsys.readouterr()
         assert out.strip() == "10"
         assert "use --first" in err
+
+    def test_bare_api_states_rejects_malformed_json(self, mock_client, capsys):
+        response = response_mock(content_type="application/json", text="{broken")
+        response.json.side_effect = ValueError("invalid JSON")
+        mock_client.get.return_value = response
+        args = make_args(endpoint="/api/states", summary=True, no_summary=False)
+
+        assert curl_cmd.run(args) == 1
+        assert "not valid JSON" in capsys.readouterr().err
 
     def test_no_guard_flag_disables_guardrail(self, mock_client, capsys):
         data = [{"entity_id": f"sensor.{i}"} for i in range(3)]

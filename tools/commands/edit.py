@@ -12,7 +12,12 @@ from pathlib import Path
 
 from ruamel.yaml import YAML, YAMLError
 
-from tools.common import add_summary_args, fail_stderr, resolve_summary
+from tools.common import (
+    add_config_dir_arg,
+    add_summary_args,
+    fail_stderr,
+    resolve_summary,
+)
 from tools.ha.yaml_editor import YAMLEditor
 
 _SAFE_YAML = YAML(typ="safe")
@@ -35,12 +40,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         default=None,
         help="Automation alias or script name to operate on.",
     )
-    parser.add_argument(
-        "--config",
-        "-c",
-        default="config",
-        help="Path to the config directory (default: config)",
-    )
+    add_config_dir_arg(parser, help="Path to the config directory (default: config)")
     parser.add_argument(
         "--show",
         action="store_true",
@@ -122,7 +122,7 @@ def run(args: argparse.Namespace) -> int:
     if args.alias is None and (args.set or args.remove):
         return fail_stderr("alias required for --set or --remove")
 
-    if not target_file.exists() and not args.add:
+    if not target_file.exists() and args.add is None:
         return fail_stderr(f"file not found: {target_file}")
 
     editor = YAMLEditor(target_file)
@@ -133,11 +133,11 @@ def run(args: argparse.Namespace) -> int:
             # resolution and the shared mutation boundary.
             return _run_add(editor, args.add, quiet)
 
-        file_type = _resolve_file_type(editor)
-
         # --show (or default), --set, --remove
         if args.show or not any([args.set, args.remove]):
-            return _run_show(editor, args.alias, file_type=file_type)
+            return _run_show(editor, args.alias)
+
+        file_type = _resolve_file_type(editor)
 
         alias: str = args.alias  # type: ignore[assignment]
 
@@ -192,11 +192,7 @@ def _dispatch_by_filetype[T](
 def _run_show(
     editor: YAMLEditor, alias: str | None, *, file_type: str | None = None
 ) -> int:
-    if file_type is None:
-        data = editor.load()
-    else:
-        editor._ensure_loaded()
-        data = editor._data
+    data = editor.load()
     if data is None:
         print("(empty file)", file=sys.stderr)
         return 0

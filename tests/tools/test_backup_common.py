@@ -84,6 +84,14 @@ class TestIterTarballFileMembers:
 
 
 class TestManagedBackups:
+    def test_artifact_kind_is_closed_literal(self):
+        from typing import Literal, get_args, get_origin
+
+        import tools.backup_common as backup_common
+
+        assert get_origin(backup_common.ArtifactKind) is Literal
+        assert get_args(backup_common.ArtifactKind) == ("backup", "changelog")
+
     def test_backup_dir_honors_environment_override(self, monkeypatch, tmp_path):
         import tools.backup_common as backup_common
 

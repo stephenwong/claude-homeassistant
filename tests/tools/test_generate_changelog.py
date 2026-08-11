@@ -159,6 +159,29 @@ class TestCountDiff:
 
 
 class TestGenerateChangelog:
+    @pytest.mark.parametrize(
+        ("previous", "current", "expected_summary"),
+        [
+            (None, "new\n", "  A config/test.yaml (+1)"),
+            ("old\n", None, "  D config/test.yaml (-1)"),
+            ("old\n", "new\nmore\n", "  M config/test.yaml (+2, -1)"),
+            ("same\n", "same\n", None),
+        ],
+    )
+    def test_describe_change_normalizes_diff_inputs(
+        self, previous, current, expected_summary
+    ):
+        from tools.generate_changelog import _describe_file_change
+
+        summary, diff = _describe_file_change("config/test.yaml", previous, current)
+
+        assert summary == expected_summary
+        if expected_summary is None:
+            assert diff is None
+        else:
+            assert "a/config/test.yaml" in diff
+            assert "b/config/test.yaml" in diff
+
     def test_file_change_collection_keeps_summaries_paired_with_diffs(self):
         from tools.generate_changelog import _collect_file_changes
 
@@ -360,6 +383,45 @@ class TestMain:
             assert result == 0
             captured = capsys.readouterr()
             assert "Generated 2" in captured.err
+
+    def test_generate_all_uses_adjacent_predecessors(self, tmp_path, monkeypatch):
+        from tools.generate_changelog import main
+
+        backups = []
+        for index in range(4):
+            archive_dir = tmp_path / f"backup-{index}"
+            archive_dir.mkdir()
+            filename = f"ha_config_2026020{index + 1}_120000.tar.gz"
+            archive = make_tar(
+                archive_dir,
+                {"config/test.yaml": f"content {index}\n"},
+                name=filename,
+            )
+            backups.append(
+                {
+                    "path": archive,
+                    "filename": filename,
+                    "timestamp": datetime(2026, 2, index + 1, 12),
+                }
+            )
+
+        monkeypatch.setattr("sys.argv", ["generate_changelog", "--generate-all"])
+        with (
+            patch("tools.generate_changelog.get_backups", return_value=backups),
+            patch(
+                "tools.generate_changelog._select_predecessor",
+                side_effect=AssertionError("bulk generation must use the index"),
+            ),
+        ):
+            assert main() == 0
+
+        for index, backup in enumerate(backups):
+            changelog = backup["path"].with_suffix("").with_suffix(".changelog")
+            content = changelog.read_text()
+            expected_previous = "(none - initial backup)"
+            if index:
+                expected_previous = backups[index - 1]["filename"]
+            assert f"Previous: {expected_previous}" in content
 
     def test_generate_all_skips_existing(self, tmp_path, monkeypatch, capsys):
         from tools.generate_changelog import main

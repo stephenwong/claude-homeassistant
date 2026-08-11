@@ -17,7 +17,7 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import requests
 
@@ -32,7 +32,7 @@ from tools.common import (
     resolve_summary,
 )
 from tools.ha.client import HAClient
-from tools.output_shape import apply_output_shape, print_json
+from tools.output_shape import JSONValue, apply_output_shape, print_json
 
 
 def _has_explicit_output_flags(args: argparse.Namespace) -> bool:
@@ -268,16 +268,16 @@ def _emit_output(
     request: _CurlRequest,
     data: Any,
     raw_text: str,
-    is_json: bool,
+    json_parsed: bool,
     summary: bool,
 ) -> int:
     """Dispatch output processing based on CLI flags. Returns exit code."""
     # Keep this sequence explicit: these are intentionally ordered side effects.
-    guardrail_result = _handle_guardrail(args, request, data, summary)
+    guardrail_result = _handle_guardrail(args, request, data, json_parsed, summary)
     if guardrail_result is not None:
         return guardrail_result
 
-    _validate_json_output_flags(args, data, is_json)
+    _validate_json_output_flags(args, data, json_parsed)
     _emit_output_warnings(args, summary)
 
     effective_max_chars = _effective_max_chars(args, summary)
@@ -293,7 +293,7 @@ def _emit_output(
         _warn_first_overcount(data, args.first)
 
     data = _shape_output(data, args, effective_max_chars)
-    _render_output(data, raw_text, args.pretty)
+    _render_output(data, raw_text, args.pretty, json_parsed)
     return 0
 
 
@@ -301,6 +301,7 @@ def _handle_guardrail(
     args: argparse.Namespace,
     request: _CurlRequest,
     data: Any,
+    json_parsed: bool,
     summary: bool,
 ) -> int | None:
     """Handle the compact-mode bare ``/api/states`` guardrail."""
@@ -312,6 +313,9 @@ def _handle_guardrail(
         and summary
         and not args.no_guard
     ):
+        if not json_parsed:
+            print("Error: /api/states response was not valid JSON", file=sys.stderr)
+            return 1
         count_result = _handle_count(data)
         print(
             "Hint: use --first/--pick/--entity/--domain to narrow, "
@@ -323,11 +327,11 @@ def _handle_guardrail(
 
 
 def _validate_json_output_flags(
-    args: argparse.Namespace, data: Any, is_json: bool
+    args: argparse.Namespace, data: Any, json_parsed: bool
 ) -> None:
     """Reject JSON-only output transforms for a non-JSON response."""
     requires_json = args.keys or (args.first is not None) or bool(args.pick)
-    if requires_json and data is None and not is_json:
+    if requires_json and data is None and not json_parsed:
         flag = "keys" if args.keys else ("first" if args.first is not None else "pick")
         raise _CurlError(
             f"Cannot use --{flag} on non-JSON response (Content-Type: unknown)"
@@ -398,9 +402,9 @@ def _shape_output(data: Any, args: argparse.Namespace, max_chars: int | None) ->
     )
 
 
-def _render_output(data: Any, raw_text: str, pretty: bool) -> None:
+def _render_output(data: Any, raw_text: str, pretty: bool, json_parsed: bool) -> None:
     """Render parsed JSON, falling back to the original response body."""
-    if data is not None:
+    if json_parsed:
         print_json(data, pretty=pretty)
     else:
         print(raw_text, end="")
@@ -417,27 +421,32 @@ def run(args: argparse.Namespace) -> int:
         summary = resolve_summary(args)
         request = _validate_args(args, summary)
         client = _build_client()
-        json_data = _parse_json_body(request.method, args, summary)
-        resp = _execute_request(client, request.method, request.endpoint, json_data)
+        # Keep the original object in use so test doubles that do not return
+        # themselves from __enter__ still exercise the configured request path.
+        with client:
+            json_data = _parse_json_body(request.method, args, summary)
+            resp = _execute_request(client, request.method, request.endpoint, json_data)
 
-        if not resp.ok:
-            raise _CurlError(f"HTTP {resp.status_code}: {resp.text[:200]}")
+            if not resp.ok:
+                raise _CurlError(f"HTTP {resp.status_code}: {resp.text[:200]}")
 
-        content_type = resp.headers.get("content-type", "")
-        raw_text = resp.text
-        is_json = "application/json" in content_type or raw_text.strip().startswith(
-            ("{", "[")
-        )
-        data = None
-        if is_json:
-            try:  # noqa: SIM105 - preserve a narrow, explicit parser boundary
-                data = resp.json()
-            except ValueError:
-                # Keep the content-type/shape detection separate from parsing:
-                # an invalid JSON body still falls back to its raw text.
-                pass
+            content_type = resp.headers.get("content-type", "")
+            raw_text = resp.text
+            looks_like_json = "application/json" in content_type or (
+                raw_text.strip().startswith(("{", "["))
+            )
+            data = None
+            json_parsed = False
+            if looks_like_json:
+                try:  # noqa: SIM105 - preserve a narrow, explicit parser boundary
+                    data = resp.json()
+                    json_parsed = True
+                except ValueError:
+                    # Keep response classification separate from parse success:
+                    # an invalid JSON body still falls back to its raw text.
+                    pass
 
-        return _emit_output(args, request, data, raw_text, is_json, summary)
+            return _emit_output(args, request, data, raw_text, json_parsed, summary)
     except _CurlError as e:
         return fail_stderr(str(e))
 
@@ -475,7 +484,7 @@ def _collect_key_names(data: Any) -> tuple[list[str] | None, str]:
 
 def _print_key_names(keys: list[str], max_chars: int | None) -> None:
     """Shape and print normalized key names as compact JSON."""
-    shaped = apply_output_shape(keys, max_chars=max_chars)
+    shaped = apply_output_shape(cast(JSONValue, keys), max_chars=max_chars)
     print(json.dumps(shaped, separators=(",", ":")))
 
 

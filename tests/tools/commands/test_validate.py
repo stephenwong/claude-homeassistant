@@ -1,6 +1,7 @@
 """Tests for tools/commands/validate.py — in-process validator runner."""
 
 import hashlib
+import inspect
 import json
 from argparse import Namespace
 from unittest.mock import patch
@@ -47,11 +48,32 @@ class TestValidatorResult:
 
 
 class TestRunOne:
+    def test_private_cache_helpers_do_not_accept_unused_description(self):
+        assert (
+            "description"
+            not in inspect.signature(validate._load_cached_result).parameters
+        )
+        assert (
+            "description" not in inspect.signature(validate._run_validator).parameters
+        )
+
+    def test_validator_duration_uses_perf_counter(self, config_dir, monkeypatch):
+        ticks = iter((10.0, 11.0))
+
+        def wall_clock_called():
+            raise AssertionError("validator duration must not use wall-clock time")
+
+        monkeypatch.setattr(validate.time, "perf_counter", lambda: next(ticks))
+        monkeypatch.setattr(validate.time, "time", wall_clock_called)
+        result = _run_one(YAMLValidator, "YAML", config_dir, quiet=True, force=True)
+        assert result.passed is True
+        assert result.duration == 1.0
+
     def test_run_validator_returns_internal_execution_result(self, config_dir):
         from tools.commands.validate import _run_validator, _ValidatorExecutionResult
 
         instance = YAMLValidator(config_dir, quiet=True, summary=True)
-        result = _run_validator(instance, "YAML", 0.0)
+        result = _run_validator(instance, 0.0)
         assert isinstance(result, _ValidatorExecutionResult)
         assert result.passed is True
         assert result.cached is False
@@ -140,6 +162,22 @@ class TestRunOne:
         path.write_text(json.dumps(data))
 
         result = _run_one(YAMLValidator, "YAML", config_dir, quiet=True, force=False)
+        assert result.passed
+        assert result.cached is False
+
+    def test_failed_cache_record_is_a_cache_miss(self, config_dir):
+        from tools.cache import cache_path
+        from tools.validators.yaml import YAMLValidator
+
+        first = _run_one(YAMLValidator, "YAML", config_dir, quiet=True, force=True)
+        assert first.passed
+        path = cache_path(config_dir, YAMLValidator.__name__)
+        data = json.loads(path.read_text())
+        data["passed"] = False
+        path.write_text(json.dumps(data))
+
+        result = _run_one(YAMLValidator, "YAML", config_dir, quiet=True, force=False)
+
         assert result.passed
         assert result.cached is False
 
@@ -439,6 +477,37 @@ class TestRunOne:
 
 
 class TestRunValidators:
+    def test_results_keep_declared_validator_order_when_completion_is_racy(
+        self, config_dir, monkeypatch
+    ):
+        """Parallel completion order must not change diagnostic presentation order."""
+        import time
+
+        class FirstValidator:
+            pass
+
+        class SecondValidator:
+            pass
+
+        monkeypatch.setattr(
+            validate,
+            "_VALIDATORS",
+            [(FirstValidator, "first"), (SecondValidator, "second")],
+        )
+
+        def fake_run_one(
+            cls: object, description: str, *_args: object, **_kwargs: object
+        ) -> ValidatorResult:
+            if description == "first":
+                time.sleep(0.01)
+            return ValidatorResult(description=description, passed=True)
+
+        monkeypatch.setattr(validate, "_run_one", fake_run_one)
+
+        results = run_validators(config_dir, quiet=True, force=True)
+
+        assert [result.description for result in results] == ["first", "second"]
+
     def test_returns_all_results(self, config_dir):
         """Default suite runs 7 validators (yaml, refs, dup, svc, tpl, stale, ha)."""
         results = run_validators(config_dir, quiet=True, force=True)
@@ -663,6 +732,20 @@ class TestRun:
         mock_rv.assert_called_once_with(
             config_dir, quiet=True, force=True, summary=True
         )
+
+    def test_overall_duration_uses_perf_counter(self, config_dir, monkeypatch):
+        ticks = iter((20.0, 21.0))
+
+        def wall_clock_called():
+            raise AssertionError("overall duration must not use wall-clock time")
+
+        monkeypatch.setattr(validate.time, "perf_counter", lambda: next(ticks))
+        monkeypatch.setattr(validate.time, "time", wall_clock_called)
+        with patch(
+            "tools.commands.validate.run_validators",
+            return_value=[ValidatorResult(description="V1", passed=True, duration=0.1)],
+        ):
+            assert run(self._args(config_dir, quiet=True, summary=True)) == 0
 
     # ── Summary mode tests ──────────────────────────────────────────
 

@@ -2,7 +2,12 @@
 
 import argparse
 
-from tools.common import add_summary_args, positive_int, resolve_summary
+from tools.common import (
+    add_config_dir_arg,
+    add_summary_args,
+    positive_int,
+    resolve_summary,
+)
 from tools.validators.stale_sensors import (
     DEFAULT_ONLY_DOMAINS,
     DEFAULT_THRESHOLD_HOURS,
@@ -17,12 +22,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Detect stale Home Assistant sensors.",
         description="Query active entities via HA REST API and find stale sensors.",
     )
-    parser.add_argument(
-        "--config",
-        "-c",
-        default="config",
-        help="Path to HA config directory (default: config)",
-    )
+    add_config_dir_arg(parser, help="Path to HA config directory (default: config)")
     parser.add_argument(
         "--threshold",
         "-t",

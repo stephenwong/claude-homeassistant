@@ -6,6 +6,8 @@ from typing import Any
 
 from tools.validators.base import ValidatorBase
 
+_DEPRECATED_CONFIGURATION_KEYS = ("discovery", "introduction")
+
 
 class YAMLValidator(ValidatorBase):
     """Validates YAML syntax and basic structure for Home Assistant files."""
@@ -37,8 +39,7 @@ class YAMLValidator(ValidatorBase):
             )
 
         # Check for deprecated keys
-        deprecated_keys = ["discovery", "introduction"]
-        for key in deprecated_keys:
+        for key in _DEPRECATED_CONFIGURATION_KEYS:
             if key in data:
                 self.warnings.append(f"{file_path}: '{key}' is deprecated")
 
@@ -82,10 +83,16 @@ class YAMLValidator(ValidatorBase):
         all_valid = True
         err_before = len(self.errors)
         for file_path, data in self.iter_yaml_payloads():
-            all_valid &= self.validate_configuration_structure(file_path, data)
-            all_valid &= self.validate_automations_structure(file_path, data)
-            all_valid &= self.validate_scripts_structure(file_path, data)
-        all_valid &= len(self.errors) == err_before
+            configuration_valid = self.validate_configuration_structure(file_path, data)
+            automations_valid = self.validate_automations_structure(file_path, data)
+            scripts_valid = self.validate_scripts_structure(file_path, data)
+            all_valid = (
+                all_valid
+                and configuration_valid
+                and automations_valid
+                and scripts_valid
+            )
+        all_valid = all_valid and len(self.errors) == err_before
         return all_valid
 
 

@@ -53,6 +53,50 @@ class TestM10bScriptsDuplicateKeys:
         v = DuplicateIDValidator(str(config_dir))
         assert v.validate_all() is True
 
+    def test_home_assistant_tagged_script_passes(self, config_dir):
+        """Duplicate-key parsing accepts the same tags as HA YAML parsing."""
+        (config_dir / "scripts.yaml").write_text(
+            "tagged_script:\n  sequence: []\n  icon: !secret script_icon\n"
+        )
+
+        v = DuplicateIDValidator(str(config_dir))
+
+        assert v.validate_all() is True
+        assert v.errors == []
+
+    def test_constructor_error_is_not_reported_as_duplicate_key(self, config_dir):
+        """An unrelated key-construction error must retain its parse category."""
+        (config_dir / "scripts.yaml").write_text(
+            "!unknown first: {sequence: []}\n!unknown second: {sequence: []}\n"
+        )
+
+        v = DuplicateIDValidator(str(config_dir))
+
+        assert v.validate_all() is False
+        assert any(
+            "could not determine a constructor" in error.lower() for error in v.errors
+        )
+        assert not any("duplicate top-level key: None" in error for error in v.errors)
+
+    def test_yaml_merge_keys_are_supported(self, config_dir):
+        (config_dir / "scripts.yaml").write_text(
+            "base: &base\n  sequence: []\nmerged:\n  <<: *base\n"
+        )
+
+        v = DuplicateIDValidator(str(config_dir))
+
+        assert v.validate_all() is True
+
+    def test_unhashable_yaml_key_is_reported_as_parse_error(self, config_dir):
+        (config_dir / "scripts.yaml").write_text(
+            "? [first, second]\n: {sequence: []}\n"
+        )
+
+        v = DuplicateIDValidator(str(config_dir))
+
+        assert v.validate_all() is False
+        assert any("unhashable key" in error.lower() for error in v.errors)
+
 
 class TestNoDuplicates:
     def test_no_duplicates_passes(self, config_dir, validator):

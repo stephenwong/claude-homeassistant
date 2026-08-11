@@ -193,6 +193,31 @@ class TestLoadCache:
         result = load_cache(tmp_path, "Foo")
         assert result is None
 
+    def test_undecodable_json_returns_none(self, tmp_path):
+        cache_dir = tmp_path / ".cache" / "validators"
+        cache_dir.mkdir(parents=True)
+        (cache_dir / "Foo.json").write_bytes(b"\xff\xfe")
+        assert load_cache(tmp_path, "Foo") is None
+
+    def test_load_uses_shared_cache_path(self, tmp_path, monkeypatch):
+        import tools.cache as cache
+
+        redirected = tmp_path / "redirected.json"
+        redirected.write_text(
+            json.dumps(
+                {
+                    "schema": cache.CACHE_SCHEMA_VERSION,
+                    "hash": "abc",
+                    "passed": True,
+                }
+            )
+        )
+        monkeypatch.setattr(cache, "cache_path", lambda _config_dir, _name: redirected)
+
+        result = cache.load_cache(tmp_path, "Foo")
+        assert result is not None
+        assert result["hash"] == "abc"
+
     def test_missing_hash_key_returns_none(self, tmp_path):
         cache_dir = tmp_path / ".cache" / "validators"
         cache_dir.mkdir(parents=True)
@@ -405,6 +430,12 @@ class TestBlobCache:
         cache_dir = tmp_path / ".cache" / "entities"
         cache_dir.mkdir(parents=True)
         (cache_dir / "bad.json").write_text("{invalid")
+        assert load_blob(tmp_path, "bad") is None
+
+    def test_load_undecodable_returns_none(self, tmp_path):
+        cache_dir = tmp_path / ".cache" / "entities"
+        cache_dir.mkdir(parents=True)
+        (cache_dir / "bad.json").write_bytes(b"\xff\xfe")
         assert load_blob(tmp_path, "bad") is None
 
     def test_save_creates_directory(self, tmp_path):

@@ -58,6 +58,37 @@ def cache_path(config_dir: Path, name: str) -> Path:
     return config_dir / CACHE_DIR_NAME / f"{name}.json"
 
 
+def _load_json(path: Path, *, retries: int = 0):
+    """Read a JSON cache file, returning ``None`` when it is unusable."""
+    if not path.is_file():
+        return None
+
+    for attempt in range(retries + 1):
+        try:
+            with path.open(encoding="utf-8") as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            if attempt < retries:
+                time.sleep(0.1)
+                continue
+            return None
+        except OSError, ValueError:
+            return None
+    return None
+
+
+def _write_json(path: Path, data) -> None:
+    """Write JSON cache data through the shared atomic text boundary."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        print(
+            f"WARN: failed to create cache directory for {path}: {e}", file=sys.stderr
+        )
+        return
+    atomic_write_text(path, json.dumps(data))
+
+
 def load_cache(config_dir: Path, name: str) -> dict | None:
     """Load a cached validator result. Returns None on any failure.
 
@@ -65,22 +96,7 @@ def load_cache(config_dir: Path, name: str) -> dict | None:
     convention for atomic-write safety). Does NOT create directories — only
     reads from existing cache files.
     """
-    path = config_dir / CACHE_DIR_NAME / f"{name}.json"
-    if not path.is_file():
-        return None
-    data = None
-    for attempt in range(2):
-        try:
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
-            break
-        except json.JSONDecodeError:
-            if attempt == 0:
-                time.sleep(0.1)
-                continue
-            return None
-        except OSError:
-            return None
+    data = _load_json(cache_path(config_dir, name), retries=1)
     if data is None:
         return None
     if not isinstance(data, dict):
@@ -141,27 +157,23 @@ def _blob_hash(keys: list[str | bytes]) -> str:
     return sha.hexdigest()
 
 
+def _blob_path(config_dir: Path, name: str) -> Path:
+    """Return the path to a generic entity-cache blob."""
+    return config_dir / BLOB_CACHE_DIR / f"{name}.json"
+
+
 def save_blob(config_dir: Path, name: str, data) -> None:
     """Save arbitrary JSON-serializable data to the entity cache atomically.
 
     Writes via :func:`tools.common.atomic_write_text` (temp + fsync +
     ``os.replace``) so a crash mid-write never leaves a truncated cache file.
     """
-    path = config_dir / BLOB_CACHE_DIR / f"{name}.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(path, json.dumps(data))
+    _write_json(_blob_path(config_dir, name), data)
 
 
 def load_blob(config_dir: Path, name: str):
     """Load cached blob data.  Returns None on any failure."""
-    path = config_dir / BLOB_CACHE_DIR / f"{name}.json"
-    if not path.is_file():
-        return None
-    try:
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
-    except OSError, ValueError:
-        return None
+    return _load_json(_blob_path(config_dir, name))
 
 
 def save_cache(
@@ -188,6 +200,4 @@ def save_cache(
         "duration": round(duration, 4),
         "stderr": stderr,
     }
-    path = cache_path(config_dir, name)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(path, json.dumps(data))
+    _write_json(cache_path(config_dir, name), data)

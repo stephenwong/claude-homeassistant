@@ -1,11 +1,14 @@
 """Tests for tools/reload_config.py - HA config reload via API."""
 
 import subprocess
+from collections.abc import Callable
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from tools.common import HARequestError
+from tools.ha.client import HAClient
 from tools.reload_config import (
     CORE_RELOAD_SERVICE,
     FILE_TO_SERVICE,
@@ -15,6 +18,18 @@ from tools.reload_config import (
     reload_config,
     reload_service,
 )
+
+
+def _status_changes_helper() -> Callable[..., set[str] | None]:
+    """Return the renamed status helper, regardless of its accepted final name."""
+    import tools.reload_config as reload_module
+
+    for name in ("_run_git_status_changes", "_run_git_status_paths"):
+        helper = getattr(reload_module, name, None)
+        if helper is not None:
+            return helper
+    pytest.fail("git status helper should describe all status changes")
+    raise AssertionError("unreachable")
 
 
 def _diff_only(stdout):
@@ -101,6 +116,53 @@ class TestDetectChangedServices:
             result = detect_changed_services()
         assert result == {"automation/reload", "script/reload"}
 
+    def test_modified_added_and_deleted_statuses_are_classified(self):
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = [
+                MagicMock(returncode=0, stdout=""),
+                MagicMock(
+                    returncode=0,
+                    stdout=(
+                        "M  config/automations.yaml\0"
+                        "A  config/scripts.yaml\0"
+                        "D  config/scenes.yaml\0"
+                    ),
+                ),
+            ]
+            result = detect_changed_services()
+        assert result == {
+            "automation/reload",
+            "script/reload",
+            "scene/reload",
+        }
+
+    def test_unstaged_status_entries_are_classified(self):
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = [
+                MagicMock(returncode=0, stdout=""),
+                MagicMock(returncode=0, stdout=" M config/automations.yaml\0"),
+            ]
+            result = detect_changed_services()
+        assert result == {"automation/reload"}
+
+    def test_git_diff_and_status_share_execution_contract(self):
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = [
+                MagicMock(returncode=0, stdout=""),
+                MagicMock(returncode=0, stdout=""),
+            ]
+            assert detect_changed_services("custom", git_timeout=7) == set()
+
+        assert [call.args[0][:2] for call in mock_run.call_args_list] == [
+            ["git", "diff"],
+            ["git", "status"],
+        ]
+        for call in mock_run.call_args_list:
+            assert call.kwargs["capture_output"] is True
+            assert call.kwargs["text"] is True
+            assert call.kwargs["timeout"] == 7
+            assert call.kwargs["cwd"].is_dir()
+
     def test_no_changed_files_returns_empty_set(self):
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = _diff_only("")
@@ -134,26 +196,27 @@ class TestDetectChangedServices:
             result = detect_changed_services()
         assert result is None
 
-    def test_timeout_on_status_returns_diff_result(self):
+    def test_timeout_on_status_triggers_safe_full_reload(self):
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = [
                 MagicMock(returncode=0, stdout="config/automations.yaml\0"),
                 subprocess.TimeoutExpired(cmd="git", timeout=10),
             ]
             result = detect_changed_services()
-        assert result == {"automation/reload"}
+        assert result is None
 
     def test_status_handles_rename(self):
-        """Rename status emits two NUL-delimited entries; old path is skipped."""
+        """Rename status classifies both old and new reloadable paths."""
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = [
                 MagicMock(returncode=0, stdout=""),
                 MagicMock(
-                    returncode=0, stdout="R  config/automations.yaml\0config/old.yaml\0"
+                    returncode=0,
+                    stdout="R  config/automations.yaml\0config/scripts.yaml\0",
                 ),
             ]
             result = detect_changed_services()
-        assert result == {"automation/reload"}
+        assert result == {"automation/reload", "script/reload"}
 
 
 class TestReloadService:
@@ -201,13 +264,19 @@ class TestReloadService:
         assert ok is False
         assert err is not None and "timeout" in err
 
-    def test_unexpected_exception_caught(self):
-        """M17: non-HARequestError exceptions in reload_service are caught."""
+    def test_unexpected_exception_propagates(self):
+        """Unexpected programming errors must not be mislabeled as service failures."""
         client = _make_client()
         client.post.side_effect = RuntimeError("connection reset mid-read")
-        svc, ok, err = reload_service(client, "automation/reload")
-        assert ok is False
-        assert err is not None and "RuntimeError" in err
+        with pytest.raises(RuntimeError, match="connection reset mid-read"):
+            reload_service(client, "automation/reload")
+
+    def test_malformed_reload_plan_propagates(self):
+        client = _make_client()
+        from tools.reload_config import _execute_reload_plan
+
+        with pytest.raises(TypeError):
+            _execute_reload_plan(client, cast(set[str], {"automation/reload", 1}))
 
 
 class TestReloadConfig:
@@ -235,6 +304,36 @@ class TestReloadConfig:
             return_value={FULL_RELOAD_SERVICE},
         ):
             assert reload_config() is True
+
+    def test_success_closes_client_session(self, monkeypatch):
+        session = MagicMock()
+        session.post.return_value = MagicMock(status_code=200)
+        client = HAClient("http://ha:8123", "tok", session=session)
+        monkeypatch.setattr("tools.reload_config.HAClient.from_env", lambda: client)
+        with patch(
+            "tools.reload_config.detect_changed_services",
+            return_value={"automation/reload"},
+        ):
+            assert reload_config(summary=True) is True
+        session.close.assert_called_once()
+
+    def test_exception_closes_client_session(self, monkeypatch):
+        session = MagicMock()
+        client = HAClient("http://ha:8123", "tok", session=session)
+        monkeypatch.setattr("tools.reload_config.HAClient.from_env", lambda: client)
+        with (
+            patch(
+                "tools.reload_config.detect_changed_services",
+                return_value={"automation/reload"},
+            ),
+            patch(
+                "tools.reload_config._execute_reload_plan",
+                side_effect=RuntimeError("reload bug"),
+            ),
+            pytest.raises(RuntimeError, match="reload bug"),
+        ):
+            reload_config(summary=True)
+        session.close.assert_called_once()
 
     def test_api_failure(self):
         self._mock_client.post.return_value = MagicMock(status_code=500)
@@ -464,6 +563,22 @@ class TestReloadConfig:
         out = capsys.readouterr().out
         assert "must be an integer" not in out
 
+    def test_elapsed_duration_uses_monotonic_clock(self, monkeypatch):
+        import tools.reload_config as reload_module
+
+        ticks = iter((10.0, 11.0))
+        monkeypatch.setattr(reload_module.time, "monotonic", lambda: next(ticks))
+        monkeypatch.setattr(
+            reload_module.time,
+            "time",
+            lambda: pytest.fail("reload duration must not use wall-clock time"),
+        )
+        with patch(
+            "tools.reload_config.detect_changed_services",
+            return_value={"automation/reload"},
+        ):
+            assert reload_config(summary=True) is True
+
 
 class TestM15CoreFailureSkipsDomain:
     """M15: if core config reload fails, domain reloads must be skipped."""
@@ -648,29 +763,25 @@ class TestRunGitDiff:
             assert _run_git_diff("config", git_timeout=10) is None
 
 
-class TestRunGitStatusUntracked:
-    """Direct unit tests for _run_git_status_untracked."""
+class TestRunGitStatusChanges:
+    """Direct unit tests for the status-change helper."""
 
     def test_untracked_yaml_picked_up(self):
         from unittest.mock import MagicMock, patch
-
-        from tools.reload_config import _run_git_status_untracked
 
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
                 returncode=0,
                 stdout="?? config/automations.yaml\0",
             )
-            result = _run_git_status_untracked("config", git_timeout=10)
+            result = _status_changes_helper()("config", git_timeout=10)
         assert result == {"automations.yaml"}
 
-    def test_git_failure_returns_empty_set(self):
+    def test_git_failure_returns_none(self):
         from unittest.mock import patch
 
-        from tools.reload_config import _run_git_status_untracked
-
         with patch("subprocess.run", side_effect=FileNotFoundError):
-            assert _run_git_status_untracked("config", git_timeout=10) == set()
+            assert _status_changes_helper()("config", git_timeout=10) is None
 
 
 class TestMissingTokenHelpHint:

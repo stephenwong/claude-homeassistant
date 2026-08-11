@@ -87,6 +87,25 @@ class TestRunCli:
         _DummyValidator.run_cli("dummy")
         assert called == [True]
 
+    def test_get_yaml_files_returns_a_glob_order_independent_list(
+        self, tmp_path, monkeypatch
+    ):
+        validator = _DummyValidator(str(tmp_path))
+
+        def unordered_glob(path, pattern):
+            if pattern == "*.yaml":
+                return [path / "z.yaml", path / "a.yaml"]
+            return [path / "z.yml", path / "a.yml"]
+
+        monkeypatch.setattr(type(validator.config_dir), "glob", unordered_glob)
+
+        assert validator.get_yaml_files() == [
+            tmp_path / "a.yaml",
+            tmp_path / "a.yml",
+            tmp_path / "z.yaml",
+            tmp_path / "z.yml",
+        ]
+
 
 def test_format_diagnostics_preserves_severity_order_and_prefixes():
     assert format_diagnostics(["bad"], ["careful"], ["note"]) == (

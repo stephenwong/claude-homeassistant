@@ -8,19 +8,23 @@ output for agent consumption.
 
 import json
 
+type JSONValue = (
+    None | bool | int | float | str | list[JSONValue] | dict[str, JSONValue]
+)
 
-def _compact_dumps(data) -> str:
+
+def _compact_dumps(data: JSONValue) -> str:
     """Serialize *data* as compact JSON (no whitespace, UTF-8 passthrough)."""
     return json.dumps(data, separators=(",", ":"), ensure_ascii=False)
 
 
 def apply_output_shape(
-    data,
+    data: JSONValue,
     *,
     first: int | None = None,
     pick: str | None = None,
     max_chars: int | None = None,
-):
+) -> JSONValue:
     """Apply token-reduction transforms to JSON data.
 
     Order of operations: first → pick → max_chars.
@@ -54,7 +58,7 @@ def apply_output_shape(
 # ---------------------------------------------------------------------------
 
 
-def _first(data, n: int):
+def _first(data: JSONValue, n: int) -> JSONValue:
     """Keep first *n* items from a list/dict.  Scalars become ``[data]``."""
     if isinstance(data, list):
         return data[:n]
@@ -63,7 +67,7 @@ def _first(data, n: int):
     return [data]
 
 
-def _pick_fields(data, fields: list[str]):
+def _pick_fields(data: JSONValue, fields: list[str]) -> JSONValue:
     """Keep only the specified *fields* from each dict in *data*."""
     if isinstance(data, list):
         return [_pick_item(item, fields) for item in data]
@@ -72,13 +76,13 @@ def _pick_fields(data, fields: list[str]):
     return data
 
 
-def _pick_item(item, fields: list[str]):
+def _pick_item(item: JSONValue, fields: list[str]) -> JSONValue:
     if not isinstance(item, dict):
         return item
     return {k: item[k] for k in fields if k in item}
 
 
-def print_json(data, *, pretty: bool = False) -> None:
+def print_json(data: JSONValue, *, pretty: bool = False) -> None:
     """Print JSON to stdout with configurable indentation.
 
     Compact output (no whitespace) by default; pretty-print with indent=2
@@ -90,7 +94,7 @@ def print_json(data, *, pretty: bool = False) -> None:
         print(_compact_dumps(data))
 
 
-def _truncate_by_chars(data, max_chars: int):
+def _truncate_by_chars(data: JSONValue, max_chars: int) -> JSONValue:
     """Drop trailing list items (or largest dict keys) until compact JSON fits.
 
     Appends a ``{"_truncated": True, ...}`` marker describing what was dropped.
@@ -109,7 +113,7 @@ def _truncate_by_chars(data, max_chars: int):
     return data
 
 
-def _truncate_list(data: list, max_chars: int):
+def _truncate_list(data: list[JSONValue], max_chars: int) -> list[JSONValue]:
     """Drop trailing list items until the (compact) serialization fits.
 
     Uses a prefix-sum + binary search over per-item serialized lengths so
@@ -129,8 +133,12 @@ def _truncate_list(data: list, max_chars: int):
     # Precompute marker sizes for each possible n.
     marker_lens = {}
     for n in range(0, original_len + 1):
-        marker = {"_truncated": True, "shown": n, "total": original_len}
-        marker_str = _compact_dumps(marker)
+        item_marker: dict[str, JSONValue] = {
+            "_truncated": True,
+            "shown": n,
+            "total": original_len,
+        }
+        marker_str = _compact_dumps(item_marker)
         marker_lens[n] = (1 if n > 0 else 0) + len(marker_str)
 
     # Binary-search: largest n in [0, original_len] such that total fits.
@@ -146,19 +154,23 @@ def _truncate_list(data: list, max_chars: int):
     if best == 0 and prefix[0] + marker_lens[0] > max_chars:
         return [{"_truncated": True, "shown": 0, "total": original_len}]
 
-    marker = {"_truncated": True, "shown": best, "total": original_len}
+    marker: dict[str, JSONValue] = {
+        "_truncated": True,
+        "shown": best,
+        "total": original_len,
+    }
     return data[:best] + [marker]
 
 
 def truncate_dict_by_key_size(
-    data: dict,
+    data: dict[str, JSONValue],
     max_chars: int,
     *,
     target_key: str | None = None,
     dropped_key_name: str = "dropped_keys",
     kept_key_name: str = "kept_keys",
     preserve_min: int = 0,
-) -> dict:
+) -> dict[str, JSONValue]:
     """Drop largest-value keys from a (sub)dict until the compact serialization fits.
 
     Greedy-fit: ranks candidate keys by serialized value length (largest first),
@@ -202,11 +214,11 @@ def truncate_dict_by_key_size(
         reverse=True,
     )
 
-    remaining = dict(target)
+    remaining: dict[str, JSONValue] = dict(target)
     dropped: list[str] = []
 
-    def build_candidate() -> dict:
-        marker = {
+    def build_candidate() -> dict[str, JSONValue]:
+        marker: dict[str, JSONValue] = {
             "_truncated": True,
             dropped_key_name: list(dropped),
             kept_key_name: list(remaining.keys()),

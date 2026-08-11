@@ -124,6 +124,41 @@ class TestServiceValidation:
             assert v.validate_all() is True
             assert any("light.turn_onn" in w for w in v.warnings)
 
+    def test_duplicate_service_references_have_stable_sorted_diagnostics(
+        self, config_dir
+    ):
+        _write_automation(
+            config_dir,
+            [
+                {
+                    "id": "t",
+                    "alias": "T",
+                    "triggers": [],
+                    "actions": [
+                        {"action": "light.zulu", "data": {}},
+                        {"action": "light.alpha", "data": {}},
+                        {"action": "light.zulu", "data": {}},
+                    ],
+                },
+            ],
+        )
+        mock_client = _mock_services([{"domain": "light", "services": {}}])
+        with patch(
+            "tools.validators.services.HAClient.from_env", return_value=mock_client
+        ):
+            v = ServiceValidator(str(config_dir))
+            assert v.validate_all() is True
+
+        unknown = [warning for warning in v.warnings if "Unknown service" in warning]
+        assert unknown == [
+            "automations.yaml[0].actions[1].action: Unknown service "
+            "'light.alpha' (service not loaded?)",
+            "automations.yaml[0].actions[0].action: Unknown service "
+            "'light.zulu' (service not loaded?)",
+            "automations.yaml[0].actions[2].action: Unknown service "
+            "'light.zulu' (service not loaded?)",
+        ]
+
     def test_legacy_service_key_supported(self, config_dir):
         _write_automation(
             config_dir,

@@ -2,13 +2,24 @@
 
 import json
 from pathlib import Path
-from typing import Any
+
+type JSONValue = (
+    dict[str, JSONValue] | list[JSONValue] | str | int | float | bool | None
+)
+type JSONObject = dict[str, JSONValue]
 
 
-def _load_json(storage_path: Path) -> Any:
-    """Open and parse a storage JSON file, leaving policy to the caller."""
+def _load_json(storage_path: Path) -> JSONObject:
+    """Open and parse a storage JSON object.
+
+    Storage files use different ``data`` shapes, so callers own validation
+    below the common top-level object envelope.
+    """
     with open(storage_path, encoding="utf-8") as f:
-        return json.load(f)
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError(f"{storage_path}: JSON root must be an object")
+    return data
 
 
 def load_storage_registry(
@@ -16,7 +27,7 @@ def load_storage_registry(
     *,
     list_key: str,
     key_field: str,
-) -> dict[str, Any]:
+) -> dict[str, JSONObject]:
     """Read a HA ``.storage/`` registry JSON and index items by *key_field*.
 
     Performs the parse-and-index step common to every registry loader in the
@@ -41,9 +52,26 @@ def load_storage_registry(
         OSError: ``storage_path`` does not exist or is unreadable
             (``FileNotFoundError``, ``PermissionError``, etc.).
         json.JSONDecodeError: File contents are not valid JSON.
-        KeyError, TypeError, ValueError, AttributeError: Malformed structure
-            (e.g. ``data["data"]`` is a list, items are not iterable, an
-            item is missing *key_field*).
+        ValueError: The storage envelope, item list, or item mapping is
+            malformed.
     """
     data = _load_json(storage_path)
-    return {item[key_field]: item for item in data.get("data", {}).get(list_key, [])}
+    if "data" not in data:
+        raise ValueError(f"{storage_path}: missing 'data' object")
+    envelope = data["data"]
+    if not isinstance(envelope, dict):
+        raise ValueError(f"{storage_path}: 'data' must be an object")
+
+    items = envelope.get(list_key, [])
+    if not isinstance(items, list):
+        raise ValueError(f"{storage_path}: 'data.{list_key}' must be a list")
+
+    result: dict[str, JSONObject] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            raise ValueError(f"{storage_path}: items must be objects")
+        key = item.get(key_field)
+        if not isinstance(key, str):
+            raise ValueError(f"{storage_path}: item missing string field '{key_field}'")
+        result[key] = item
+    return result

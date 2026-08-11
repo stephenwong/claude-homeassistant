@@ -265,6 +265,34 @@ class TestRun:
             }
         ]
 
+    def test_summarize_trace_list_orders_timezone_offsets_by_instant(self):
+        from tools.commands.trace import _summarize_trace_list
+
+        traces = [
+            {
+                "item_id": "same",
+                "state": "stopped",
+                "trigger": "older",
+                "timestamp": {"start": "2026-01-01T11:00:00+02:00"},
+            },
+            {
+                "item_id": "same",
+                "state": "stopped",
+                "trigger": "newer",
+                "timestamp": {"start": "2026-01-01T10:30:00+00:00"},
+            },
+        ]
+
+        result = _summarize_trace_list(traces)
+
+        assert result[0]["trigger"] == "newer"
+
+    def test_malformed_trace_list_response_returns_error(self, mock_client, capsys):
+        mock_client.command.return_value = {"not": "a list"}
+
+        assert trace_cmd.run(make_args()) == 1
+        assert "invalid trace/list response" in capsys.readouterr().err.lower()
+
     def test_summary_dedupes_by_item_id(self, mock_client, capsys):
         """Summary mode dedupes trace list to one entry per item_id + runs field."""
         mock_client.command.return_value = DUPLICATE_TRACES

@@ -29,6 +29,15 @@ _IGNORABLE_STDOUT_SUBSTRINGS = (
     "Traceback (most recent call last):",
     "could not be loaded",
 ) + _BENIGN_PACKAGE_INSTALL_MARKERS
+_STDERR_ERROR_INDICATORS = ("error", "fail", "fatal", "exception", "traceback")
+_STDERR_BENIGN_ANY = ("debug", "info:", "starting")
+_STDERR_BENIGN_PHRASES = (
+    "voluptuous",
+    "setup of domain",
+    "setup of platform",
+    "loading",
+    "initialized",
+)
 
 
 class HAOfficialValidator(ValidatorBase):
@@ -88,6 +97,10 @@ class HAOfficialValidator(ValidatorBase):
             # exits 0; on exit 0 demote any parsed errors to warnings so they stay
             # visible without failing CI (per AGENTS.md "exit 0 partial = pass").
             passed = result.returncode == 0
+            if not passed and not self.errors:
+                self.errors.append(
+                    "Home Assistant configuration check failed without diagnostics"
+                )
             if passed and self.errors:
                 self.warnings.extend(self.errors)
                 self.errors.clear()
@@ -154,10 +167,17 @@ class HAOfficialValidator(ValidatorBase):
             line = line.strip()
             if not line:
                 continue
+            is_explicit_error = re.match(r"^\W*(ERROR|RuntimeError)\b", line, re.I)
+            is_benign_package_line = any(
+                marker in line.lower() for marker in _BENIGN_PACKAGE_INSTALL_MARKERS
+            )
+            if is_explicit_error and not (benign_ctx and is_benign_package_line):
+                self._classify_stdout_line(line)
+                continue
             if self.is_ignorable_message(line):
                 continue
             if benign_ctx:
-                if "runtimeerror:" in line.lower() or line.strip() == "^^^":
+                if line.strip() == "^^^":
                     continue
                 if self.is_ignorable_traceback_line(line, benign_ctx=True):
                     continue
@@ -175,9 +195,9 @@ class HAOfficialValidator(ValidatorBase):
                 self.info.append(f"HA Check: {line}")
             else:
                 self.errors.append(f"HA Check: {line}")
-        elif re.match(r"^\W*(ERROR|Error|RuntimeError)\b", line):
+        elif re.match(r"^\W*(ERROR|RuntimeError)\b", line, re.I):
             self.errors.append(f"HA Check: {line}")
-        elif re.match(r"^\W*(WARNING|Warning)\b", line):
+        elif re.match(r"^\W*WARNING\b", line, re.I):
             self.warnings.append(f"HA Check: {line}")
         else:
             if line and not line.startswith("INFO:"):
@@ -187,26 +207,17 @@ class HAOfficialValidator(ValidatorBase):
         """Classify each stderr line. Real-error indicators override benign phrases."""
         if not stderr:
             return
-        error_indicators = ("error", "fail", "fatal", "exception", "traceback")
-        benign_any = ("debug", "info:", "starting")
-        benign_phrases = (
-            "voluptuous",
-            "setup of domain",
-            "setup of platform",
-            "loading",
-            "initialized",
-        )
         for line in stderr.split("\n"):
             line = line.strip()
             if not line:
                 continue
             line_lower = line.lower()
-            if any(ind in line_lower for ind in error_indicators):
+            if any(ind in line_lower for ind in _STDERR_ERROR_INDICATORS):
                 self.errors.append(f"HA Error: {line}")
                 continue
-            if any(x in line_lower for x in benign_any):
+            if any(x in line_lower for x in _STDERR_BENIGN_ANY):
                 continue
-            if any(x in line_lower for x in benign_phrases):
+            if any(x in line_lower for x in _STDERR_BENIGN_PHRASES):
                 continue
             self.errors.append(f"HA Error: {line}")
 

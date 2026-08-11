@@ -16,7 +16,7 @@ import sys
 import tarfile
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
-from typing import NotRequired, TypedDict
+from typing import IO, NotRequired, TypedDict
 
 from tools.backup_common import BackupRecord, get_backups, iter_tarball_file_members
 from tools.common import get_env_int, non_negative_int
@@ -46,9 +46,9 @@ def is_likely_unsafe_regex(pattern: str) -> bool:
 
 
 def _search_file(
-    extracted,
+    extracted: IO[bytes],
     display_name: str,
-    pattern: re.Pattern,
+    pattern: re.Pattern[str],
     context_lines: int,
     matches: list[_MatchResult],
 ) -> None:
@@ -57,14 +57,14 @@ def _search_file(
     pending_after: list[tuple[_MatchResult, int]] = []
 
     for line_num, raw_line in enumerate(extracted, start=1):
-        line = raw_line.decode("utf-8").rstrip("\n")
+        line = raw_line.decode("utf-8").rstrip("\r\n")
 
         if pending_after:
             remaining_pairs: list[tuple[_MatchResult, int]] = []
-            for match_entry, remaining in pending_after:
-                match_entry.setdefault("context_after", []).append(line)
+            for pending_match, remaining in pending_after:
+                pending_match.setdefault("context_after", []).append(line)
                 if remaining - 1 > 0:
-                    remaining_pairs.append((match_entry, remaining - 1))
+                    remaining_pairs.append((pending_match, remaining - 1))
             pending_after = remaining_pairs
 
         if not pattern.search(line):
@@ -72,7 +72,7 @@ def _search_file(
                 context_before.append(line)
             continue
 
-        match_entry = {
+        match_entry: _MatchResult = {
             "file": display_name,
             "line_num": line_num,
             "line": line,
@@ -90,7 +90,7 @@ def _search_file(
 
 def search_backup(
     backup: BackupRecord,
-    pattern: re.Pattern,
+    pattern: re.Pattern[str],
     yaml_only: bool = True,
     context_lines: int = 0,
 ) -> tuple[list[_MatchResult], bool]:
@@ -98,13 +98,12 @@ def search_backup(
     matches: list[_MatchResult] = []
     try:
         for display_name, extracted in iter_tarball_file_members(backup["path"]):
-            if yaml_only and not (
-                display_name.endswith(".yaml") or display_name.endswith(".yml")
-            ):
-                continue
-
             try:
                 with extracted:
+                    if yaml_only and not (
+                        display_name.endswith(".yaml") or display_name.endswith(".yml")
+                    ):
+                        continue
                     _search_file(
                         extracted,
                         display_name,
@@ -113,7 +112,7 @@ def search_backup(
                         matches,
                     )
             except UnicodeDecodeError:
-                continue
+                return [], True
 
     except (tarfile.TarError, OSError) as e:
         print(f"  Warning: Could not read {backup['filename']}: {e}", file=sys.stderr)
@@ -124,7 +123,7 @@ def search_backup(
 
 def _search_backups(
     backups: list[BackupRecord],
-    pattern: re.Pattern,
+    pattern: re.Pattern[str],
     *,
     yaml_only: bool,
     context_lines: int,
@@ -178,6 +177,8 @@ def _render_results(
                         for ctx_line in m["context_after"]:
                             print(f"           {m['file']}:     {ctx_line}")
                 print()
+        elif _u:
+            print(f"  ????  {backup['filename']} ({date_str}) unreadable")
         else:
             print(f"  ----   {backup['filename']} ({date_str})")
 
@@ -258,7 +259,7 @@ def main() -> int:
     match_count, unreadable_count = _render_results(
         results, files_only=args.files_only, context_lines=args.context
     )
-    return 0 if match_count else (1 if unreadable_count else 0)
+    return 1 if unreadable_count else (0 if match_count else 0)
 
 
 if __name__ == "__main__":

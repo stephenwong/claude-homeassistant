@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from tools.cache import _compute_hash_status, load_cache, save_cache
-from tools.common import add_summary_args, resolve_summary
+from tools.common import add_config_dir_arg, add_summary_args, resolve_summary
 from tools.validators.base import ValidatorBase, format_diagnostics
 from tools.validators.duplicate_ids import DuplicateIDValidator
 from tools.validators.ha_official import HAOfficialValidator
@@ -97,7 +97,6 @@ def _cache_key(instance: Any, cls: type) -> str | None:
 def _load_cached_result(
     instance: Any,
     name: str,
-    description: str,
     file_hash: str | None,
     force: bool,
 ) -> _ValidatorExecutionResult | None:
@@ -106,7 +105,7 @@ def _load_cached_result(
         return None
     try:
         cached = load_cache(instance.config_dir, name)
-        if cached and cached["hash"] == file_hash:
+        if cached and cached["hash"] == file_hash and cached["passed"] is True:
             return _ValidatorExecutionResult(
                 passed=cached["passed"],
                 stderr=cached.get("stderr", ""),
@@ -118,9 +117,7 @@ def _load_cached_result(
     return None
 
 
-def _run_validator(
-    instance: Any, description: str, start: float
-) -> _ValidatorExecutionResult:
+def _run_validator(instance: Any, start: float) -> _ValidatorExecutionResult:
     """Execute one validator and translate its expected failure boundaries."""
     try:
         passed = bool(instance.validate_all())
@@ -135,12 +132,12 @@ def _run_validator(
         return _ValidatorExecutionResult(
             passed=False,
             stderr=f"Failed to run validator: {e}",
-            duration=time.time() - start,
+            duration=time.perf_counter() - start,
         )
     return _ValidatorExecutionResult(
         passed=passed,
         stderr=stderr,
-        duration=time.time() - start,
+        duration=time.perf_counter() - start,
     )
 
 
@@ -189,7 +186,7 @@ def _run_one(
     saving the cache to avoid state-drift (e.g. HA writing .storage/
     while validation runs).
     """
-    start = time.time()
+    start = time.perf_counter()
     try:
         instance = cls(config_dir, quiet=quiet, summary=summary)
         name = cls.__name__
@@ -199,7 +196,7 @@ def _run_one(
         fhash = _cache_key(instance, cls)
 
         # --- cache check (skip when --force or when file_deps is empty) ---
-        cached_result = _load_cached_result(instance, name, description, fhash, force)
+        cached_result = _load_cached_result(instance, name, fhash, force)
         if cached_result is not None:
             return ValidatorResult(
                 description=description,
@@ -210,11 +207,11 @@ def _run_one(
             )
 
         # --- cache miss or forced — actually run the validator ---
-        execution = _run_validator(instance, description, start)
+        execution = _run_validator(instance, start)
         duration = (
             execution.duration
             if execution.duration is not None
-            else time.time() - start
+            else time.perf_counter() - start
         )
 
         # --- save to cache (only on success; failures always re-run) ---
@@ -240,7 +237,7 @@ def _run_one(
             description=description,
             passed=False,
             stderr=f"Validator orchestration failed: {e}",
-            duration=time.time() - start,
+            duration=time.perf_counter() - start,
         )
 
 
@@ -268,12 +265,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Run all configuration validators in-process.",
         description="Run YAML, reference, and HA-official validators in parallel.",
     )
-    parser.add_argument(
-        "--config",
-        "-c",
-        default="config",
-        help="Path to the config directory (default: config)",
-    )
+    add_config_dir_arg(parser, help="Path to the config directory (default: config)")
     parser.add_argument(
         "--quiet",
         action="store_true",
@@ -400,9 +392,9 @@ def run(args: argparse.Namespace) -> int:
 
     _print_intro(force, quiet, summary)
 
-    overall_start = time.time()
+    overall_start = time.perf_counter()
     results = run_validators(config_dir, quiet=quiet, force=force, summary=summary)
-    overall_duration = time.time() - overall_start
+    overall_duration = time.perf_counter() - overall_start
 
     all_passed = True
     for r in results:

@@ -163,6 +163,26 @@ notify_on_doorbell:
     assert data["notify_on_doorbell"]["alias"] == "Notify on Doorbell"
 
 
+def test_load_and_dump_use_path_open(tmp_path, monkeypatch):
+    from tools.ha.yaml_editor import YAMLEditor
+
+    path = tmp_path / "automations.yaml"
+    _write_yaml(path, "- alias: A\n  triggers: []\n  actions: []\n")
+    original_open = Path.open
+    opened_paths = []
+
+    def path_open(self, *args, **kwargs):
+        opened_paths.append(self)
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", path_open)
+    editor = YAMLEditor(path)
+    data = editor.load()
+    editor.dump(data, path)
+
+    assert opened_paths.count(path) == 2
+
+
 # ---------------------------------------------------------------------------
 # Cycle 2: find / add / update / remove automations by alias
 # ---------------------------------------------------------------------------
@@ -648,6 +668,57 @@ class TestDictHelpers:
             editor.remove_script("ghost")
 
 
+class TestMappingUpdates:
+    @pytest.mark.parametrize("kind", ["automation", "script"])
+    def test_mapping_updates_apply_same_merge_contract(self, tmp_path, kind):
+        from tools.ha.yaml_editor import YAMLEditor
+
+        if kind == "automation":
+            path = tmp_path / "automations.yaml"
+            _write_yaml(path, AUTOMATIONS_FIXTURE)
+            editor = YAMLEditor(path)
+            editor.update_automation("Evening Scene", {"description": "Updated"})
+            editor.save()
+            data = YAMLEditor(path).load()
+            target = data[1]
+        else:
+            path = tmp_path / "scripts.yaml"
+            _write_yaml(path, SCRIPTS_FIXTURE)
+            editor = YAMLEditor(path)
+            editor.update_script("morning_routine", {"description": "Updated"})
+            editor.save()
+            data = YAMLEditor(path).load()
+            target = data["morning_routine"]
+
+        assert target["description"] == "Updated"
+        assert target["sequence" if kind == "script" else "actions"] is not None
+
+    @pytest.mark.parametrize(
+        ("kind", "target", "message"),
+        [
+            ("automation", "Missing Automation", "Automation with alias"),
+            ("script", "missing_script", "Script 'missing_script' not found"),
+        ],
+    )
+    def test_mapping_updates_keep_missing_target_errors(
+        self, tmp_path, kind, target, message
+    ):
+        from tools.ha.yaml_editor import YAMLEditor
+
+        if kind == "automation":
+            path = tmp_path / "automations.yaml"
+            _write_yaml(path, AUTOMATIONS_FIXTURE)
+            editor = YAMLEditor(path)
+            with pytest.raises(ValueError, match=message):
+                editor.update_automation(target, {"description": "Updated"})
+        else:
+            path = tmp_path / "scripts.yaml"
+            _write_yaml(path, SCRIPTS_FIXTURE)
+            editor = YAMLEditor(path)
+            with pytest.raises(ValueError, match=message):
+                editor.update_script(target, {"description": "Updated"})
+
+
 class TestTypeGuard:
     def test_add_automation_on_scripts_raises_type_error(self, tmp_path):
         from tools.ha.yaml_editor import YAMLEditor
@@ -707,12 +778,25 @@ def test_dump_to_round_trip(tmp_path):
     dst = tmp_path / "b.yaml"
     _write_yaml(src, "- alias: A\n  triggers: []\n  actions: []\n")
     e = YAMLEditor(src)
-    e.load()
+    data = e.load()
     with open(dst, "w", encoding="utf-8") as f:
-        e.dump_to(e._data, f)
+        e.dump_to(data, f)
     e2 = YAMLEditor(dst)
     e2.load()
     assert e2.find_automation("A") is not None
+
+
+def test_dump_accepts_string_path(tmp_path):
+    from tools.ha.yaml_editor import YAMLEditor
+
+    src = tmp_path / "source.yaml"
+    dst = tmp_path / "target.yaml"
+    _write_yaml(src, "- alias: A\n")
+    data = YAMLEditor(src).load()
+
+    YAMLEditor(src).dump(data, str(dst))
+
+    assert "alias: A" in dst.read_text()
 
 
 def test_save_propagates_validator_exception(tmp_path):

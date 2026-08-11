@@ -47,67 +47,83 @@ def _top_level_config_basename(path: str, config_dir: str) -> str | None:
     return relative.name
 
 
+def _run_git_command(
+    args: list[str], cwd: Path, timeout: int
+) -> subprocess.CompletedProcess[str] | None:
+    """Run a Git command with the shared repository/process configuration.
+
+    Returns ``None`` when Git is unavailable, times out, or cannot be started.
+    """
+    try:
+        return subprocess.run(
+            args,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except OSError, subprocess.TimeoutExpired:
+        return None
+
+
 def _run_git_diff(config_dir: str, git_timeout: int) -> set[str] | None:
     """Run ``git diff HEAD --name-only -z`` and return changed basenames.
 
     Returns ``None`` if git is unavailable or fails.
     """
-    try:
-        r = subprocess.run(
-            ["git", "diff", "HEAD", "--name-only", "-z", "--", config_dir],
-            cwd=_REPO_ROOT,
-            capture_output=True,
-            text=True,
-            timeout=git_timeout,
-        )
-        if r.returncode != 0:
-            return None
-        changed: set[str] = set()
-        for p_str in r.stdout.split("\0"):
-            p_str = p_str.strip()
-            if p_str:
-                basename = _top_level_config_basename(p_str, config_dir)
-                if basename is not None:
-                    changed.add(basename)
-        return changed
-    except OSError, subprocess.TimeoutExpired:
+    result = _run_git_command(
+        ["git", "diff", "HEAD", "--name-only", "-z", "--", config_dir],
+        _REPO_ROOT,
+        git_timeout,
+    )
+    if result is None or result.returncode != 0:
+        return None
+    changed: set[str] = set()
+    for p_str in result.stdout.split("\0"):
+        p_str = p_str.strip()
+        if p_str:
+            basename = _top_level_config_basename(p_str, config_dir)
+            if basename is not None:
+                changed.add(basename)
+    return changed
+
+
+def _run_git_status_changes(config_dir: str, git_timeout: int) -> set[str] | None:
+    """Run ``git status -z`` and return all changed basenames.
+
+    Return ``None`` when Git status cannot be read so callers can reload all.
+    """
+    result = _run_git_command(
+        ["git", "status", "-z", "--", config_dir], _REPO_ROOT, git_timeout
+    )
+    if result is None or result.returncode != 0:
         return None
 
-
-def _run_git_status_untracked(config_dir: str, git_timeout: int) -> set[str]:
-    """Run ``git status -z`` and return untracked/renamed basenames.
-
-    Best-effort (errors silently return empty set).
-    """
     changed: set[str] = set()
-    try:
-        r = subprocess.run(
-            ["git", "status", "-z", "--", config_dir],
-            cwd=_REPO_ROOT,
-            capture_output=True,
-            text=True,
-            timeout=git_timeout,
-        )
-        if r.returncode == 0:
-            tokens = r.stdout.split("\0")
-            i = 0
-            while i < len(tokens):
-                token = tokens[i].strip()
-                if not token:
-                    i += 1
-                    continue
-                if len(token) > 3 and token[2] == " ":
-                    status = token[:2]
-                    path = token[3:].strip()
-                    basename = _top_level_config_basename(path, config_dir)
-                    if basename is not None:
-                        changed.add(basename)
-                    if status[0] in ("R", "C"):
-                        i += 2
-                        continue
-                i += 1
-    except OSError, subprocess.TimeoutExpired:
-        pass
+    tokens = result.stdout.split("\0")
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if not token:
+            i += 1
+            continue
+        if len(token) > 3 and token[2] == " ":
+            status = token[:2]
+            path = token[3:]
+            basename = _top_level_config_basename(path, config_dir)
+            if basename is not None:
+                changed.add(basename)
+            if status[0] in ("R", "C"):
+                if i + 1 < len(tokens):
+                    renamed_path = tokens[i + 1]
+                    renamed_basename = _top_level_config_basename(
+                        renamed_path, config_dir
+                    )
+                    if renamed_basename is not None:
+                        changed.add(renamed_basename)
+                i += 2
+                continue
+        i += 1
     return changed
 
 
@@ -131,8 +147,10 @@ def detect_changed_services(
     diff_files = _run_git_diff(config_dir, git_timeout)
     if diff_files is None:
         return None
-    untracked_files = _run_git_status_untracked(config_dir, git_timeout)
-    return _classify_changed_files(diff_files | untracked_files)
+    status_files = _run_git_status_changes(config_dir, git_timeout)
+    if status_files is None:
+        return None
+    return _classify_changed_files(diff_files | status_files)
 
 
 def reload_service(client: HAClient, service: str) -> tuple[str, bool, str | None]:
@@ -152,8 +170,6 @@ def reload_service(client: HAClient, service: str) -> tuple[str, bool, str | Non
         return (service, False, f"HTTP {response.status_code}: {detail}")
     except HARequestError as e:
         return (service, False, str(e))
-    except Exception as e:  # isolation: never abort the batch
-        return (service, False, f"{type(e).__name__}: {e}")
 
 
 def _execute_reload_plan(
@@ -244,7 +260,7 @@ def _render_reload_results(
 
 def reload_config(summary: bool = False) -> bool:
     """Reload Home Assistant configuration via API."""
-    start = time.time()
+    start = time.monotonic()
     git_timeout, git_timeout_warning = get_env_int("HA_GIT_TIMEOUT", 10)
     reload_timeout, reload_timeout_warning = get_env_int("HA_RELOAD_TIMEOUT", 30)
 
@@ -267,25 +283,28 @@ def reload_config(summary: bool = False) -> bool:
         print(f"\u274c Error: {e}", file=sys.stderr)
         return False
 
-    # Override client timeout with the reload-specific value (typically longer
-    # than the default request timeout because reloads block on disk I/O).
-    client.timeout = reload_timeout
+    with client:
+        # Override client timeout with the reload-specific value (typically
+        # longer than the default request timeout because reloads block on I/O).
+        client.timeout = reload_timeout
 
-    services = detect_changed_services(git_timeout=git_timeout)
-    if not services:
+        services = detect_changed_services(git_timeout=git_timeout)
+        if not services:
+            if not summary:
+                print(
+                    "⚠️  No config changes detected, reloading all domains to be safe",
+                    file=sys.stderr,
+                )
+            services = set(ALL_SERVICES)
+
         if not summary:
-            print(
-                "⚠️  No config changes detected, reloading all domains to be safe",
-                file=sys.stderr,
-            )
-        services = set(ALL_SERVICES)
+            labels = sorted(SERVICE_LABELS.get(s, s) for s in services)
+            print(f"🔄 Reloading: {', '.join(labels)}", file=sys.stderr)
 
-    if not summary:
-        labels = sorted(SERVICE_LABELS.get(s, s) for s in services)
-        print(f"🔄 Reloading: {', '.join(labels)}", file=sys.stderr)
-
-    results = _execute_reload_plan(client, services)
-    return _render_reload_results(results, services, summary, time.time() - start)
+        results = _execute_reload_plan(client, services)
+        return _render_reload_results(
+            results, services, summary, time.monotonic() - start
+        )
 
 
 if __name__ == "__main__":

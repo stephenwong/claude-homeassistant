@@ -20,6 +20,19 @@ from tools.validators.base import ValidatorBase
 _EPOCH_MS_THRESHOLD = 1e11
 DEFAULT_THRESHOLD_HOURS = 24
 DEFAULT_ONLY_DOMAINS = frozenset({"sensor"})
+DEFAULT_EXCLUDE_PLATFORMS = frozenset(
+    {
+        "template",
+        "group",
+        "derivative",
+        "utility_meter",
+        "min_max",
+        "threshold",
+        "integration",
+        "history_stats",
+        "filter",
+    }
+)
 
 
 class StaleSensorValidator(ValidatorBase):
@@ -62,21 +75,10 @@ class StaleSensorValidator(ValidatorBase):
         self.fail_on_stale = fail_on_stale
         self.stale_entities: list[str] = []
 
-        default_exclude_platforms = {
-            "template",
-            "group",
-            "derivative",
-            "utility_meter",
-            "min_max",
-            "threshold",
-            "integration",
-            "history_stats",
-            "filter",
-        }
         self.exclude_platforms = (
             exclude_platforms
             if exclude_platforms is not None
-            else default_exclude_platforms
+            else set(DEFAULT_EXCLUDE_PLATFORMS)
         )
         self.ignore_restored = ignore_restored
 
@@ -92,11 +94,10 @@ class StaleSensorValidator(ValidatorBase):
         return datetime.now(UTC)
 
     def _load_registry(self) -> dict[str, Any] | None:
-        """Load and parse the local entity registry with retry-on-failure.
+        """Load and parse the local entity registry with decode-only retry.
 
-        Wraps :func:`tools.validators._storage.load_storage_registry` with a
-        100ms retry loop (per ``AGENTS.md``: "Atomic writes to ``.storage/``
-        can cause transient ``JSONDecodeError``. Retry (100ms sleep)").
+        Atomic writes to ``.storage/`` can cause a transient
+        ``JSONDecodeError``; only that failure receives the 100ms retry.
         """
         registry_file = self.config_dir / ".storage" / "core.entity_registry"
         if not registry_file.exists():
@@ -106,7 +107,12 @@ class StaleSensorValidator(ValidatorBase):
             )
             return None
 
-        for attempt in range(2):
+        try:
+            return load_storage_registry(
+                registry_file, list_key="entities", key_field="entity_id"
+            )
+        except json.JSONDecodeError:
+            time.sleep(0.1)
             try:
                 return load_storage_registry(
                     registry_file, list_key="entities", key_field="entity_id"
@@ -119,14 +125,17 @@ class StaleSensorValidator(ValidatorBase):
                 ValueError,
                 AttributeError,
             ) as e:
-                if attempt == 0:
-                    time.sleep(0.1)
-                    continue
                 self.warnings.append(
                     f"Failed to read entity registry: {e}. "
                     "Falling back to state-only analysis."
                 )
                 return None
+        except (OSError, KeyError, TypeError, ValueError, AttributeError) as e:
+            self.warnings.append(
+                f"Failed to read entity registry: {e}. "
+                "Falling back to state-only analysis."
+            )
+            return None
 
     def _parse_iso_string(self, s: str) -> datetime | None:
         """Parse an ISO-8601 string into an offset-aware datetime.
@@ -182,7 +191,7 @@ class StaleSensorValidator(ValidatorBase):
     ) -> tuple[str, str, dict[str, Any]] | None:
         """Return domain, entity ID, and attributes for an eligible state."""
         entity_id = state.get("entity_id")
-        if not entity_id or "." not in entity_id:
+        if not isinstance(entity_id, str) or "." not in entity_id:
             return None
 
         domain, _ = entity_id.split(".", 1)
@@ -200,7 +209,10 @@ class StaleSensorValidator(ValidatorBase):
             if platform in self.exclude_platforms:
                 return None
 
-        attrs = state.get("attributes") or {}
+        raw_attrs = state.get("attributes")
+        if raw_attrs is not None and not isinstance(raw_attrs, dict):
+            return None
+        attrs = raw_attrs or {}
         if attrs.get("restored") is True:
             if not self.ignore_restored:
                 self.warnings.append(
@@ -310,6 +322,42 @@ class StaleSensorValidator(ValidatorBase):
             self.warnings[warning_start:],
         )
 
+    def _fetch_live_states(self) -> list[Any] | None:
+        """Fetch and validate the live HA state payload.
+
+        ``None`` is an explicit skip result for missing credentials, an
+        unreachable API, or an unexpected response shape. The caller keeps
+        staleness policy separate from this live I/O boundary.
+        """
+        url = os.getenv("HA_URL")
+        token = os.getenv("HA_TOKEN")
+        if not url or not token:
+            self.info.append(
+                "Skipped stale sensor validation: HA_URL or HA_TOKEN not set."
+            )
+            return None
+
+        timeout_val, warn = get_env_int("HA_STALE_TIMEOUT", 2)
+        if warn:
+            self.info.append(warn)
+        client: HAClient | None = None
+        try:
+            client = HAClient(url, token, timeout=timeout_val)
+            states = client.get_json("/api/states")
+        except (HARequestError, OSError) as e:
+            self.info.append(f"Skipped stale sensor validation: API unreachable - {e}")
+            return None
+        finally:
+            if client is not None:
+                client.close()
+
+        if not isinstance(states, list):
+            self.info.append(
+                "Skipped stale sensor validation: invalid API states format."
+            )
+            return None
+        return states
+
     def _validate(self) -> bool:
         """Query Home Assistant for stale sensors.
 
@@ -337,30 +385,8 @@ class StaleSensorValidator(ValidatorBase):
                 "true",
                 "yes",
             )
-        url = os.getenv("HA_URL")
-        token = os.getenv("HA_TOKEN")
-
-        if not url or not token:  # tested separately
-            self.info.append(
-                "Skipped stale sensor validation: HA_URL or HA_TOKEN not set."
-            )
-            return True
-
-        # Fetch states from HA API with configurable timeout (env HA_STALE_TIMEOUT)
-        timeout_val, warn = get_env_int("HA_STALE_TIMEOUT", 2)
-        if warn:
-            self.info.append(warn)
-        try:
-            client = HAClient(url, token, timeout=timeout_val)
-            states = client.get_json("/api/states")
-        except (HARequestError, OSError) as e:
-            self.info.append(f"Skipped stale sensor validation: API unreachable - {e}")
-            return True
-
-        if not isinstance(states, list):
-            self.info.append(
-                "Skipped stale sensor validation: invalid API states format."
-            )
+        states = self._fetch_live_states()
+        if states is None:
             return True
 
         registry = self._load_registry()

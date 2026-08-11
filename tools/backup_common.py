@@ -11,7 +11,7 @@ import tarfile
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
-from typing import IO, TypedDict
+from typing import IO, Literal, TypedDict
 
 BACKUP_DIR = Path(
     os.environ.get("BACKUP_DIR", Path(__file__).parent.parent / "backups")
@@ -26,6 +26,9 @@ class BackupRecord(TypedDict):
     path: Path
     filename: str
     timestamp: datetime
+
+
+ArtifactKind = Literal["backup", "changelog"]
 
 
 def changelog_path_for(backup: BackupRecord) -> Path:
@@ -55,7 +58,7 @@ def parse_backup_filename(filename: str) -> datetime | None:
         return None
 
 
-def _is_managed_artifact(path: Path, kind: str) -> bool:
+def _is_managed_artifact(path: Path, kind: ArtifactKind) -> bool:
     """Return whether *path* is a canonical, non-symlink managed artifact."""
     if path.is_symlink() or not path.is_file():
         return False
@@ -106,7 +109,9 @@ def iter_tarball_file_members(path: Path) -> Iterator[tuple[str, IO[bytes]]]:
         for member in tar:
             if not member.isfile():
                 continue
-            name = member.name.removeprefix("./")
+            name = member.name
+            while name.startswith("./"):
+                name = name[2:]
             try:
                 extracted = tar.extractfile(member)
             except KeyError:

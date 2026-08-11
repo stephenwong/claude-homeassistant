@@ -1,5 +1,7 @@
 """Tests for tools/output_shape.py — shared JSON output-shaping helper."""
 
+import json
+
 import pytest
 
 from tools.output_shape import apply_output_shape
@@ -29,6 +31,23 @@ class TestNoOp:
     def test_none_explicit_returns_unchanged(self):
         data = {"x": 1}
         assert apply_output_shape(data, first=None, pick=None, max_chars=None) is data
+
+
+class TestJsonValueContract:
+    @pytest.mark.parametrize(
+        "data",
+        [
+            None,
+            True,
+            3.5,
+            "text",
+            [None, {"nested": [True, 2]}],
+            {"value": None, "items": [1, False]},
+        ],
+    )
+    def test_shaped_values_remain_json_serializable(self, data):
+        shaped = apply_output_shape(data, first=2, pick="value,nested", max_chars=200)
+        assert json.loads(json.dumps(shaped, ensure_ascii=False)) == shaped
 
 
 class TestFirst:

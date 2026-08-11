@@ -51,11 +51,11 @@ class TestLoadStorageRegistry:
         result = load_storage_registry(path, list_key="entities", key_field="entity_id")
         assert result == {}
 
-    def test_returns_empty_when_data_key_missing(self, tmp_path):
+    def test_raises_valueerror_when_data_key_missing(self, tmp_path):
         path = tmp_path / "core.entity_registry"
         path.write_text(json.dumps({"version": 1}))
-        result = load_storage_registry(path, list_key="entities", key_field="entity_id")
-        assert result == {}
+        with pytest.raises(ValueError, match="data"):
+            load_storage_registry(path, list_key="entities", key_field="entity_id")
 
     def test_raises_filenotfound_for_missing_file(self, tmp_path):
         with pytest.raises(OSError):
@@ -69,34 +69,53 @@ class TestLoadStorageRegistry:
         with pytest.raises(json.JSONDecodeError):
             load_storage_registry(path, list_key="entities", key_field="entity_id")
 
-    def test_raises_typeerror_when_top_level_is_list(self, tmp_path):
+    def test_raises_valueerror_when_top_level_is_list(self, tmp_path):
         path = tmp_path / "core.entity_registry"
         path.write_text("[]")
-        with pytest.raises((TypeError, AttributeError)):
+        with pytest.raises(ValueError):
             load_storage_registry(path, list_key="entities", key_field="entity_id")
 
-    def test_raises_keyerror_when_item_missing_key_field(self, tmp_path):
+    def test_raises_valueerror_when_item_missing_key_field(self, tmp_path):
         path = tmp_path / "core.entity_registry"
         path.write_text(json.dumps({"data": {"entities": [{"wrong_field": "x"}]}}))
-        with pytest.raises(KeyError):
+        with pytest.raises(ValueError):
             load_storage_registry(path, list_key="entities", key_field="entity_id")
 
-    def test_raises_attributeerror_when_top_level_is_null(self, tmp_path):
+    @pytest.mark.parametrize("key", [None, 123, True])
+    def test_raises_valueerror_when_key_field_is_not_string(self, tmp_path, key):
+        path = tmp_path / "core.entity_registry"
+        path.write_text(json.dumps({"data": {"entities": [{"entity_id": key}]}}))
+        with pytest.raises(ValueError, match="string field"):
+            load_storage_registry(path, list_key="entities", key_field="entity_id")
+
+    def test_raises_valueerror_when_top_level_is_null(self, tmp_path):
         path = tmp_path / "core.entity_registry"
         path.write_text("null")
-        with pytest.raises(AttributeError):
+        with pytest.raises(ValueError):
             load_storage_registry(path, list_key="entities", key_field="entity_id")
 
-    def test_raises_attributeerror_when_top_level_is_string(self, tmp_path):
+    def test_raises_valueerror_when_top_level_is_string(self, tmp_path):
         path = tmp_path / "core.entity_registry"
         path.write_text('"a string"')
-        with pytest.raises(AttributeError):
+        with pytest.raises(ValueError):
             load_storage_registry(path, list_key="entities", key_field="entity_id")
 
-    def test_raises_typeerror_when_item_not_dict(self, tmp_path):
+    def test_raises_valueerror_when_data_is_not_mapping(self, tmp_path):
+        path = tmp_path / "core.entity_registry"
+        path.write_text(json.dumps({"data": []}))
+        with pytest.raises(ValueError):
+            load_storage_registry(path, list_key="entities", key_field="entity_id")
+
+    def test_raises_valueerror_when_item_list_is_not_list(self, tmp_path):
+        path = tmp_path / "core.entity_registry"
+        path.write_text(json.dumps({"data": {"entities": {}}}))
+        with pytest.raises(ValueError):
+            load_storage_registry(path, list_key="entities", key_field="entity_id")
+
+    def test_raises_valueerror_when_item_not_dict(self, tmp_path):
         path = tmp_path / "core.entity_registry"
         path.write_text(json.dumps({"data": {"entities": ["not_a_dict"]}}))
-        with pytest.raises(TypeError):
+        with pytest.raises(ValueError):
             load_storage_registry(path, list_key="entities", key_field="entity_id")
 
     def test_duplicate_keys_last_wins(self, tmp_path):
