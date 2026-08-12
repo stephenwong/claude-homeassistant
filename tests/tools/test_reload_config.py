@@ -388,6 +388,12 @@ class TestReloadConfig:
             "/api/services/homeassistant/reload_all", json={}
         )
 
+    def test_detect_none_explains_git_fallback(self, capsys):
+        self._mock_client.post.return_value = MagicMock(status_code=200)
+        with patch("tools.reload_config.detect_changed_services", return_value=None):
+            assert reload_config() is True
+        assert "git" in capsys.readouterr().err.lower()
+
     def test_detect_returns_empty_set_reloads_all_services(self):
         ok_resp = MagicMock(status_code=200)
         self._mock_client.post.return_value = ok_resp

@@ -25,6 +25,7 @@ This repository manages Home Assistant configuration files with automated valida
 - `tools/validators/` — Validators: `base.py`, `duplicate_ids.py`, `entity_definitions.py`, `ha_official.py`, `references.py`, `services.py`, `stale_sensors.py`, `templates.py`, `yaml.py`
 - `tools/cache.py`, `tools/common.py` — Caching; shared utilities (`common.py` re-exports from `validators/base.py`, defines `positive_int`/`non_negative_int` argparse types)
 - `tools/output_shape.py` — Shared JSON output-shaping (`apply_output_shape()` for --first/--pick/--max-chars)
+- `tools/format_yaml.py` — Atomic YAML formatting helper used by `make format-yaml`
 - `tools/_dev/api_diagnostic.py` — Dev-only (archived, excluded from lint/wheel)
 - `tests/conftest.py` — Shared fixtures (`config_dir`, `_stub_load_env_file`)
 
@@ -206,6 +207,8 @@ from tools.validators.entity_definitions import EntityDefinitionExtractor
 - **Naive vs timezone-aware datetimes:** Enforce UTC via `dt.replace(tzinfo=timezone.utc)` if `dt.tzinfo is None`.
 - **Registry concurrency:** Stale-sensor registry loading retries after 100ms when atomic `.storage/` writes cause a transient `JSONDecodeError`; scope any similar retry to the loader that needs it.
 - **Validator exception contracts:** Direct validators should handle expected filesystem, JSON/schema, and malformed-input failures with diagnostics; the aggregate `ha_cli validate` runner converts unexpected validator exceptions into failed results so sibling validators complete.
+- **Atomic YAML formatting:** `make format-yaml` delegates to `tools/format_yaml.py`, which writes a sibling temporary file and replaces the source only after serialization succeeds; it preserves the source mode.
+- **MCP setup file:** Setup scripts mirror a validated `HA_MCP_URL` into the ignored `.ha-mcp-url` consumed by `opencode.json`, and remove that file when the URL is cleared or left as a placeholder.
 - **Threshold-selection tests:** When testing timestamp min/max selection against a threshold, place candidate values on opposite sides of the threshold so the assertion distinguishes the selected value.
 
 ### Git Commit Trailers

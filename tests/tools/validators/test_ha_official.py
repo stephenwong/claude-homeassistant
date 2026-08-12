@@ -43,6 +43,19 @@ class TestHAOfficialValidatorMain:
         monkeypatch.setattr("sys.argv", ["ha_official_validator", "/nonexistent"])
         assert main() == 1
 
+    def test_subprocess_output_uses_replacement_decoding(self, validator, monkeypatch):
+        result = MagicMock(returncode=0, stdout="ok", stderr="")
+        with patch(
+            "tools.validators.ha_official.subprocess.run", return_value=result
+        ) as run:
+            assert validator.run_ha_check_config() is True
+        assert run.call_args.kwargs["errors"] == "replace"
+
+    def test_warning_on_stderr_is_not_an_error(self, validator):
+        validator.parse_check_config_output("", "WARNING: deprecated setting\n")
+        assert validator.errors == []
+        assert any("deprecated" in warning for warning in validator.warnings)
+
 
 @pytest.mark.parametrize(
     "message",

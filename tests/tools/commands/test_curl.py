@@ -517,6 +517,11 @@ class TestErrorHandling:
         err = capsys.readouterr().err
         assert "HTTP 500" in err
 
+    def test_http_redirect_is_an_error(self, mock_client, capsys):
+        mock_client.get.return_value = text_resp("Redirect", status=302)
+        assert curl_cmd.run(make_args()) == 1
+        assert "HTTP 302" in capsys.readouterr().err
+
     def test_connection_error(self, mock_client, capsys):
         mock_client.get.side_effect = HARequestError("GET /api/states failed: boom")
         args = make_args()
@@ -676,6 +681,14 @@ class TestKeys:
         assert "2 keys" in err
         parsed = json.loads(out)
         assert sorted(parsed) == ["name", "state"]
+
+    def test_keys_max_chars_uses_utf8_serialization(self, mock_client, capsys):
+        mock_client.get.return_value = json_resp({"éé": 1})
+        args = make_args(keys=True, max_chars=10)
+        assert curl_cmd.run(args) == 0
+        out, _ = capsys.readouterr()
+        assert len(out.strip()) <= 10
+        assert "\\u00e9" not in out
 
     def test_keys_empty_list(self, mock_client, capsys):
         mock_client.get.return_value = json_resp([])

@@ -14,7 +14,7 @@ BLUE = \033[0;34m
 PURPLE = \033[0;35m
 CYAN = \033[0;36m
 
-.PHONY: dev-help dev-setup dev-install dev-format dev-lint dev-type-check dev-test dev-test-coverage dev-pre-commit dev-clean-dev
+.PHONY: dev-help dev-setup dev-install dev-format dev-lint dev-type-check dev-test dev-test-coverage dev-test-verbose dev-pre-commit dev-pre-commit-all dev-clean-dev dev-check-all dev-update-deps dev-init-tests dev-workflow dev-watch
 
 # Development help
 dev-help:
@@ -102,6 +102,7 @@ dev-test-verbose:
 dev-pre-commit:
 	@echo "$(GREEN)Setting up pre-commit hooks...$(NC)"
 	@$(UV_RUN) pre-commit install
+	@$(UV_RUN) pre-commit run
 	@echo "$(GREEN)Pre-commit hooks installed!$(NC)"
 
 # Run pre-commit on all files
@@ -148,4 +149,4 @@ dev-workflow: dev-format dev-lint dev-type-check dev-test
 dev-watch:
 	@echo "$(GREEN)Starting development watch mode...$(NC)"
 	@echo "$(CYAN)Install 'entr' first: sudo apt install entr$(NC)"
-	@find tools/ -name "*.py" | entr -c make dev-workflow
+	@find tools/ -name "*.py" | entr -c $(MAKE) -f Makefile.dev dev-workflow

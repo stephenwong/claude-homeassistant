@@ -45,11 +45,11 @@ class TestLoadStorageRegistry:
         result = load_storage_registry(path, list_key="entities", key_field="entity_id")
         assert result == {}
 
-    def test_returns_empty_when_list_key_missing(self, tmp_path):
+    def test_raises_when_list_key_missing(self, tmp_path):
         path = tmp_path / "core.entity_registry"
         path.write_text(json.dumps({"data": {}}))
-        result = load_storage_registry(path, list_key="entities", key_field="entity_id")
-        assert result == {}
+        with pytest.raises(ValueError, match="entities"):
+            load_storage_registry(path, list_key="entities", key_field="entity_id")
 
     def test_raises_valueerror_when_data_key_missing(self, tmp_path):
         path = tmp_path / "core.entity_registry"
@@ -106,6 +106,12 @@ class TestLoadStorageRegistry:
         with pytest.raises(ValueError):
             load_storage_registry(path, list_key="entities", key_field="entity_id")
 
+    def test_raises_valueerror_when_json_has_duplicate_keys(self, tmp_path):
+        path = tmp_path / "core.entity_registry"
+        path.write_text('{"data": {"entities": []}, "data": {}}')
+        with pytest.raises(ValueError, match="duplicate"):
+            load_storage_registry(path, list_key="entities", key_field="entity_id")
+
     def test_raises_valueerror_when_item_list_is_not_list(self, tmp_path):
         path = tmp_path / "core.entity_registry"
         path.write_text(json.dumps({"data": {"entities": {}}}))
@@ -118,7 +124,7 @@ class TestLoadStorageRegistry:
         with pytest.raises(ValueError):
             load_storage_registry(path, list_key="entities", key_field="entity_id")
 
-    def test_duplicate_keys_last_wins(self, tmp_path):
+    def test_duplicate_keys_are_rejected(self, tmp_path):
         path = tmp_path / "core.entity_registry"
         path.write_text(
             json.dumps(
@@ -132,5 +138,5 @@ class TestLoadStorageRegistry:
                 }
             )
         )
-        result = load_storage_registry(path, list_key="entities", key_field="entity_id")
-        assert result["sensor.dup"]["id"] == "second"
+        with pytest.raises(ValueError, match="duplicate"):
+            load_storage_registry(path, list_key="entities", key_field="entity_id")

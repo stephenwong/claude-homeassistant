@@ -536,6 +536,17 @@ class TestAtomicSave:
         reloaded = YAMLEditor(path).load()
         assert len(reloaded) == 4
 
+    def test_save_preserves_existing_permissions(self, tmp_path):
+        from tools.ha.yaml_editor import YAMLEditor
+
+        path = tmp_path / "automations.yaml"
+        _write_yaml(path, AUTOMATIONS_FIXTURE)
+        path.chmod(0o600)
+        editor = YAMLEditor(path)
+        editor.add_automation({"alias": "Perms", "triggers": [], "actions": []})
+        editor.save()
+        assert path.stat().st_mode & 0o777 == 0o600
+
     def test_save_without_validator_keeps_original_on_dump_crash(
         self, tmp_path, monkeypatch
     ):

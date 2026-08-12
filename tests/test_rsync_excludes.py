@@ -166,6 +166,18 @@ def test_pull_excludes_auth_tokens(temp_dir, remote_dir):
     )
 
 
+def test_pull_preserves_existing_excluded_auth_token(temp_dir, remote_dir):
+    """--delete must not remove protected local auth state."""
+    local = temp_dir / "local_pull"
+    (local / ".storage" / "auth").mkdir(parents=True)
+    protected = local / ".storage" / "auth" / "tokens.json"
+    protected.write_text("LOCAL_SECRET")
+
+    run_rsync(remote_dir, local, PULL_EXCLUDES)
+
+    assert protected.read_text() == "LOCAL_SECRET"
+
+
 def test_pull_allows_storage_core(temp_dir, remote_dir):
     """Pull includes non-sensitive .storage files."""
     local = temp_dir / "local_pull"
@@ -276,4 +288,17 @@ def test_push_excludes_z2m_coordinator_backup(local_dir, remote_dir):
 
     assert (remote_dir / "zigbee2mqtt" / "coordinator_backup.json").exists(), (
         "coordinator_backup.json should be preserved on remote during push"
+    )
+
+
+def test_push_does_not_overwrite_local_z2m_coordinator_backup(local_dir, remote_dir):
+    """A protected local coordinator backup cannot overwrite remote state."""
+    local_backup = local_dir / "zigbee2mqtt" / "coordinator_backup.json"
+    local_backup.parent.mkdir()
+    local_backup.write_text('{"channel": 25}')
+
+    run_rsync(local_dir, remote_dir, PUSH_EXCLUDES)
+
+    assert (remote_dir / "zigbee2mqtt" / "coordinator_backup.json").read_text() == (
+        '{"channel":15}'
     )

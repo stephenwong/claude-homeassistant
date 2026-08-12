@@ -293,6 +293,15 @@ class TestRun:
         assert trace_cmd.run(make_args()) == 1
         assert "invalid trace/list response" in capsys.readouterr().err.lower()
 
+    def test_malformed_trace_get_response_returns_error(self, mock_client, capsys):
+        mock_client.command.side_effect = [
+            [{"item_id": "morning_routine", "run_id": "r1"}],
+            None,
+        ]
+        args = make_args(entity_id="automation.morning_routine")
+        assert trace_cmd.run(args) == 1
+        assert "invalid trace/get response" in capsys.readouterr().err.lower()
+
     def test_summary_dedupes_by_item_id(self, mock_client, capsys):
         """Summary mode dedupes trace list to one entry per item_id + runs field."""
         mock_client.command.return_value = DUPLICATE_TRACES

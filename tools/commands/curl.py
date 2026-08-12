@@ -427,7 +427,7 @@ def run(args: argparse.Namespace) -> int:
             json_data = _parse_json_body(request.method, args, summary)
             resp = _execute_request(client, request.method, request.endpoint, json_data)
 
-            if not resp.ok:
+            if resp.status_code < 200 or resp.status_code >= 300:
                 raise _CurlError(f"HTTP {resp.status_code}: {resp.text[:200]}")
 
             content_type = resp.headers.get("content-type", "")
@@ -485,7 +485,7 @@ def _collect_key_names(data: Any) -> tuple[list[str] | None, str]:
 def _print_key_names(keys: list[str], max_chars: int | None) -> None:
     """Shape and print normalized key names as compact JSON."""
     shaped = apply_output_shape(cast(JSONValue, keys), max_chars=max_chars)
-    print(json.dumps(shaped, separators=(",", ":")))
+    print(json.dumps(shaped, separators=(",", ":"), ensure_ascii=False))
 
 
 def _handle_keys(data, summary: bool = False, max_chars: int | None = None) -> int:

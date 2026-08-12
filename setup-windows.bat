@@ -122,12 +122,21 @@ if errorlevel 1 (
 
 REM --- Check PowerShell (used for uv installation and secure token input) ---
 set POWERSHELL_OK=0
+set "POWERSHELL_CMD="
 where powershell >nul 2>&1
 if errorlevel 1 (
-    echo [MISSING] PowerShell - REQUIRED for setup
-    set MISSING_REQUIRED=1
+    where pwsh >nul 2>&1
+    if errorlevel 1 (
+        echo [MISSING] PowerShell - REQUIRED for setup
+        set MISSING_REQUIRED=1
+    ) else (
+        echo [OK] PowerShell 7 (pwsh)
+        set "POWERSHELL_CMD=pwsh"
+        set POWERSHELL_OK=1
+    )
 ) else (
     echo [OK] PowerShell
+    set "POWERSHELL_CMD=powershell"
     set POWERSHELL_OK=1
 )
 
@@ -136,7 +145,7 @@ set UV_OK=0
 uv --version >nul 2>&1
 if errorlevel 1 (
     echo uv not found. Installing uv...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex"
+    %POWERSHELL_CMD% -NoProfile -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex"
     set "PATH=%USERPROFILE%\.local\bin;%PATH%"
     uv --version >nul 2>&1
     if errorlevel 1 (
@@ -358,21 +367,37 @@ REM Persist the host in .env; the Makefile loads configuration from .env.
 echo.
 echo Updating .env configuration...
 if not exist ".env" (
-    copy ".env.example" ".env" >nul
+    copy /Y ".env.example" ".env" >nul
 ) else (
-    copy ".env" ".env.backup" >nul
+    copy /Y ".env" ".env.backup" >nul
+)
+if errorlevel 1 (
+    echo [ERROR] Could not create the .env backup or working file.
+    pause
+    exit /b 1
 )
 set "SETUP_HA_HOST=%HA_HOST%"
 set "SETUP_HA_URL=%HA_URL%"
-powershell -NoProfile -Command "$path='.env'; $text=[IO.File]::ReadAllText($path); $secure=Read-Host 'Enter a long-lived access token (leave blank to configure later)' -AsSecureString; $token=''; if ($secure.Length -gt 0) { $ptr=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure); try { $token=[Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) } }; $updates=@{HA_HOST=$env:SETUP_HA_HOST; HA_URL=$env:SETUP_HA_URL}; if ($token) { $updates['HA_TOKEN']=$token }; foreach ($key in $updates.Keys) { $pattern='(?m)^'+[regex]::Escape($key)+'[ \t?]*=.*$'; $line=$key+'='+$updates[$key]; if ($text -match $pattern) { $text=[regex]::Replace($text,$pattern,[System.Text.RegularExpressions.MatchEvaluator]{ param($m) $line }) } else { $text=$text.TrimEnd([char]13,[char]10)+[Environment]::NewLine+$line+[Environment]::NewLine } }; [IO.File]::WriteAllText($path,$text,(New-Object Text.UTF8Encoding($false)))"
+set "MCP_URL="
+%POWERSHELL_CMD% -NoProfile -Command "$path='.env'; $text=[IO.File]::ReadAllText($path); $secure=Read-Host 'Enter a long-lived access token (leave blank to configure later)' -AsSecureString; $token=''; if ($secure.Length -gt 0) { $ptr=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure); try { $token=[Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) } }; $updates=@{HA_HOST=$env:SETUP_HA_HOST; HA_URL=$env:SETUP_HA_URL}; if ($token) { $updates['HA_TOKEN']=$token }; foreach ($key in $updates.Keys) { $pattern='(?m)^'+[regex]::Escape($key)+'[ \t?]*=.*$'; $line=$key+'='+$updates[$key]; if ($text -match $pattern) { $text=[regex]::Replace($text,$pattern,[System.Text.RegularExpressions.MatchEvaluator]{ param($m) $line }) } else { $text=$text.TrimEnd([char]13,[char]10)+[Environment]::NewLine+$line+[Environment]::NewLine } }; [IO.File]::WriteAllText($path,$text,(New-Object Text.UTF8Encoding($false)))"
 if errorlevel 1 (
     echo [ERROR] Could not update .env.
     pause
     exit /b 1
 )
 echo [OK] .env updated with HA_HOST=%HA_HOST% and HA_URL=%HA_URL%
+for /f "tokens=1,* delims==" %%A in ('findstr /b "HA_MCP_URL=" ".env"') do set "MCP_URL=%%B"
+if not defined MCP_URL (
+    del /q ".ha-mcp-url" >nul 2>&1
+) else if /i "!MCP_URL:~0,7!"=="http://" (
+    echo !MCP_URL!> ".ha-mcp-url"
+) else if /i "!MCP_URL:~0,8!"=="https://" (
+    echo !MCP_URL!> ".ha-mcp-url"
+) else (
+    del /q ".ha-mcp-url" >nul 2>&1
+)
 echo If you left the token blank, edit .env and set HA_TOKEN before validation or deployment.
-echo HA_MCP_URL is optional and only needed for AI assistant integration.
+echo HA_MCP_URL is optional; OpenCode reads it from .ha-mcp-url when configured.
 
 echo.
 echo ========================================================

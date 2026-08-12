@@ -76,7 +76,12 @@ class TemplateValidator(ValidatorBase):
         if resp.status_code == 200:
             return ("ok", resp.text)
         try:
-            msg = resp.json().get("message", resp.text)
+            payload = resp.json()
+            msg = (
+                payload.get("message", resp.text)
+                if isinstance(payload, dict)
+                else resp.text
+            )
         except ValueError:
             msg = resp.text
         return ("error", msg)
@@ -106,7 +111,7 @@ class TemplateValidator(ValidatorBase):
             return True
         if status == "network":
             self.warnings.append(f"{path}: Template render failed (network): {detail}")
-            return True
+            return self._validate_template(None, path, template)
         return self._record_render_error(path, detail)
 
     def _record_render_error(self, path: str, detail: str) -> bool:

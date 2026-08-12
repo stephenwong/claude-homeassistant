@@ -21,6 +21,7 @@ from tools.common import (
 from tools.ha.yaml_editor import YAMLEditor
 
 _SAFE_YAML = YAML(typ="safe")
+_ALLOWED_FILES = frozenset({"automations.yaml", "scripts.yaml"})
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -81,6 +82,8 @@ def _resolve_target(config_dir: Path, file_basename: str) -> Path:
         target.relative_to(config_dir.resolve())
     except ValueError:
         raise ValueError(f"'{file_basename}' must be inside config directory") from None
+    if target.name not in _ALLOWED_FILES:
+        raise ValueError("file must be automations or scripts")
     return target
 
 
@@ -151,6 +154,8 @@ def run(args: argparse.Namespace) -> int:
 
     except FileNotFoundError as e:
         return fail_stderr(f"could not read {target_file}: {e}")
+    except OSError as e:
+        return fail_stderr(f"could not read {target_file}: {e}")
     except YAMLError as e:
         return fail_stderr(f"could not parse {target_file}: {e}")
 
@@ -162,13 +167,18 @@ def _detect_file_type(editor: YAMLEditor) -> str:
         return "list"
     if isinstance(data, dict):
         return "dict"
-    return "unknown"  # pragma: no cover
+    if data is None:
+        return "empty"
+    return "unknown"
 
 
 def _resolve_file_type(editor: YAMLEditor, *, for_add: bool = False) -> str:
     """Resolve an editor's shape once, with the new-file script fallback."""
     if editor.path.exists():
-        return _detect_file_type(editor)
+        detected = _detect_file_type(editor)
+        if detected == "empty":
+            return "dict" if editor.path.name == "scripts.yaml" else "list"
+        return detected
     if for_add and editor.path.name == "scripts.yaml":
         return "dict"
     return "list"
@@ -186,7 +196,12 @@ def _dispatch_by_filetype[T](
     resolved_type = file_type if file_type is not None else _resolve_file_type(editor)
     if resolved_type == "dict":
         return on_dict(editor, alias)
-    return on_list(editor, alias)
+    if resolved_type == "list":
+        return on_list(editor, alias)
+    raise TypeError(
+        f"Cannot edit {editor.path.name}: expected a list or mapping, "
+        f"got {resolved_type}"
+    )
 
 
 def _run_show(
@@ -215,6 +230,11 @@ def _run_show(
         else:
             for key in data:
                 print(key)
+    else:
+        return fail_stderr(
+            f"Cannot show {editor.path.name}: expected a list or mapping, "
+            f"got {type(data).__name__}"
+        )
     return 0
 
 
@@ -235,6 +255,10 @@ def _run_add(
     ftype = (
         file_type if file_type is not None else _resolve_file_type(editor, for_add=True)
     )
+    if ftype not in {"dict", "list"}:
+        return fail_stderr(
+            f"Cannot add to {editor.path.name}: expected a list or mapping, got {ftype}"
+        )
 
     def add_script(ed: YAMLEditor) -> str:
         key = str(entry.get("id") or entry.get("alias") or "")
@@ -273,6 +297,8 @@ def _run_set(
             return fail_stderr(f"--set value must be KEY=VALUE, got '{kv}'")
         key, _, value = kv.partition("=")
         key = key.strip()
+        if not key:
+            return fail_stderr("--set key must not be empty")
         if "." in key:
             return fail_stderr(
                 f"--set does not support nested paths; got '{key}' "

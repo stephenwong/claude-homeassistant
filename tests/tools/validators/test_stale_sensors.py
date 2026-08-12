@@ -495,12 +495,13 @@ def test_numeric_heartbeat_timestamp(config_dir):
     )
 
 
-def test_ci_environment_skips_validation(config_dir):
+@pytest.mark.parametrize("ci_value", ["true", "TRUE", "1"])
+def test_ci_environment_skips_validation(config_dir, ci_value):
     """Skipping checking and returning True in CI environment to avoid hangs."""
     mock_client = _mock_states([])
     with (
         patch("tools.validators.stale_sensors.HAClient", return_value=mock_client),
-        patch("os.getenv", side_effect=lambda k, d=None: "true" if k == "CI" else d),
+        patch("os.getenv", side_effect=lambda k, d=None: ci_value if k == "CI" else d),
     ):
         v = StaleSensorValidator(str(config_dir))
         assert v.validate_all() is True

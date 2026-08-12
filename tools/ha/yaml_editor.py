@@ -6,6 +6,7 @@ Works with both list-based (automations.yaml, scenes.yaml) and dict-based
 """
 
 import os
+import stat
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -82,6 +83,8 @@ class YAMLEditor:
             tmp_path = Path(tmp.name)
             tmp.close()
             self.dump(self._data, tmp_path)
+            if self.path.exists():
+                os.chmod(tmp_path, stat.S_IMODE(self.path.stat().st_mode))
             if not validator(tmp_path):
                 raise ValidationError("Atomic save aborted: validation failed")
             os.replace(tmp_path, self.path)

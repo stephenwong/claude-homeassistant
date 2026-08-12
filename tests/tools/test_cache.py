@@ -375,6 +375,33 @@ class TestM2AtomicSaveCache:
         cache_file.write_text("")  # invalid JSON
         assert load_cache(tmp_path, "TestValidator") is None
 
+    def test_load_cache_succeeds_after_transient_json_error(
+        self, tmp_path, monkeypatch
+    ):
+        from tools import cache as cache_mod
+        from tools.cache import load_cache
+
+        cache_file = tmp_path / ".cache" / "validators" / "TestValidator.json"
+        cache_file.parent.mkdir(parents=True)
+        valid = {
+            "schema": 1,
+            "hash": "h",
+            "passed": True,
+            "duration": 0.1,
+        }
+        calls = 0
+
+        def load(_file):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise cache_mod.json.JSONDecodeError("transient", "", 0)
+            return valid
+
+        monkeypatch.setattr(cache_mod.json, "load", load)
+        cache_file.write_text("ignored")
+        assert load_cache(tmp_path, "TestValidator") == valid
+
 
 class TestSaveBlobErrors:
     def test_save_blob_warns_on_oserror(self, tmp_path, capsys):

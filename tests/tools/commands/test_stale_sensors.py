@@ -143,6 +143,32 @@ class TestRun:
         assert stale_cmd.run(args) == 1
 
     @patch("tools.commands.stale_sensors.StaleSensorValidator")
+    def test_run_prints_validator_diagnostics(self, mock_val_class, capsys):
+        mock_val = MagicMock()
+        mock_val.validate_all.return_value = False
+        mock_val.errors = ["stale sensor failure"]
+        mock_val.warnings = ["sensor warning"]
+        mock_val.info = ["sensor info"]
+        mock_val_class.return_value = mock_val
+
+        args = Namespace(
+            config="config_path",
+            threshold=24,
+            exclude_domains=None,
+            exclude_platforms=None,
+            only_domains=None,
+            ignore_restored=False,
+            fail_on_stale=True,
+            summary=True,
+            no_summary=False,
+        )
+        assert stale_cmd.run(args) == 1
+        err = capsys.readouterr().err
+        assert "ERROR: stale sensor failure" in err
+        assert "WARN: sensor warning" in err
+        assert "INFO: sensor info" in err
+
+    @patch("tools.commands.stale_sensors.StaleSensorValidator")
     def test_run_delegates_to_validator_explicit_summary(self, mock_val_class):
         """The command passes its resolved summary mode to the validator."""
         mock_val = MagicMock()

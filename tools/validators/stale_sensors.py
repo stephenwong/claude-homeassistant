@@ -371,7 +371,7 @@ class StaleSensorValidator(ValidatorBase):
         self.info.clear()
 
         # Fast skip in CI/CD environments
-        if os.getenv("CI") == "true":
+        if os.getenv("CI", "").strip().lower() in {"1", "true", "yes"}:
             self.info.append(
                 "Skipped stale sensor validation: Running in CI environment."
             )

@@ -229,6 +229,7 @@ make push  # Validates then uploads to HA
 │   ├── cache.py                 # SHA256 file-hash caching
 │   ├── common.py                # Shared utilities (re-exports from validators/, argparse types)
 │   ├── output_shape.py          # Shared JSON output-shaping (--first/--pick/--max-chars)
+│   ├── format_yaml.py           # Atomic YAML formatting helper
 │   ├── generate_changelog.py    # Backup changelog generation
 │   ├── search_backups.py        # Full-text search across backups
 │   └── prune_backups.py         # Smart backup retention pruning
@@ -307,6 +308,7 @@ uv run python tools/ha_cli.py reload
 | `make setup` | Install Python dependencies via uv |
 | `make status` | Show config/filesystem status and an entity-reference summary |
 | `make reload` | Reload HA config via API (no push) |
+| `make format-yaml` | Atomically format selected YAML files (`FILES='...'`) or the config tree |
 
 | `make lint` | Run Ruff format check, Ruff lint, and mypy |
 | `make lint-fix` | Auto-fix Ruff format and lint issues (does not run mypy) |

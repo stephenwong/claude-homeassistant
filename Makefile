@@ -24,7 +24,7 @@ YELLOW = \033[1;33m
 RED = \033[0;31m
 NC = \033[0m # No Color
 
-.PHONY: help pull push validate backup backup-search changelog changelog-all clean setup test status reload format-yaml lint check-env
+.PHONY: help pull push validate backup backup-search changelog changelog-all clean setup test status reload format-yaml lint check-env test-ssh
 
 # Default target
 help:
@@ -170,7 +170,7 @@ format-yaml:
 		for file in $(FILES); do \
 			if [ -f "$$file" ]; then \
 				echo "Formatting: $$file"; \
-				.claude-code/hooks/yaml-formatter.sh "$$file"; \
+				$(UV_RUN) python $(TOOLS_PATH)/format_yaml.py "$$file" || exit 1; \
 			else \
 				echo "$(YELLOW)Warning: File not found: $$file$(NC)"; \
 			fi; \
@@ -180,7 +180,7 @@ format-yaml:
 		for file in $$(find $(LOCAL_CONFIG_PATH) -name "*.yaml" -o -name "*.yml"); do \
 			if [ -f "$$file" ]; then \
 				echo "Formatting: $$file"; \
-				.claude-code/hooks/yaml-formatter.sh "$$file"; \
+				$(UV_RUN) python $(TOOLS_PATH)/format_yaml.py "$$file" || exit 1; \
 			fi; \
 		done; \
 	fi

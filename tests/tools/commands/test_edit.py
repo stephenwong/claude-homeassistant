@@ -631,6 +631,25 @@ delete:
         assert result == 1
         assert "key=value" in capsys.readouterr().err.lower()
 
+    def test_set_empty_key_returns_error(self, tmp_path, capsys):
+        _write_file(tmp_path, "automations", "- alias: X\n")
+        result = run(self._ns(config=str(tmp_path), alias="X", set=["=value"]))
+        assert result == 1
+        assert "key" in capsys.readouterr().err.lower()
+
+    def test_permission_error_during_read_is_controlled(
+        self, tmp_path, capsys, monkeypatch
+    ):
+        _write_file(tmp_path, "automations", "[]")
+
+        def denied(_editor):
+            raise PermissionError("permission denied")
+
+        monkeypatch.setattr("tools.commands.edit.YAMLEditor.load", denied)
+        result = run(self._ns(config=str(tmp_path), show=True))
+        assert result == 1
+        assert "could not read" in capsys.readouterr().err.lower()
+
     # TypeError handlers
 
     def test_add_type_error_returns_error(self, tmp_path, capsys, monkeypatch):
@@ -686,6 +705,32 @@ delete:
         )
         assert result == 1
         assert "inside config directory" in capsys.readouterr().err.lower()
+
+    @pytest.mark.parametrize("file", ["configuration", "other.yaml"])
+    def test_only_supported_files_are_editable(self, tmp_path, file, capsys):
+        result = run(self._ns(config=str(tmp_path), file=file, show=True))
+        assert result == 1
+        assert "automations" in capsys.readouterr().err.lower()
+
+    def test_existing_empty_scripts_file_creates_mapping(self, tmp_path):
+        _write_file(tmp_path, "scripts", "")
+        result = run(
+            self._ns(
+                config=str(tmp_path),
+                file="scripts",
+                add='{"id":"notify","sequence":[]}',
+            )
+        )
+        assert result == 0
+        assert _read_yaml(tmp_path, "scripts") == {
+            "notify": {"id": "notify", "sequence": []}
+        }
+
+    def test_scalar_yaml_is_rejected(self, tmp_path, capsys):
+        _write_file(tmp_path, "automations", "42\n")
+        result = run(self._ns(config=str(tmp_path), show=True))
+        assert result == 1
+        assert "list or mapping" in capsys.readouterr().err.lower()
 
     # --set argument validation
 

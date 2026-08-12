@@ -289,7 +289,15 @@ def reload_config(summary: bool = False) -> bool:
         client.timeout = reload_timeout
 
         services = detect_changed_services(git_timeout=git_timeout)
-        if not services:
+        if services is None:
+            if not summary:
+                print(
+                    "⚠️  Could not detect config changes with git; "
+                    "reloading all domains to be safe",
+                    file=sys.stderr,
+                )
+            services = set(ALL_SERVICES)
+        elif not services:
             if not summary:
                 print(
                     "⚠️  No config changes detected, reloading all domains to be safe",

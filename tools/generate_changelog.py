@@ -196,7 +196,8 @@ def _write_changelog(
     """Write a changelog for *backup* against its already-selected predecessor."""
     changelog_file = changelog_path_for(backup)
     content = generate_changelog(backup, previous_backup)
-    atomic_write_text(changelog_file, content)
+    if not atomic_write_text(changelog_file, content):
+        raise OSError(f"could not write changelog {changelog_file}")
     return changelog_file
 
 
@@ -247,6 +248,7 @@ def main() -> int:
     if args.generate_all:
         generated = 0
         skipped = 0
+        failed = 0
         for index, backup in enumerate(backups):
             cl_path = changelog_path_for(backup)
             if cl_path.exists() and not args.force:
@@ -254,14 +256,19 @@ def main() -> int:
                 continue
             print(f"Generating changelog for {backup['filename']}...", file=sys.stderr)
             previous = backups[index - 1] if index else None
-            _write_changelog(backup, previous)
+            try:
+                _write_changelog(backup, previous)
+            except OSError as e:
+                print(f"Failed to generate changelog: {e}", file=sys.stderr)
+                failed += 1
+                continue
             generated += 1
 
         print(
             f"\nGenerated {generated} changelog(s), skipped {skipped} existing",
             file=sys.stderr,
         )
-        return 0
+        return 1 if failed else 0
 
     if not args.backup:
         parser.error("Provide a backup path or use --generate-all")
@@ -278,7 +285,11 @@ def main() -> int:
         print(f"Backup not found: {args.backup}", file=sys.stderr)
         return 1
 
-    cl_path = generate_for_backup(target, backups)
+    try:
+        cl_path = generate_for_backup(target, backups)
+    except OSError as e:
+        print(f"Failed to generate changelog: {e}", file=sys.stderr)
+        return 1
     print(f"Changelog written to {cl_path}", file=sys.stderr)
     return 0
 

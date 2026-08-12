@@ -353,6 +353,11 @@ class TestOfflineDegradation:
             assert v.validate_all() is False
             assert any("unbalanced" in e.lower() for e in v.errors)
 
+    def test_unmatched_opening_delimiter_is_checked(self, config_dir):
+        found = []
+        TemplateValidator._collect("{{ bad", "template", found)
+        assert found == [("template", "{{ bad")]
+
 
 class TestEdgeCases:
     def test_nonexistent_dir_errors(self):

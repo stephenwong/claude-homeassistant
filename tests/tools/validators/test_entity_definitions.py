@@ -370,6 +370,42 @@ def test_extracts_entities_from_packages(tmp_path):
     assert "sensor.pkg_temp" in entities
 
 
+def test_extracts_entities_from_homeassistant_packages(tmp_path):
+    (tmp_path / "configuration.yaml").write_text(
+        "homeassistant:\n"
+        "  packages:\n"
+        "    lights:\n"
+        "      input_boolean:\n"
+        "        package_light: {}\n"
+    )
+    extractor = EntityDefinitionExtractor(tmp_path, tmp_path / ".storage", [], [])
+    assert "input_boolean.package_light" in extractor.get_config_defined_entities()
+
+
+def test_include_outside_config_dir_is_rejected(tmp_path):
+    outside = tmp_path.parent / "outside.yaml"
+    outside.write_text("- alias: Secret\n")
+    extractor = EntityDefinitionExtractor(tmp_path, tmp_path / ".storage", [], [])
+    assert extractor._resolve_include("!include ../outside.yaml") is None
+    assert extractor.warnings
+
+
+def test_extracts_entities_from_included_homeassistant_packages(tmp_path):
+    package_dir = tmp_path / "packages"
+    package_dir.mkdir()
+    (package_dir / "lights.yaml").write_text(
+        "input_boolean:\n  package_light: {}\n"
+        "automation:\n  - alias: Package Automation\n"
+    )
+    (tmp_path / "configuration.yaml").write_text(
+        "homeassistant:\n  packages: !include_dir_named packages\n"
+    )
+    extractor = EntityDefinitionExtractor(tmp_path, tmp_path / ".storage", [], [])
+    entities = extractor.get_config_defined_entities()
+    assert "input_boolean.package_light" in entities
+    assert "automation.package_automation" in entities
+
+
 def test_resolves_include_dir_list_for_automation(tmp_path):
     """An automation !include_dir_list is resolved from configuration.yaml."""
     auto_dir = tmp_path / "automations_pkg"

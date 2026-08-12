@@ -107,6 +107,10 @@ class TestValidateHAURL:
         assert error is not None
         assert "hostname" in error
 
+    @pytest.mark.parametrize("url", ["http://:8123", "https:///api"])
+    def test_missing_hostname_is_invalid_even_with_port_or_path(self, url):
+        assert validate_ha_url(url) is not None
+
     def test_default_ha_url_is_valid(self):
         assert validate_ha_url(DEFAULT_HA_URL) is None
 
@@ -294,6 +298,14 @@ class TestIsTTY:
                 raise TypeError("not callable")
 
         monkeypatch.setattr("sys.stdout", BadStdout())
+        assert _is_tty() is False
+
+    def test_returns_false_when_isatty_raises_valueerror(self, monkeypatch):
+        class ClosedStdout:
+            def isatty(self):
+                raise ValueError("I/O operation on closed file")
+
+        monkeypatch.setattr("sys.stdout", ClosedStdout())
         assert _is_tty() is False
 
 
@@ -615,6 +627,15 @@ class TestAtomicWriteText:
         target.write_text("old")
         atomic_write_text(target, "new")
         assert target.read_text() == "new"
+
+    def test_preserves_existing_permissions(self, tmp_path):
+        from tools.common import atomic_write_text
+
+        target = tmp_path / "out.json"
+        target.write_text("old")
+        target.chmod(0o600)
+        atomic_write_text(target, "new")
+        assert target.stat().st_mode & 0o777 == 0o600
 
     def test_original_survives_on_failure(self, tmp_path, monkeypatch):
         from tools import common

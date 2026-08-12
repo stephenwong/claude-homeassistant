@@ -238,7 +238,7 @@ class HAWSClient:
             ):
                 await self._authenticate(ws)
                 return await self._send_and_receive(ws, command_type, **params)
-        except (OSError, aiohttp.ClientError) as e:
+        except (OSError, aiohttp.ClientError, ValueError) as e:
             raise HARequestError(
                 f"cannot connect to HA WebSocket at {self._ws_url}: {e}"
             ) from e
@@ -246,6 +246,8 @@ class HAWSClient:
     async def _authenticate(self, ws) -> None:
         """Perform the WebSocket auth handshake."""
         msg = await ws.receive_json()
+        if not isinstance(msg, dict):
+            raise HARequestError("Invalid WebSocket message during authentication")
         if msg.get("type") != "auth_required":
             raise HARequestError(
                 f"unexpected WebSocket message: expected auth_required, "
@@ -253,6 +255,8 @@ class HAWSClient:
             )
         await ws.send_json({"type": "auth", "access_token": self.token})
         msg = await ws.receive_json()
+        if not isinstance(msg, dict):
+            raise HARequestError("Invalid WebSocket message during authentication")
         if msg.get("type") == "auth_invalid":
             raise HARequestError(
                 f"authentication failed \u2014 check HA_TOKEN: "
@@ -270,12 +274,18 @@ class HAWSClient:
 
         for _ in range(_MAX_RESULT_MESSAGES):
             msg = await ws.receive_json()
+            if not isinstance(msg, dict):
+                raise HARequestError("Invalid WebSocket message while awaiting result")
             if msg.get("type") == "result" and msg.get("id") == msg_id:
                 if not msg.get("success", False):
                     error = msg.get("error", {})
+                    message = (
+                        error.get("message")
+                        if isinstance(error, dict)
+                        else "unknown error"
+                    )
                     raise HARequestError(
-                        f"{command_type} failed: "
-                        f"{error.get('message', 'unknown error')}"
+                        f"{command_type} failed: {message or 'unknown error'}"
                     )
                 return msg.get("result")
 

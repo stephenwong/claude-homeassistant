@@ -165,13 +165,21 @@ class ValidatorBase(ABC):
 
             # Blueprint automations use 'use_blueprint' instead of
             # direct triggers/actions
-            if "use_blueprint" not in automation:
-                if "trigger" not in automation and "triggers" not in automation:
+            if "use_blueprint" in automation:
+                if not isinstance(automation["use_blueprint"], dict):
+                    self.errors.append(
+                        f"{source}: Automation {i} 'use_blueprint' must be a dictionary"
+                    )
+                    all_valid = False
+            else:
+                trigger_key = "trigger" if "trigger" in automation else "triggers"
+                action_key = "action" if "action" in automation else "actions"
+                if trigger_key not in automation or automation[trigger_key] is None:
                     self.errors.append(
                         f"{source}: Automation {i} missing 'trigger' or 'triggers'"
                     )
                     all_valid = False
-                if "action" not in automation and "actions" not in automation:
+                if action_key not in automation or automation[action_key] is None:
                     self.errors.append(
                         f"{source}: Automation {i} missing 'action' or 'actions'"
                     )
@@ -205,7 +213,14 @@ class ValidatorBase(ABC):
                 continue
 
             # Blueprint scripts use 'use_blueprint' instead of direct sequence
-            if "use_blueprint" not in script_config and "sequence" not in script_config:
+            if "use_blueprint" in script_config:
+                if not isinstance(script_config["use_blueprint"], dict):
+                    self.errors.append(
+                        f"{source}: Script '{script_name}' 'use_blueprint' must be "
+                        "a dictionary"
+                    )
+                    all_valid = False
+            elif "sequence" not in script_config or script_config["sequence"] is None:
                 self.errors.append(
                     f"{source}: Script '{script_name}' missing required "
                     f"'sequence' or 'use_blueprint'"
@@ -216,7 +231,7 @@ class ValidatorBase(ABC):
 
     def validate_all(self) -> bool:
         """Template method: ensure config_dir exists, then run _validate()."""
-        if not self.config_dir.exists():
+        if not self.config_dir.is_dir():
             self.errors.append(f"Config directory {self.config_dir} does not exist")
             return False
         return self._validate()
@@ -227,7 +242,7 @@ class ValidatorBase(ABC):
 
     def print_results(self):
         """Print validation results."""
-        if self.quiet:
+        if self.quiet and not self.errors:
             return
 
         if self.info:

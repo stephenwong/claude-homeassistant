@@ -166,6 +166,7 @@ if [ ! -f ".env" ]; then
     cp .env.example .env
 else
     cp .env .env.backup
+    chmod 600 .env.backup
 fi
 
 HA_HOST_VALUE="$HA_HOST" HA_URL_VALUE="$HA_URL" HA_TOKEN_VALUE="$HA_TOKEN" python3 - ".env" <<'PY'
@@ -194,6 +195,18 @@ for key, value in updates.items():
         text += replacement + "\n"
 path.write_text(text, encoding="utf-8")
 PY
+chmod 600 .env
+
+HA_MCP_URL_VALUE=$(sed -n 's/^HA_MCP_URL=//p' .env | head -n 1 || true)
+case "$HA_MCP_URL_VALUE" in
+    http://*|https://*)
+        printf '%s\n' "$HA_MCP_URL_VALUE" > .ha-mcp-url
+        chmod 600 .ha-mcp-url
+        ;;
+    *)
+        rm -f .ha-mcp-url
+        ;;
+esac
 echo "✅ .env updated with HA_HOST=$HA_HOST and HA_URL=$HA_URL"
 
 echo ""

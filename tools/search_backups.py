@@ -96,6 +96,7 @@ def search_backup(
 ) -> tuple[list[_MatchResult], bool]:
     """Search a single backup archive for a pattern. Returns (matches, unreadable)."""
     matches: list[_MatchResult] = []
+    unreadable = False
     try:
         for display_name, extracted in iter_tarball_file_members(backup["path"]):
             try:
@@ -112,13 +113,13 @@ def search_backup(
                         matches,
                     )
             except UnicodeDecodeError:
-                return [], True
+                unreadable = True
 
     except (tarfile.TarError, OSError) as e:
         print(f"  Warning: Could not read {backup['filename']}: {e}", file=sys.stderr)
         return [], True
 
-    return matches, False
+    return matches, unreadable
 
 
 def _search_backups(

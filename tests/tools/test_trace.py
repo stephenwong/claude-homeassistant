@@ -58,7 +58,7 @@ def _make_ws_command_side_effect(
 
     Simulates ``trace/list`` (filtered by ``item_id``) and ``trace/get``.
     """
-    all_traces = traces or [_mock_trace_entry()]
+    all_traces = traces if traces is not None else [_mock_trace_entry()]
     detail = trace_detail or {
         "item_id": "baz_qux",
         "run_id": "run456",
@@ -181,6 +181,32 @@ class TestEntityResolution:
         assert "my_old_auto" in out
         assert "No traces found" not in err
 
+    def test_single_entity_selects_newest_run(self, mock_clients, capsys):
+        mock_hac, mock_ws = mock_clients
+        mock_hac.get_json.return_value = {
+            "attributes": {"id": "auto_id"},
+        }
+        mock_ws.command.side_effect = _make_ws_command_side_effect(
+            traces=[
+                _mock_trace_entry(
+                    item_id="auto_id",
+                    run_id="old",
+                    timestamp={"start": "2026-01-01T00:00:00+00:00"},
+                ),
+                _mock_trace_entry(
+                    item_id="auto_id",
+                    run_id="new",
+                    timestamp={"start": "2026-01-02T00:00:00+00:00"},
+                ),
+            ]
+        )
+        from tools.commands.trace import run
+
+        assert run(_make_args(entity_id="automation.auto")) == 0
+        mock_ws.command.assert_any_call(
+            "trace/get", domain="automation", item_id="auto_id", run_id="new"
+        )
+
     def test_no_traces_returns_clean_error(self, mock_clients, capsys):
         """Genuinely no traces for a known automation → clean stderr message."""
         mock_hac, mock_ws = mock_clients
@@ -270,6 +296,8 @@ class TestListMode:
         ids_with_runs = {d.get("item_id") for d in data if d.get("runs")}
         assert "auto_a" in ids_with_runs
         assert "auto_b" not in {d.get("item_id") for d in data if d.get("runs")}
+        auto_a = next(d for d in data if d["item_id"] == "auto_a")
+        assert auto_a["timestamp"] == "2026-02-01T00:02:00+00:00"
 
 
 class TestValidation:

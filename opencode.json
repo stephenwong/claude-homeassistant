@@ -3,7 +3,7 @@
   "lsp": {
     "ruff": {
       "command": ["uv", "run", "ruff", "server"],
-      "extensions": ["py"],
+       "extensions": [".py"],
       "env": { "UV_NO_SYNC": "1" }
     }
   },

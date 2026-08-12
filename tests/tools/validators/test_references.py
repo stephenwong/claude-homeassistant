@@ -1366,6 +1366,12 @@ def test_references_main_accepts_quiet(monkeypatch, tmp_path):
     """The command entry point accepts --quiet without error."""
     (tmp_path / ".storage").mkdir(exist_ok=True)
     (tmp_path / "configuration.yaml").write_text("homeassistant:\n")
+    for filename, key in (
+        ("core.entity_registry", "entities"),
+        ("core.device_registry", "devices"),
+        ("core.area_registry", "areas"),
+    ):
+        (tmp_path / ".storage" / filename).write_text(json.dumps({"data": {key: []}}))
     monkeypatch.setattr("sys.argv", ["ref_validator", str(tmp_path), "--quiet"])
     assert main() == 0
 

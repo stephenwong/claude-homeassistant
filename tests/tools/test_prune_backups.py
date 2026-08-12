@@ -383,6 +383,13 @@ class TestFormatSize:
 
 
 class TestMain:
+    def test_negative_min_keep_is_rejected(self, capsys):
+        from tools.prune_backups import main
+
+        with pytest.raises(SystemExit):
+            main(["--min-keep", "-1"])
+        assert "min-keep" in capsys.readouterr().err
+
     def test_no_backups(self, tmp_path, capsys):
         backup_dir = tmp_path / "backups"
         backup_dir.mkdir()

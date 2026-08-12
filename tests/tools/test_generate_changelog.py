@@ -343,6 +343,21 @@ class TestGenerateForBackup:
         with pytest.raises(ValueError, match="not found in the backup list"):
             _select_predecessor({"filename": "missing"}, [{"filename": "other"}])
 
+    def test_write_failure_is_reported(self, tmp_path, monkeypatch):
+        from tools.generate_changelog import _write_changelog
+
+        tar_path = make_tar(tmp_path, {"config/test.yaml": "key: value\n"})
+        backup = _backup_record(
+            tar_path,
+            "ha_config_20260201_120000.tar.gz",
+            datetime(2026, 2, 1, 12, 0, 0),
+        )
+        monkeypatch.setattr(
+            "tools.generate_changelog.atomic_write_text", lambda *_: False
+        )
+        with pytest.raises(OSError, match="could not write changelog"):
+            _write_changelog(backup, None)
+
 
 class TestMain:
     def test_no_backups(self, monkeypatch):
@@ -564,9 +579,11 @@ class TestL59AtomicWrite:
             return orig_replace(*a, **kw)
 
         monkeypatch.setattr(tcommon.os, "replace", fail_on_replace)
-        with patch("tools.backup_common.BACKUP_DIR", tmp_path):
-            result = generate_for_backup(backup, [backup])
-        assert isinstance(result, Path)
+        with (
+            patch("tools.backup_common.BACKUP_DIR", tmp_path),
+            pytest.raises(OSError, match="could not write changelog"),
+        ):
+            generate_for_backup(backup, [backup])
         # Original must survive intact
         assert cl_path.read_text() == "original content"
         # No .tmp file left behind

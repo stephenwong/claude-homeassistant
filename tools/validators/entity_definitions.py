@@ -70,8 +70,8 @@ class EntityDefinitionExtractor:
         warnings: list[str],
         info: list[str],
     ):
-        self.config_dir = config_dir
-        self.storage_dir = storage_dir
+        self.config_dir = config_dir.resolve()
+        self.storage_dir = storage_dir.resolve()
         self.warnings = warnings
         self.info = info
         self._config_defined_entities: set[str] | None = None
@@ -227,6 +227,13 @@ class EntityDefinitionExtractor:
         returning ``(path, data)`` pairs."""
         loaded: list[tuple[Path, Any]] = []
         for f in sorted(target.glob("*.yaml")):
+            try:
+                f.resolve().relative_to(self.config_dir)
+            except ValueError:
+                self.warnings.append(
+                    f"{f}: Include path is outside the config directory"
+                )
+                continue
             with open(f, encoding="utf-8") as fh:
                 loaded.append((f, yaml.load(fh, Loader=HAYamlLoader)))
         return loaded
@@ -247,10 +254,21 @@ class EntityDefinitionExtractor:
         tag, raw = parts[0], parts[1].strip().rstrip("/")
         target = (self.config_dir / raw).resolve()
         try:
+            target.relative_to(self.config_dir)
+        except ValueError:
+            self.warnings.append(
+                f"{target}: Include path is outside the config directory"
+            )
+            return None
+        try:
             if tag in ("!include",):
                 if target.is_file():
                     with open(target, encoding="utf-8") as f:
                         return yaml.load(f, Loader=HAYamlLoader)
+                self._record_extraction_warning(target, FileNotFoundError(str(target)))
+                return None
+            if not target.is_dir():
+                self._record_extraction_warning(target, FileNotFoundError(str(target)))
                 return None
             if tag == "!include_dir_list":
                 return [data for _path, data in self._load_yaml_glob(target)]
@@ -349,11 +367,24 @@ class EntityDefinitionExtractor:
                                 ):
                                     entities.add(f"{sensor_type}.{name}")
 
-        # HA packages: each value is a full integration config dict.
-        if isinstance(config_data.get("packages"), dict):
-            for pkg in config_data["packages"].values():
+        # HA packages may be top-level or nested under homeassistant.
+        packages = config_data.get("packages")
+        if not isinstance(packages, dict):
+            homeassistant = config_data.get("homeassistant")
+            if isinstance(homeassistant, dict):
+                packages = homeassistant.get("packages")
+        if isinstance(packages, str):
+            packages = self._resolve_include(packages)
+        if isinstance(packages, dict):
+            for pkg in packages.values():
                 if isinstance(pkg, dict):
                     entities.update(self._extract_from_configuration(pkg))
+                    if "automation" in pkg:
+                        entities.update(self._extract_automation_entities(pkg))
+                    if "script" in pkg:
+                        entities.update(self._extract_script_entities(pkg))
+                    if "scene" in pkg:
+                        entities.update(self._extract_scene_entities(pkg))
 
         return entities
 
@@ -427,6 +458,10 @@ class EntityDefinitionExtractor:
                     if resolved is None
                     else (resolved if isinstance(resolved, list) else [resolved])
                 )
+            elif isinstance(include_value, list):
+                items = include_value
+            elif isinstance(include_value, dict):
+                items = [include_value]
 
         if items is None:
             file_path = self.config_dir / file_name
@@ -474,6 +509,13 @@ class EntityDefinitionExtractor:
             if is_explicit_include:
                 data = resolved if isinstance(resolved, dict) else {}
                 for script_name in data:
+                    if isinstance(script_name, str) and self._is_valid_object_id(
+                        script_name
+                    ):
+                        entities.add(f"script.{script_name}")
+                return entities
+            if isinstance(include_value, dict):
+                for script_name in include_value:
                     if isinstance(script_name, str) and self._is_valid_object_id(
                         script_name
                     ):

@@ -20,5 +20,6 @@ SHIM_MODULES = [
 
 @pytest.mark.parametrize("modname", SHIM_MODULES)
 def test_legacy_shim_gone(modname: str) -> None:
-    with pytest.raises(ImportError, match="No module named"):
+    with pytest.raises(ModuleNotFoundError) as exc_info:
         __import__(modname)
+    assert exc_info.value.name == modname

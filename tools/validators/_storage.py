@@ -9,6 +9,16 @@ type JSONValue = (
 type JSONObject = dict[str, JSONValue]
 
 
+def _reject_duplicate_keys(pairs: list[tuple[str, JSONValue]]) -> JSONObject:
+    """Build a JSON object while rejecting duplicate keys."""
+    result: JSONObject = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key '{key}'")
+        result[key] = value
+    return result
+
+
 def _load_json(storage_path: Path) -> JSONObject:
     """Open and parse a storage JSON object.
 
@@ -16,7 +26,7 @@ def _load_json(storage_path: Path) -> JSONObject:
     below the common top-level object envelope.
     """
     with open(storage_path, encoding="utf-8") as f:
-        data = json.load(f)
+        data = json.load(f, object_pairs_hook=_reject_duplicate_keys)
     if not isinstance(data, dict):
         raise ValueError(f"{storage_path}: JSON root must be an object")
     return data
@@ -62,7 +72,9 @@ def load_storage_registry(
     if not isinstance(envelope, dict):
         raise ValueError(f"{storage_path}: 'data' must be an object")
 
-    items = envelope.get(list_key, [])
+    if list_key not in envelope:
+        raise ValueError(f"{storage_path}: missing 'data.{list_key}' list")
+    items = envelope[list_key]
     if not isinstance(items, list):
         raise ValueError(f"{storage_path}: 'data.{list_key}' must be a list")
 
@@ -73,5 +85,7 @@ def load_storage_registry(
         key = item.get(key_field)
         if not isinstance(key, str):
             raise ValueError(f"{storage_path}: item missing string field '{key_field}'")
+        if key in result:
+            raise ValueError(f"{storage_path}: duplicate registry key '{key}'")
         result[key] = item
     return result

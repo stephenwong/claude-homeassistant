@@ -189,8 +189,8 @@ class TestSearchBackup:
         matches, _u = search_backup(backup, re.compile("match"))
         assert matches == []
 
-    def test_decode_failure_discards_partial_matches(self, tmp_path):
-        """A decode failure marks the archive unreadable, not partially matched."""
+    def test_decode_failure_keeps_partial_matches_and_marks_archive(self, tmp_path):
+        """A decode failure does not discard matches from earlier lines."""
         tar_path = tmp_path / "test.tar.gz"
         with tarfile.open(tar_path, "w:gz") as tar:
             data = b"match\n\xff\n"
@@ -204,7 +204,8 @@ class TestSearchBackup:
             "timestamp": datetime(2026, 2, 1),
         }
         matches, unreadable = search_backup(backup, re.compile("match"))
-        assert matches == []
+        assert len(matches) == 1
+        assert matches[0]["line"] == "match"
         assert unreadable is True
 
 

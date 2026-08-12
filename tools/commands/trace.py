@@ -118,12 +118,15 @@ def _fetch_single_trace(ws_client: HAWSClient, entity_id: str) -> dict:
     latest_run_id = latest.get("run_id")
     if not isinstance(latest_item_id, str) or not isinstance(latest_run_id, str):
         raise HARequestError("Invalid trace/list entry")
-    return ws_client.command(
+    data = ws_client.command(
         "trace/get",
         domain="automation",
         item_id=latest_item_id,
         run_id=latest_run_id,
     )
+    if not isinstance(data, dict):
+        raise HARequestError("Invalid trace/get response")
+    return data
 
 
 def _summarize_trace_list(traces: list[dict]) -> list[dict]:

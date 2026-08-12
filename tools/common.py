@@ -4,6 +4,7 @@ import argparse
 import contextlib
 import os
 import re
+import stat
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
@@ -70,11 +71,18 @@ def get_env_int(name: str, default: int, *, minimum: int = 1) -> tuple[int, str 
 
 def validate_ha_url(ha_url: str) -> str | None:
     """Validate HA URL format and return an error message when invalid."""
-    parsed = urlparse(ha_url)
+    try:
+        parsed = urlparse(ha_url)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        return "HA_URL must include a valid hostname and port"
     if parsed.scheme not in {"http", "https"}:
         return "HA_URL must start with http:// or https://"
-    if not parsed.netloc:
+    if not hostname:
         return "HA_URL must include a hostname"
+    if port is not None and not 0 < port <= 65535:
+        return "HA_URL must include a valid hostname and port"
     return None
 
 
@@ -86,7 +94,7 @@ def _is_tty() -> bool:
     """
     try:
         return sys.stdout is not None and sys.stdout.isatty()
-    except AttributeError, OSError, TypeError:
+    except AttributeError, OSError, TypeError, ValueError:
         return False
 
 
@@ -221,26 +229,30 @@ def add_config_dir_arg(parser: argparse.ArgumentParser, *, help: str) -> None:
     )
 
 
-def atomic_write_text(path: Path, content: str) -> None:
+def atomic_write_text(path: Path, content: str) -> bool:
     """Write *content* to *path* atomically via temp file + ``os.replace``.
 
     Writes to a sibling temp file (``<path>.tmp``), flushes, fsyncs, then
-    atomically renames into place. On ``OSError``, warns to stderr and
-    cleans up the temp file. Never raises ``OSError`` — caller treats the
-    write as best-effort.
+    atomically renames into place. Returns ``True`` on success. On ``OSError``,
+    warns to stderr, cleans up the temp file, and returns ``False``.
 
     The temp file is named ``path.with_suffix(path.suffix + ".tmp")``, which
     preserves the extension (e.g. ``foo.json`` → ``foo.json.tmp``).
     """
     tmp = path.with_suffix(path.suffix + ".tmp")
     try:
+        mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else None
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(content)
             f.flush()
             os.fsync(f.fileno())
+        if mode is not None:
+            os.chmod(tmp, mode)
         os.replace(tmp, path)
+        return True
     except OSError as e:
         print(f"WARN: failed to write {path}: {e}", file=sys.stderr)
+        return False
     finally:
         if tmp.exists():
             with contextlib.suppress(OSError):

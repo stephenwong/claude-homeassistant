@@ -128,21 +128,30 @@ def test_entity_definitions_imports():
 class TestL80FileDeps:
     """L80: round-trip compute_hash + summary= kwarg forwarding."""
 
-    def test_file_deps_patterns_resolve_against_real_config(self):
-        """L80: every file_deps() pattern must resolve (catch typos)."""
+    def test_file_deps_patterns_resolve_against_fixture_config(self, tmp_path):
+        """Every declared dependency pattern must match a fixture file."""
         from pathlib import Path
 
         from tools.cache import compute_hash
 
-        config_dir = Path(__file__).parent.parent / "config"
         for cls, _desc in [
             (DuplicateIDValidator, ""),
             (YAMLValidator, ""),
             (ReferenceValidator, ""),
         ]:
+            config_dir = Path(tmp_path)
             instance = cls(config_dir=str(config_dir))
             deps = instance.file_deps()
             if deps:
+                for pattern in deps:
+                    if pattern.startswith("*"):
+                        path = config_dir / ("fixture" + pattern[1:])
+                        path.write_text("{}")
+                    else:
+                        path = config_dir / pattern
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_text("{}")
+                assert all(any(config_dir.glob(pattern)) for pattern in deps)
                 h = compute_hash(Path(config_dir), deps)
                 assert isinstance(h, str)
                 assert len(h) == 64

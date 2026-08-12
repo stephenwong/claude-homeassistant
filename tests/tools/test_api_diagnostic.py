@@ -5,7 +5,18 @@ from unittest.mock import Mock, patch
 import pytest
 import requests
 
-from tools._dev.api_diagnostic import _request, get_config, show_websocket_info
+from tools._dev.api_diagnostic import (
+    _request,
+    get_config,
+    main,
+    show_websocket_info,
+)
+from tools._dev.api_diagnostic import (
+    test_entity_rename as diagnostic_entity_rename,
+)
+from tools._dev.api_diagnostic import (
+    test_service_call_method as diagnostic_service_call_method,
+)
 
 
 def test_get_config_returns_typed_runtime_shape():
@@ -124,3 +135,24 @@ def test_request_propagates_transport_errors():
 def test_websocket_guidance_uses_configured_ha_url(ha_url, websocket_url, capsys):
     show_websocket_info(ha_url)
     assert websocket_url in capsys.readouterr().out
+
+
+def test_mutating_diagnostic_steps_are_read_only():
+    with patch("tools._dev.api_diagnostic._request") as request:
+        assert (
+            diagnostic_entity_rename("http://ha", "token", [{"entity_id": "light.x"}])
+            is False
+        )
+        diagnostic_service_call_method("http://ha", "token", [{"entity_id": "light.x"}])
+    request.assert_not_called()
+
+
+def test_main_returns_failure_when_connection_fails(monkeypatch):
+    monkeypatch.setattr(
+        "tools._dev.api_diagnostic.get_config",
+        lambda: {"ha_url": "http://ha", "token": "token", "request_timeout": 1},
+    )
+    monkeypatch.setattr(
+        "tools._dev.api_diagnostic.test_api_connection", lambda *_: False
+    )
+    assert main() == 1

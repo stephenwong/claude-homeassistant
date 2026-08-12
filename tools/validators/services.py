@@ -55,6 +55,9 @@ class ServiceValidator(ValidatorBase):
                 "device_id" in data
                 and "domain" in data
                 and "type" in data
+                and data.get("condition") != "device"
+                and data.get("trigger") != "device"
+                and data.get("platform") != "device"
                 and isinstance(data.get("domain"), str)
                 and isinstance(data.get("type"), str)
             ):
@@ -85,10 +88,20 @@ class ServiceValidator(ValidatorBase):
                     "Live service check skipped: null response from /api/services"
                 )
             return None
+        if not isinstance(catalog, list):
+            self.warnings.append(
+                "Live service check skipped: invalid response from /api/services"
+            )
+            return None
         valid: set[str] = set()
         for entry in catalog:
+            if not isinstance(entry, dict):
+                continue
             domain = entry.get("domain")
-            for svc in entry.get("services") or {}:
+            services = entry.get("services")
+            if not isinstance(services, dict):
+                continue
+            for svc in services:
                 if domain and svc:
                     valid.add(f"{domain}.{svc}")
         return valid

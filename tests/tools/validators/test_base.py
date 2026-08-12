@@ -38,6 +38,12 @@ class TestRunCli:
         monkeypatch.setattr("sys.argv", ["dummy", "/nonexistent"])
         assert _DummyValidator.run_cli("dummy description") == 1
 
+    def test_returns_one_when_config_path_is_a_file(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("homeassistant:\n")
+        monkeypatch.setattr("sys.argv", ["dummy", str(config_file)])
+        assert _DummyValidator.run_cli("dummy description") == 1
+
     def test_default_config_dir_is_config(self, monkeypatch, tmp_path):
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr("sys.argv", ["dummy"])
@@ -87,6 +93,12 @@ class TestRunCli:
         _DummyValidator.run_cli("dummy")
         assert called == [True]
 
+    def test_quiet_mode_still_prints_errors(self, dummy_config, capsys):
+        validator = _DummyValidator(str(dummy_config), quiet=True)
+        validator.errors.append("bad config")
+        validator.print_results()
+        assert "bad config" in capsys.readouterr().err
+
     def test_get_yaml_files_returns_a_glob_order_independent_list(
         self, tmp_path, monkeypatch
     ):
@@ -116,11 +128,12 @@ def test_format_diagnostics_preserves_severity_order_and_prefixes():
 def test_format_diagnostics_empty_is_empty():
     assert format_diagnostics([], [], []) == ""
 
-    def test_validate_all_called(self, dummy_config, monkeypatch):
-        called = []
-        monkeypatch.setattr(
-            _DummyValidator, "validate_all", lambda self: called.append(True) or True
-        )
-        monkeypatch.setattr("sys.argv", ["dummy", str(dummy_config)])
-        _DummyValidator.run_cli("dummy")
-        assert called == [True]
+
+def test_validate_all_called(dummy_config, monkeypatch):
+    called = []
+    monkeypatch.setattr(
+        _DummyValidator, "validate_all", lambda self: called.append(True) or True
+    )
+    monkeypatch.setattr("sys.argv", ["dummy", str(dummy_config)])
+    _DummyValidator.run_cli("dummy")
+    assert called == [True]

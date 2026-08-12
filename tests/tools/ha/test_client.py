@@ -406,6 +406,13 @@ class TestHAWSAuthenticate:
         with pytest.raises(HARequestError, match="auth_required"):
             asyncio.run(c._authenticate(ws))
 
+    @pytest.mark.parametrize("message", [None, ["auth_required"]])
+    def test_malformed_message_raises_request_error(self, message):
+        ws = _make_mock_ws([message])
+        c = HAWSClient("http://ha:8123", "tok")
+        with pytest.raises(HARequestError, match="Invalid WebSocket message"):
+            asyncio.run(c._authenticate(ws))
+
 
 class TestHAWSSendAndReceive:
     def test_success_returns_result(self):
@@ -444,6 +451,12 @@ class TestHAWSSendAndReceive:
         c = HAWSClient("http://ha:8123", "tok")
         with pytest.raises(HARequestError, match="Unknown command"):
             asyncio.run(c._send_and_receive(ws, "bad/command"))
+
+    def test_malformed_result_message_raises_request_error(self):
+        ws = _make_mock_ws([None])
+        c = HAWSClient("http://ha:8123", "tok")
+        with pytest.raises(HARequestError, match="Invalid WebSocket message"):
+            asyncio.run(c._send_and_receive(ws, "trace/list"))
 
 
 class TestHAWSCommand:

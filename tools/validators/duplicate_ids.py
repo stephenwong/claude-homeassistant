@@ -107,7 +107,7 @@ class DuplicateIDValidator(ValidatorBase):
         except yaml.constructor.ConstructorError as e:
             self.errors.append(f"{scripts_file}: {e.problem}")
             return False
-        except (OSError, TypeError, yaml.YAMLError) as e:
+        except (OSError, UnicodeDecodeError, TypeError, yaml.YAMLError) as e:
             self.errors.append(f"{scripts_file}: failed to parse: {e}")
             return False
         return True

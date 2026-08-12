@@ -54,6 +54,28 @@ class TestM10aDeviceActions:
         ServiceValidator._extract_services(step, "automations.yaml", found)
         assert not any(svc == "turn_on" for svc, _ in found)
 
+    def test_device_condition_is_not_extracted_as_service(self):
+        found: list[tuple[str, str]] = []
+        step = {
+            "condition": "device",
+            "device_id": "abc-123",
+            "domain": "light",
+            "type": "is_on",
+        }
+        ServiceValidator._extract_services(step, "automations.yaml", found)
+        assert found == []
+
+    def test_legacy_platform_device_trigger_is_not_extracted(self):
+        found: list[tuple[str, str]] = []
+        step = {
+            "platform": "device",
+            "device_id": "abc-123",
+            "domain": "light",
+            "type": "turned_on",
+        }
+        ServiceValidator._extract_services(step, "automations.yaml", found)
+        assert found == []
+
 
 class TestM9DataPayloadNotExtracted:
     """M9: `action:` keys inside `data:` payloads are notification button labels,

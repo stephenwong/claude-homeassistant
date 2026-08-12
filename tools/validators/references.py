@@ -119,6 +119,7 @@ class ReferenceValidator(ValidatorBase):
         self._entities: dict[str, Any] | None = None
         self._devices: dict[str, Any] | None = None
         self._areas: dict[str, Any] | None = None
+        self._registry_load_failures: set[str] = set()
 
         self._definitions = EntityDefinitionExtractor(
             self.config_dir, self.storage_dir, self.warnings, self.info
@@ -169,6 +170,8 @@ class ReferenceValidator(ValidatorBase):
 
         if not registry_file.exists():
             bucket.append(f"{spec.label} not found: {registry_file}")
+            if spec.missing_bucket == "errors":
+                self._registry_load_failures.add(spec.filename)
             setattr(self, spec.cache_attr, {})
             return {}
 
@@ -178,6 +181,8 @@ class ReferenceValidator(ValidatorBase):
             )
         except (OSError, KeyError, TypeError, ValueError) as e:
             bucket.append(f"Failed to load {spec.label.lower()}: {e}")
+            if spec.missing_bucket == "errors":
+                self._registry_load_failures.add(spec.filename)
             setattr(self, spec.cache_attr, {})
             return {}
 
@@ -517,7 +522,9 @@ class ReferenceValidator(ValidatorBase):
         devices = self.load_device_registry()
         areas = self.load_area_registry()
         entity_id_mapping = {
-            e["id"]: e["entity_id"] for e in entities.values() if "id" in e
+            e["id"]: e["entity_id"]
+            for e in entities.values()
+            if isinstance(e.get("id"), str) and isinstance(e.get("entity_id"), str)
         }
         config_entities = self.get_config_defined_entities()
         restore_entities = self.load_restore_state_entities()
@@ -538,7 +545,8 @@ class ReferenceValidator(ValidatorBase):
         device_ok = self._check_device_refs(file_path, device_refs, devices)
         self._check_area_refs(file_path, area_refs, areas)
 
-        return entity_ok and uuid_ok and device_ok
+        registry_ok = not self._registry_load_failures
+        return entity_ok and uuid_ok and device_ok and registry_ok
 
     def _validate(self) -> bool:
         """Validate all references in the config directory."""
@@ -584,7 +592,7 @@ class ReferenceValidator(ValidatorBase):
 
     def print_results(self):
         """Print validation results with entity summary."""
-        if self.quiet:
+        if self.quiet and not self.errors:
             return
 
         if self.summary:

@@ -1,6 +1,7 @@
 """``stale-sensors`` subcommand: run stale sensor detection directly."""
 
 import argparse
+import sys
 
 from tools.common import (
     add_config_dir_arg,
@@ -8,6 +9,7 @@ from tools.common import (
     positive_int,
     resolve_summary,
 )
+from tools.validators.base import format_diagnostics
 from tools.validators.stale_sensors import (
     DEFAULT_ONLY_DOMAINS,
     DEFAULT_THRESHOLD_HOURS,
@@ -86,4 +88,15 @@ def run(args: argparse.Namespace) -> int:
         summary=summary,
     )
 
-    return 0 if validator.validate_all() else 1
+    passed = validator.validate_all()
+    if summary:
+        status = "PASS" if passed else "FAIL"
+        print(f"{status} {validator.validator_name}")
+        diagnostics = format_diagnostics(
+            validator.errors, validator.warnings, validator.info
+        )
+        if diagnostics:
+            print(diagnostics, file=sys.stderr)
+    else:
+        validator.print_results()
+    return 0 if passed else 1

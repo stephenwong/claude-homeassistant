@@ -213,8 +213,8 @@ def test_states_endpoint(ha_url, token, request_timeout: int = 10):
 
 
 def test_entity_rename(ha_url, token, entity_data_list, request_timeout: int = 10):
-    """Test renaming a single entity using multiple methods."""
-    print("\n🔄 Testing Entity Rename Methods...")
+    """Explain entity rename methods without changing Home Assistant state."""
+    print("\n🔄 Entity Rename Methods (read-only)...")
 
     if not entity_data_list:
         print("   ❌ No entity data to test with")
@@ -225,61 +225,16 @@ def test_entity_rename(ha_url, token, entity_data_list, request_timeout: int = 1
     domain = old_id.split(".")[0] if "." in old_id else "entity"
     new_id = f"{domain}.rename_test_temp"
 
-    print(f"   Testing rename: {old_id} → {new_id}")
-
-    # Method 1: Direct entity registry update
-    try:
-        print("\n   Method 1: Direct registry update...")
-        data = {"new_entity_id": new_id}
-        response = _request(
-            ha_url,
-            token,
-            f"/api/config/entity_registry/{old_id}",
-            method="POST",
-            request_timeout=request_timeout,
-            payload=data,
-        )
-
-        print(f"   Status: {response.status_code}")
-        if response.status_code == 200:
-            print("   ✅ Method 1 successful!")
-            return True
-        else:
-            print(f"   ❌ Method 1 failed: {response.text}")
-
-    except requests.RequestException as e:
-        print(f"   ❌ Method 1 exception: {e}")
-
-    # Method 2: Update endpoint
-    try:
-        print("\n   Method 2: Update endpoint...")
-        response = _request(
-            ha_url,
-            token,
-            "/api/config/entity_registry/update",
-            method="POST",
-            request_timeout=request_timeout,
-            payload={"entity_id": old_id, "new_entity_id": new_id},
-        )
-
-        print(f"   Status: {response.status_code}")
-        if response.status_code == 200:
-            print("   ✅ Method 2 successful!")
-            return True
-        else:
-            print(f"   ❌ Method 2 failed: {response.text}")
-
-    except requests.RequestException as e:
-        print(f"   ❌ Method 2 exception: {e}")
-
+    print(f"   Would test rename: {old_id} → {new_id}")
+    print("   Skipped: diagnostic tools must not mutate Home Assistant state")
     return False
 
 
 def test_service_call_method(
     ha_url, token, entity_data_list, request_timeout: int = 10
 ):
-    """Test if we can rename via service calls."""
-    print("\n🔧 Testing Service Call Method...")
+    """Explain the service-call rename behavior without making a service call."""
+    print("\n🔧 Service Call Method (read-only)...")
 
     # Use first discovered entity, or skip if none available
     if not entity_data_list:
@@ -287,33 +242,8 @@ def test_service_call_method(
         return
 
     target_entity = entity_data_list[0].get("entity_id", "unknown")
-
-    # Test calling homeassistant.update_entity service
-    try:
-        service_data = {
-            "entity_id": target_entity,
-            # This changes friendly name, not entity_id
-            "name": "Rename Test Temp",
-        }
-
-        response = _request(
-            ha_url,
-            token,
-            "/api/services/homeassistant/update_entity",
-            method="POST",
-            request_timeout=request_timeout,
-            payload=service_data,
-        )
-
-        print(f"   Status: {response.status_code}")
-        if response.status_code == 200:
-            print("   ✅ Service call successful (friendly name only)")
-            print("   Note: This only changes display name, not entity_id")
-        else:
-            print(f"   ❌ Service call failed: {response.text}")
-
-    except requests.RequestException as e:
-        print(f"   ❌ Exception: {e}")
+    print(f"   Would inspect friendly-name update behavior for: {target_entity}")
+    print("   Skipped: diagnostic tools must not call services")
 
 
 def show_websocket_info(ha_url: str):
@@ -359,19 +289,19 @@ def main():
     url_error = validate_ha_url(ha_url)
     if url_error:
         print(f"❌ {url_error}")
-        return
+        return 1
 
     if not token:
         print("❌ No HA_TOKEN found in .env file!")
         print("   Create a .env file with: HA_TOKEN=your_long_lived_access_token")
-        return
+        return 1
 
     print(f"🔗 Testing connection to: {ha_url}")
 
     # Test 1: Basic connection
     if not test_api_connection(ha_url, token, request_timeout):
         print("❌ Basic connection failed - stopping tests")
-        return
+        return 1
 
     # Test 2: Explore available endpoints
     successful_endpoints = test_api_endpoints(ha_url, token, request_timeout)
@@ -406,7 +336,8 @@ def main():
     print("   2. REST API works for states but not entity management")
     print("   3. Service calls only change friendly names, not entity IDs")
     print("   4. Manual UI renaming may be most reliable option")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

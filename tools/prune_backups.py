@@ -18,6 +18,7 @@ from typing import TypedDict
 
 from tools import backup_common
 from tools.backup_common import BackupRecord, changelog_path_for, get_backups
+from tools.common import non_negative_int
 
 
 class RetentionGroups(TypedDict):
@@ -270,7 +271,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--min-keep",
-        type=int,
+        type=non_negative_int,
         default=3,
         help="Refuse to delete if fewer than N backups would remain (default: 3).",
     )

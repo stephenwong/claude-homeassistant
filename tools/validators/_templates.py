@@ -19,4 +19,10 @@ def is_jinja_template(value: str) -> bool:
     also need to detect HA tags (``!secret``, ``!include``) must check
     ``value.startswith('!')`` separately — this helper is pure Jinja2 detection.
     """
-    return bool(TEMPLATE_PATTERN.search(value))
+    if TEMPLATE_PATTERN.search(value):
+        return True
+    for opening, closing in TEMPLATE_DELIMITERS:
+        for match in re.finditer(re.escape(opening), value):
+            if match.end() < len(value) and value.find(closing, 0, match.start()) == -1:
+                return True
+    return False

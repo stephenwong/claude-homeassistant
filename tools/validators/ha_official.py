@@ -87,6 +87,7 @@ class HAOfficialValidator(ValidatorBase):
                 cmd,
                 capture_output=True,
                 text=True,
+                errors="replace",
                 timeout=self.validation_timeout,
             )
 
@@ -212,6 +213,9 @@ class HAOfficialValidator(ValidatorBase):
             if not line:
                 continue
             line_lower = line.lower()
+            if re.match(r"^\W*warning\b", line, re.I):
+                self.warnings.append(f"HA Warning: {line}")
+                continue
             if any(ind in line_lower for ind in _STDERR_ERROR_INDICATORS):
                 self.errors.append(f"HA Error: {line}")
                 continue
