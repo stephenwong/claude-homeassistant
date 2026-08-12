@@ -80,22 +80,18 @@ class TestBuildParser:
 
 
 class TestMain:
-    def test_validate_dispatches_to_command(self):
+    @pytest.mark.parametrize(
+        ("argv", "patch_target"),
+        [
+            (["validate", "--quiet"], "tools.commands.validate.run"),
+            (["stale-sensors"], "tools.commands.stale_sensors.run"),
+            (["reload"], "tools.commands.reload.run"),
+        ],
+    )
+    def test_dispatches_to_command(self, argv, patch_target):
         """main() should call the subcommand's run() function."""
-        with patch("tools.commands.validate.run", return_value=0) as mock_run:
-            result = main(["validate", "--quiet"])
-        assert result == 0
-        mock_run.assert_called_once()
-
-    def test_stale_sensors_dispatches_to_command(self):
-        with patch("tools.commands.stale_sensors.run", return_value=0) as mock_run:
-            result = main(["stale-sensors"])
-        assert result == 0
-        mock_run.assert_called_once()
-
-    def test_reload_dispatches_to_command(self):
-        with patch("tools.commands.reload.run", return_value=0) as mock_run:
-            result = main(["reload"])
+        with patch(patch_target, return_value=0) as mock_run:
+            result = main(argv)
         assert result == 0
         mock_run.assert_called_once()
 

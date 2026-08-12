@@ -5,15 +5,14 @@ Works with both list-based (automations.yaml, scenes.yaml) and dict-based
 (scripts.yaml) Home Assistant YAML files.
 """
 
-import os
-import stat
-import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
+
+from tools.common import _atomic_replace
 
 
 class ValidationError(Exception):
@@ -72,25 +71,18 @@ class YAMLEditor:
 
     def _atomic_save(self, validator: Callable[[Path], bool]) -> None:
         """Write to a temp file, validate, then atomically rename."""
-        tmp_path = None
-        try:
-            tmp = tempfile.NamedTemporaryFile(  # noqa: SIM115 — delete=False, not a context manager
-                dir=self.path.parent,
-                prefix=f".{self.path.name}.",
-                suffix=".tmp",
-                delete=False,
-            )
-            tmp_path = Path(tmp.name)
-            tmp.close()
-            self.dump(self._data, tmp_path)
-            if self.path.exists():
-                os.chmod(tmp_path, stat.S_IMODE(self.path.stat().st_mode))
+
+        def validate_temp(tmp_path: Path) -> None:
             if not validator(tmp_path):
                 raise ValidationError("Atomic save aborted: validation failed")
-            os.replace(tmp_path, self.path)
-        finally:
-            if tmp_path is not None and tmp_path.exists():
-                tmp_path.unlink()
+
+        _atomic_replace(
+            self.path,
+            lambda tmp_path: self.dump(self._data, tmp_path),
+            validate=validate_temp,
+            temp_prefix=f".{self.path.name}.",
+            temp_suffix=".tmp",
+        )
 
     def dump(self, data, path: Path | str) -> None:
         """Write YAML data to a file path."""

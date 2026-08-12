@@ -107,35 +107,27 @@ class StaleSensorValidator(ValidatorBase):
             )
             return None
 
-        try:
-            return load_storage_registry(
-                registry_file, list_key="entities", key_field="entity_id"
-            )
-        except json.JSONDecodeError:
-            time.sleep(0.1)
+        last_error: Exception | None = None
+        for attempt in range(2):
             try:
                 return load_storage_registry(
                     registry_file, list_key="entities", key_field="entity_id"
                 )
-            except (
-                OSError,
-                json.JSONDecodeError,
-                KeyError,
-                TypeError,
-                ValueError,
-                AttributeError,
-            ) as e:
-                self.warnings.append(
-                    f"Failed to read entity registry: {e}. "
-                    "Falling back to state-only analysis."
-                )
-                return None
-        except (OSError, KeyError, TypeError, ValueError, AttributeError) as e:
+            except json.JSONDecodeError as e:
+                last_error = e
+                if attempt == 0:
+                    time.sleep(0.1)
+                    continue
+            except (OSError, KeyError, TypeError, ValueError, AttributeError) as e:
+                last_error = e
+            break
+
+        if last_error is not None:
             self.warnings.append(
-                f"Failed to read entity registry: {e}. "
+                f"Failed to read entity registry: {last_error}. "
                 "Falling back to state-only analysis."
             )
-            return None
+        return None
 
     def _parse_iso_string(self, s: str) -> datetime | None:
         """Parse an ISO-8601 string into an offset-aware datetime.

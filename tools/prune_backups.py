@@ -3,9 +3,9 @@
 Prune Home Assistant configuration backups with smart retention.
 
 Retention rules:
-- Keep all backups from last 7 days
-- Keep one backup per day for backups 8-30 days old (latest each day)
-- Keep one backup per week for backups 31+ days old (latest each week)
+- Keep all backups from the recent retention window
+- Keep one backup per day through the daily retention boundary (latest each day)
+- Keep one backup per week from the weekly retention boundary onward (latest each week)
 """
 
 import argparse
@@ -19,6 +19,10 @@ from typing import TypedDict
 from tools import backup_common
 from tools.backup_common import BackupRecord, changelog_path_for, get_backups
 from tools.common import non_negative_int
+
+RECENT_MAX_AGE_DAYS = 7
+DAILY_MAX_AGE_DAYS = 30
+WEEKLY_MIN_AGE_DAYS = DAILY_MAX_AGE_DAYS + 1
 
 
 class RetentionGroups(TypedDict):
@@ -34,22 +38,22 @@ def group_by_retention_period(
 ) -> RetentionGroups:
     """Group backups into retention periods."""
     groups: RetentionGroups = {
-        "keep_all": [],  # Last 7 days
-        "daily": defaultdict(list),  # 8-30 days, one per day
-        "weekly": defaultdict(list),  # 31+ days, one per week
+        "keep_all": [],  # Through RECENT_MAX_AGE_DAYS days old
+        "daily": defaultdict(list),  # Through DAILY_MAX_AGE_DAYS days old
+        "weekly": defaultdict(list),  # From WEEKLY_MIN_AGE_DAYS days old
     }
 
     for backup in backups:
         age = now - backup["timestamp"]
 
-        if age.days <= 7:
-            # Keep all from last 7 days
+        if age.days <= RECENT_MAX_AGE_DAYS:
+            # Keep all from the recent retention window.
             groups["keep_all"].append(backup)
-        elif age.days <= 30:
+        elif age.days <= DAILY_MAX_AGE_DAYS:
             # Group by day (YYYY-MM-DD)
             day_key = backup["timestamp"].strftime("%Y-%m-%d")
             groups["daily"][day_key].append(backup)
-        else:
+        elif age.days >= WEEKLY_MIN_AGE_DAYS:
             # Group by ISO week (%G = ISO year, %V = ISO week 01-53)
             week_key = backup["timestamp"].strftime("%G-W%V")
             groups["weekly"][week_key].append(backup)
@@ -78,10 +82,10 @@ def apply_retention(
     to_keep: list[BackupRecord] = []
     to_delete: list[BackupRecord] = []
 
-    # Keep all recent backups (0-7 days)
+    # Keep all recent backups through RECENT_MAX_AGE_DAYS.
     to_keep.extend(groups["keep_all"])
 
-    # Keep one per day (7-30 days), one per week (30+ days)
+    # Keep one per day through DAILY_MAX_AGE_DAYS, one per week afterward.
     _keep_latest_per_group(groups["daily"], to_keep, to_delete)
     _keep_latest_per_group(groups["weekly"], to_keep, to_delete)
 
@@ -108,21 +112,17 @@ def _backup_size_and_age(backup: BackupRecord, now: datetime) -> tuple[int, int]
 
 def _find_orphaned_changelogs() -> list[Path]:
     """Return managed changelogs that have no matching backup archive."""
-    if not backup_common.BACKUP_DIR.exists():
-        return []
-
+    backup_paths = set(backup_common.iter_managed_artifacts("backup"))
     orphans = []
-    for changelog in backup_common.BACKUP_DIR.glob("*.changelog"):
-        if not backup_common._is_managed_artifact(changelog, "changelog"):
-            continue
+    for changelog in backup_common.iter_managed_artifacts("changelog"):
         tar_path = backup_common.backup_path_for_changelog(changelog)
-        if not backup_common._is_managed_artifact(tar_path, "backup"):
+        if tar_path not in backup_paths:
             orphans.append(changelog)
     return orphans
 
 
-def clean_orphaned_changelogs(dry_run: bool = False) -> int:
-    """Remove changelog files that have no matching backup tar.gz."""
+def _clean_orphaned_changelogs(dry_run: bool = False) -> list[Path]:
+    """Remove orphaned changelogs and return the paths initially discovered."""
     orphans = _find_orphaned_changelogs()
     if orphans:
         print(f"\nOrphaned changelogs: {len(orphans)}", file=sys.stderr)
@@ -139,23 +139,33 @@ def clean_orphaned_changelogs(dry_run: bool = False) -> int:
                     )
                 else:
                     print(f"  Deleted: {orphan.name}", file=sys.stderr)
-    return len(orphans)
+    return orphans
+
+
+def clean_orphaned_changelogs(dry_run: bool = False) -> int:
+    """Remove changelog files that have no matching backup tar.gz."""
+    return len(_clean_orphaned_changelogs(dry_run=dry_run))
 
 
 def _clean_orphans_and_check(dry_run: bool) -> bool:
     """Clean orphaned changelogs and report whether apply mode completed."""
-    found = clean_orphaned_changelogs(dry_run=dry_run)
+    found = _clean_orphaned_changelogs(dry_run=dry_run)
     if dry_run or not found:
         return True
 
-    remaining = clean_orphaned_changelogs(dry_run=True)
+    remaining = [path for path in found if path.exists()]
     if remaining:
         print(
-            f"\n✗ Failed to remove {remaining} orphaned changelog(s)",
+            f"\n✗ Failed to remove {len(remaining)} orphaned changelog(s)",
             file=sys.stderr,
         )
         return False
     return True
+
+
+def _format_backup_line(backup: BackupRecord, size: int, age_label: str) -> str:
+    """Format a backup's common display fields with a caller-provided age label."""
+    return f"  - {backup['filename']} ({format_size(size)}, {age_label})"
 
 
 def _format_delete_line(
@@ -165,7 +175,7 @@ def _format_delete_line(
 ) -> str:
     """Format a to-be-deleted backup for display."""
     size, age_days = _backup_size_and_age(backup, now) if stats is None else stats
-    return f"  - {backup['filename']} ({format_size(size)}, {age_days} days old)"
+    return _format_backup_line(backup, size, f"{age_days} days old")
 
 
 def _format_keep_line(
@@ -181,7 +191,7 @@ def _format_keep_line(
         age_str = "yesterday"
     else:
         age_str = f"{age_days} days ago"
-    return f"  - {backup['filename']} ({format_size(size)}, {age_str})"
+    return _format_backup_line(backup, size, age_str)
 
 
 def _validate_deletion_safety(

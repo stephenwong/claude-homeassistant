@@ -118,21 +118,21 @@ def _read_yaml(config_dir, basename):
 
 
 class TestDispatchByFiletype:
-    def test_supplied_filetype_skips_shape_detection(self, tmp_path, monkeypatch):
+    def test_supplied_shape_skips_shape_detection(self, tmp_path, monkeypatch):
         from tools.commands import edit
         from tools.ha.yaml_editor import YAMLEditor
 
         editor = YAMLEditor(_write_file(tmp_path, "scripts", "{}"))
         monkeypatch.setattr(
             edit,
-            "_detect_file_type",
+            "_resolve_shape",
             lambda _editor: pytest.fail("shape should already be known"),
         )
         calls = []
         edit._dispatch_by_filetype(
             editor,
             "foo",
-            file_type="dict",
+            shape=edit._FileShape(edit._ShapeKind.DICT, edit._ShapeKind.DICT),
             on_dict=lambda _ed, al: calls.append(f"dict:{al}"),
             on_list=lambda _ed, al: calls.append(f"list:{al}"),
         )
@@ -190,6 +190,55 @@ class TestDispatchByFiletype:
         )
         assert result == 0
         assert "alias: 123" in path.read_text()
+
+
+class TestResolveShape:
+    @pytest.mark.parametrize(
+        ("file", "content", "expected_kind", "expected_editable"),
+        [
+            ("automations", "- alias: foo\n", "list", "list"),
+            ("scripts", "foo: {}\n", "dict", "dict"),
+            ("automations", "", "empty", "list"),
+            ("scripts", "", "empty", "dict"),
+            ("automations", "42\n", "unsupported", None),
+        ],
+    )
+    def test_existing_shapes(
+        self,
+        tmp_path,
+        file,
+        content,
+        expected_kind,
+        expected_editable,
+    ):
+        from tools.commands.edit import _resolve_shape
+        from tools.ha.yaml_editor import YAMLEditor
+
+        path = _write_file(tmp_path, file, content)
+        shape = _resolve_shape(YAMLEditor(path))
+
+        assert shape.kind.value == expected_kind
+        if expected_editable is None:
+            assert shape.editable is None
+        else:
+            assert shape.editable is not None
+            assert shape.editable.value == expected_editable
+
+    @pytest.mark.parametrize(
+        ("file", "expected_editable"),
+        [("automations", "list"), ("scripts", "dict")],
+    )
+    def test_missing_file_uses_filename_default(
+        self, tmp_path, file, expected_editable
+    ):
+        from tools.commands.edit import _resolve_shape
+        from tools.ha.yaml_editor import YAMLEditor
+
+        shape = _resolve_shape(YAMLEditor(tmp_path / f"{file}.yaml"))
+
+        assert shape.kind.value == "missing"
+        assert shape.editable is not None
+        assert shape.editable.value == expected_editable
 
 
 class TestRunShow:
@@ -260,7 +309,7 @@ class TestRunShow:
         err = capsys.readouterr().err
         assert "empty" in err.lower()
 
-    def test_show_uses_public_load_result_when_file_type_is_known(self, capsys):
+    def test_show_uses_public_load_result(self, capsys):
         from tools.commands.edit import _run_show
 
         class PublicOnlyEditor:
@@ -272,7 +321,7 @@ class TestRunShow:
                 return [{"alias": "Public API"}]
 
         editor = PublicOnlyEditor()
-        assert _run_show(editor, None, file_type="list") == 0
+        assert _run_show(editor, None) == 0
         assert editor.load_calls == 1
         assert capsys.readouterr().out.strip() == "Public API"
 
@@ -339,14 +388,14 @@ class TestRunAdd:
 
         _write_file(tmp_path, "automations", "[]")
         calls = 0
-        original = edit._detect_file_type
+        original = edit._resolve_shape
 
-        def detect_once(editor):
+        def resolve_once(editor):
             nonlocal calls
             calls += 1
             return original(editor)
 
-        monkeypatch.setattr(edit, "_detect_file_type", detect_once)
+        monkeypatch.setattr(edit, "_resolve_shape", resolve_once)
         assert run(self._args(tmp_path, json_str='{"alias":"New"}')) == 0
         assert calls == 1
 
@@ -731,6 +780,21 @@ delete:
         result = run(self._ns(config=str(tmp_path), show=True))
         assert result == 1
         assert "list or mapping" in capsys.readouterr().err.lower()
+
+    @pytest.mark.parametrize("operation", ["add", "set", "remove"])
+    def test_unsupported_shape_mutation_keeps_unknown_diagnostic(
+        self, tmp_path, capsys, operation
+    ):
+        _write_file(tmp_path, "automations", "42\n")
+        if operation == "add":
+            args = self._ns(config=str(tmp_path), add='{"alias":"New"}')
+        elif operation == "set":
+            args = self._ns(config=str(tmp_path), alias="A", set=["x=y"])
+        else:
+            args = self._ns(config=str(tmp_path), alias="A", remove=True)
+
+        assert run(args) == 1
+        assert capsys.readouterr().err.endswith("got unknown\n")
 
     # --set argument validation
 

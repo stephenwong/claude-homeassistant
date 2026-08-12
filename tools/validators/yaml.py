@@ -82,7 +82,7 @@ class YAMLValidator(ValidatorBase):
 
         all_valid = True
         err_before = len(self.errors)
-        for file_path, data in self.iter_yaml_payloads():
+        for file_path, data in self._iter_yaml_payloads(yaml_files):
             configuration_valid = self.validate_configuration_structure(file_path, data)
             automations_valid = self.validate_automations_structure(file_path, data)
             scripts_valid = self.validate_scripts_structure(file_path, data)

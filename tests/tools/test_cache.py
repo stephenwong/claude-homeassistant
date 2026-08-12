@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from tools.cache import (
+    CACHE_SCHEMA_VERSION,
     _blob_hash,
     cache_path,
     compute_hash,
@@ -15,6 +16,24 @@ from tools.cache import (
     save_blob,
     save_cache,
 )
+
+
+@pytest.fixture
+def cache_record():
+    def factory(**changes):
+        record = {
+            "schema": CACHE_SCHEMA_VERSION,
+            "validator": "Foo",
+            "hash": "abc",
+            "passed": True,
+            "timestamp": "now",
+            "duration": 0.5,
+            "stderr": "",
+        }
+        record.update(changes)
+        return record
+
+    return factory
 
 
 class TestComputeHash:
@@ -150,21 +169,10 @@ class TestL79UnreadableFile:
 
 
 class TestLoadCache:
-    def test_valid_cache_returns_dict(self, tmp_path):
-        from tools.cache import CACHE_SCHEMA_VERSION
-
+    def test_valid_cache_returns_dict(self, tmp_path, cache_record):
         cache_dir = tmp_path / ".cache" / "validators"
         cache_dir.mkdir(parents=True)
-        (cache_dir / "Foo.json").write_text(
-            json.dumps(
-                {
-                    "schema": CACHE_SCHEMA_VERSION,
-                    "hash": "abc",
-                    "passed": True,
-                    "duration": 0.5,
-                }
-            )
-        )
+        (cache_dir / "Foo.json").write_text(json.dumps(cache_record()))
         result = load_cache(tmp_path, "Foo")
         assert result is not None
         assert result["hash"] == "abc"
@@ -199,19 +207,11 @@ class TestLoadCache:
         (cache_dir / "Foo.json").write_bytes(b"\xff\xfe")
         assert load_cache(tmp_path, "Foo") is None
 
-    def test_load_uses_shared_cache_path(self, tmp_path, monkeypatch):
+    def test_load_uses_shared_cache_path(self, tmp_path, monkeypatch, cache_record):
         import tools.cache as cache
 
         redirected = tmp_path / "redirected.json"
-        redirected.write_text(
-            json.dumps(
-                {
-                    "schema": cache.CACHE_SCHEMA_VERSION,
-                    "hash": "abc",
-                    "passed": True,
-                }
-            )
-        )
+        redirected.write_text(json.dumps(cache_record()))
         monkeypatch.setattr(cache, "cache_path", lambda _config_dir, _name: redirected)
 
         result = cache.load_cache(tmp_path, "Foo")
@@ -247,19 +247,8 @@ class TestLoadCache:
             {"timestamp": 123},
         ],
     )
-    def test_malformed_record_returns_none(self, tmp_path, change):
-        from tools.cache import CACHE_SCHEMA_VERSION
-
-        record = {
-            "schema": CACHE_SCHEMA_VERSION,
-            "validator": "Foo",
-            "hash": "abc",
-            "passed": True,
-            "timestamp": "now",
-            "duration": 0.5,
-            "stderr": "",
-        }
-        record.update(change)
+    def test_malformed_record_returns_none(self, tmp_path, change, cache_record):
+        record = cache_record(**change)
         path = tmp_path / ".cache" / "validators" / "Foo.json"
         path.parent.mkdir(parents=True)
         path.write_text(json.dumps(record, allow_nan=True))
@@ -376,19 +365,14 @@ class TestM2AtomicSaveCache:
         assert load_cache(tmp_path, "TestValidator") is None
 
     def test_load_cache_succeeds_after_transient_json_error(
-        self, tmp_path, monkeypatch
+        self, tmp_path, monkeypatch, cache_record
     ):
         from tools import cache as cache_mod
         from tools.cache import load_cache
 
         cache_file = tmp_path / ".cache" / "validators" / "TestValidator.json"
         cache_file.parent.mkdir(parents=True)
-        valid = {
-            "schema": 1,
-            "hash": "h",
-            "passed": True,
-            "duration": 0.1,
-        }
+        valid = cache_record(hash="h", duration=0.1)
         calls = 0
 
         def load(_file):

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Unit tests for entity, device, area, and registry reference validation."""
 
-import builtins
 import json
 from pathlib import Path
 from unittest.mock import patch
@@ -480,32 +479,6 @@ class TestValidateFileWithMixedEntityTypes:
         assert len(validator.errors) == 0
 
 
-class TestConfigDefinedEntitiesEfficiency:
-    def test_configuration_yaml_opened_once(self, tmp_path):
-        """configuration.yaml should be parsed only once even though both
-        _extract_from_configuration and _extract_zone_entities use it."""
-        storage = tmp_path / ".storage"
-        storage.mkdir()
-        (tmp_path / "configuration.yaml").write_text(
-            "zone:\n  - name: Work\ngroup:\n  my_group:\n    entities: []\n"
-        )
-        validator = ReferenceValidator(str(tmp_path))
-
-        open_count = 0
-        real_open = builtins.open
-
-        def spy(path, *args, **kwargs):
-            nonlocal open_count
-            if "configuration.yaml" in str(path):
-                open_count += 1
-            return real_open(path, *args, **kwargs)
-
-        with patch("builtins.open", side_effect=spy):
-            validator.get_config_defined_entities()
-
-        assert open_count == 1
-
-
 @pytest.fixture
 def setup_config(tmp_path):
     """Create a full config directory with registries."""
@@ -570,78 +543,29 @@ def setup_config(tmp_path):
     return config_dir
 
 
-class TestGetConfigDefinedEntities:
-    def test_extracts_template_entities(self, setup_config):
-        config_yaml = setup_config / "configuration.yaml"
-        config_yaml.write_text(
-            "template:\n"
-            "  - binary_sensor:\n"
-            "      - name: Anyone Home\n"
-            "        state: 'on'\n"
-            "  - sensor:\n"
-            "      - name: Average Temp\n"
-            "        state: '22'\n"
+class TestConfigDefinedEntitiesDelegation:
+    def test_delegates_and_preserves_extractor_diagnostics(
+        self, setup_config, monkeypatch
+    ):
+        validator = ReferenceValidator(str(setup_config))
+        expected = {"automation.example"}
+        calls = 0
+
+        def extract_entities():
+            nonlocal calls
+            calls += 1
+            validator._definitions.warnings.append("extractor warning")
+            validator._definitions.info.append("extractor info")
+            return expected
+
+        monkeypatch.setattr(
+            validator._definitions, "get_config_defined_entities", extract_entities
         )
-        v = ReferenceValidator(str(setup_config))
-        entities = v.get_config_defined_entities()
-        assert "binary_sensor.anyone_home" in entities
-        assert "sensor.average_temp" in entities
 
-    def test_extracts_automation_entities_from_alias(self, setup_config):
-        automations_yaml = setup_config / "automations.yaml"
-        automations_yaml.write_text(
-            "- id: morning_lights\n"
-            "  alias: Morning Lights\n"
-            "  trigger:\n"
-            "    platform: time\n"
-            "  action:\n"
-            "    service: test\n"
-        )
-        v = ReferenceValidator(str(setup_config))
-        entities = v.get_config_defined_entities()
-        # Entity ID is derived from alias, not id field
-        assert "automation.morning_lights" in entities
-
-    def test_extracts_script_entities(self, setup_config):
-        scripts_yaml = setup_config / "scripts.yaml"
-        scripts_yaml.write_text(
-            "disable_alarm_timed:\n  alias: Disable Alarm Timed\n  sequence: []\n"
-        )
-        v = ReferenceValidator(str(setup_config))
-        entities = v.get_config_defined_entities()
-        assert "script.disable_alarm_timed" in entities
-
-    def test_extracts_scene_entities(self, setup_config):
-        scenes_yaml = setup_config / "scenes.yaml"
-        scenes_yaml.write_text("- name: Office Night\n  entities: {}\n")
-        v = ReferenceValidator(str(setup_config))
-        entities = v.get_config_defined_entities()
-        assert "scene.office_night" in entities
-
-    def test_includes_builtin_entities(self, setup_config):
-        v = ReferenceValidator(str(setup_config))
-        entities = v.get_config_defined_entities()
-        assert "sun.sun" in entities
-        assert "zone.home" in entities
-
-    def test_handles_missing_files(self, setup_config):
-        v = ReferenceValidator(str(setup_config))
-        entities = v.get_config_defined_entities()
-        assert isinstance(entities, set)
-
-    def test_handles_parse_error(self, setup_config):
-        (setup_config / "configuration.yaml").write_text("template: !bad_tag\n")
-        v = ReferenceValidator(str(setup_config))
-        entities = v.get_config_defined_entities()
-        # Should handle gracefully and surface warning context.
-        assert isinstance(entities, set)
-        assert any("Failed to extract entity definitions" in w for w in v.warnings)
-
-    def test_reports_config_defined_entity_summary(self, setup_config):
-        (setup_config / "configuration.yaml").write_text("group:\n  test_group: {}\n")
-        v = ReferenceValidator(str(setup_config))
-        v.get_config_defined_entities()
-        assert any("Config-defined entities:" in info for info in v.info)
+        assert validator.get_config_defined_entities() is expected
+        assert calls == 1
+        assert validator.warnings == ["extractor warning"]
+        assert validator.info == ["extractor info"]
 
 
 class TestLoadRegistries:
@@ -1150,125 +1074,6 @@ class TestCoverageExtras:
         result = v.load_restore_state_entities()
         assert result == {"sensor.restored"}
 
-    def test_get_config_defined_entities_cache(self, setup_config):
-        v = ReferenceValidator(str(setup_config))
-        r1 = v.get_config_defined_entities()
-        r2 = v.get_config_defined_entities()
-        assert r1 is r2
-
-    def test_extract_all_config_features(self, setup_config):
-        config_yaml = setup_config / "configuration.yaml"
-        config_yaml.write_text(
-            "group:\n"
-            "  my_group:\n"
-            "    entities: []\n"
-            "input_boolean:\n"
-            "  test_switch:\n"
-            "    name: Test\n"
-            "input_number:\n"
-            "  test_slider:\n"
-            "    initial: 5\n"
-            "input_text:\n"
-            "  test_text:\n"
-            "    initial: ''\n"
-            "input_select:\n"
-            "  test_select:\n"
-            "    options: [a]\n"
-            "input_datetime:\n"
-            "  test_date:\n"
-            "input_button:\n"
-            "  test_button:\n"
-            "template:\n"
-            "  - sensor:\n"
-            "      - name: Template One\n"
-            "        state: 'on'\n"
-            "  - sensor:\n"
-            "      - name: Template Two\n"
-            "        state: 'off'\n"
-            "sensor:\n"
-            "  - platform: template\n"
-            "    sensors:\n"
-            "      custom_temp:\n"
-            "        value_template: '{{ 42 }}'\n"
-            "binary_sensor:\n"
-            "  - platform: template\n"
-            "    sensors:\n"
-            "      custom_motion:\n"
-            "        value_template: '{{ 1 }}'\n"
-        )
-        v = ReferenceValidator(str(setup_config))
-        entities = v.get_config_defined_entities()
-        assert "group.my_group" in entities
-        assert "input_boolean.test_switch" in entities
-        assert "input_number.test_slider" in entities
-        assert "input_text.test_text" in entities
-        assert "input_select.test_select" in entities
-        assert "input_datetime.test_date" in entities
-        assert "input_button.test_button" in entities
-        assert "sensor.template_one" in entities
-        assert "sensor.template_two" in entities
-        assert "sensor.custom_temp" in entities
-        assert "binary_sensor.custom_motion" in entities
-
-    def test_extract_template_entities_non_dict(self, setup_config):
-        config_yaml = setup_config / "configuration.yaml"
-        config_yaml.write_text("template:\n  - not_a_dict\n")
-        v = ReferenceValidator(str(setup_config))
-        entities = v.get_config_defined_entities()
-        assert isinstance(entities, set)
-
-    def test_extract_template_entities_default_entity_id(self, setup_config):
-        config_yaml = setup_config / "configuration.yaml"
-        config_yaml.write_text(
-            "template:\n"
-            "  - sensor:\n"
-            "      - name: Named Only\n"
-            "        state: 'on'\n"
-            "      - default_entity_id: custom_sensor\n"
-            "        state: 'off'\n"
-            "      - default_entity_id: sensor.prefixed\n"
-            "        state: 'off'\n"
-            "  - binary_sensor:\n"
-            "      - default_entity_id: custom_binary\n"
-            "        state: 'on'\n"
-        )
-        v = ReferenceValidator(str(setup_config))
-        entities = v.get_config_defined_entities()
-        assert "sensor.named_only" in entities
-        assert "sensor.custom_sensor" in entities
-        assert "sensor.prefixed" in entities
-        assert "binary_sensor.custom_binary" in entities
-
-    def test_script_invalid_object_id_skipped(self, setup_config):
-        (setup_config / "scripts.yaml").write_text(
-            "UPPERCASE_SCRIPT:\n  sequence: []\nvalid_script:\n  sequence: []\n"
-        )
-        v = ReferenceValidator(str(setup_config))
-        entities = v.get_config_defined_entities()
-        assert "script.UPPERCASE_SCRIPT" not in entities
-        assert "script.valid_script" in entities
-
-    def test_scene_slugify(self, setup_config):
-        (setup_config / "scenes.yaml").write_text(
-            "- name: Evening Mode!!\n  entities: {}\n"
-        )
-        v = ReferenceValidator(str(setup_config))
-        entities = v.get_config_defined_entities()
-        assert "scene.evening_mode" in entities
-
-    def test_zone_storage_json(self, tmp_path):
-        storage = tmp_path / ".storage"
-        storage.mkdir()
-        (storage / "core.entity_registry").write_text('{"data":{"entities":[]}}')
-        (storage / "core.device_registry").write_text('{"data":{"devices":[]}}')
-        (storage / "core.area_registry").write_text('{"data":{"areas":[]}}')
-        zone_data = {"data": {"items": [{"name": "Back Yard"}, {"name": ""}]}}
-        (storage / "core.zone").write_text(json.dumps(zone_data))
-        v = ReferenceValidator(str(tmp_path))
-        entities = v.get_config_defined_entities()
-        assert "zone.back_yard" in entities
-        assert "zone." not in entities
-
     def test_validate_uuid_registry_id_known(self, setup_config):
         """UUID referencing a known registry entity_id passes validation."""
         test_file = setup_config / "test.yaml"
@@ -1427,6 +1232,81 @@ class TestExtractEntityReferencesNesting:
         }
         refs = validator.extract_entity_references(data)
         assert {"light.a", "switch.b", "light.c", "fan.d"} <= refs
+
+    def test_nested_mapping_and_lists_preserve_reference_policies(self, validator):
+        data = {
+            "choose": [
+                {
+                    "sequence": [
+                        {
+                            "target": {
+                                "entity_ids": [
+                                    "light.a",
+                                    "all",
+                                    "{{ states('sensor.temperature') }}",
+                                ]
+                            },
+                            "device_id": "device_ignored",
+                        }
+                    ]
+                }
+            ],
+            "parallel": [
+                {"repeat": {"sequence": [{"entities": {"switch.d": {"state": "on"}}}]}}
+            ],
+        }
+
+        assert validator.extract_entity_references(data) == {"light.a", "switch.d"}
+
+
+class TestEntityRegistryIdMappingCache:
+    def test_mapping_is_lazy_and_reused_for_validator_lifetime(
+        self, setup_config, monkeypatch
+    ):
+        validator = ReferenceValidator(str(setup_config))
+        load_count = 0
+        original_load = validator.load_entity_registry
+
+        def load_entity_registry():
+            nonlocal load_count
+            load_count += 1
+            return original_load()
+
+        monkeypatch.setattr(validator, "load_entity_registry", load_entity_registry)
+
+        assert validator._entity_registry_id_mapping is None
+        first = validator.get_entity_registry_id_mapping()
+        second = validator.get_entity_registry_id_mapping()
+
+        assert first is second
+        assert load_count == 1
+        assert first["aabbccddeeff00112233445566778899"] == "sensor.temperature"
+
+    def test_mapping_cache_is_invalidated_when_entity_registry_cache_is_cleared(
+        self, setup_config
+    ):
+        validator = ReferenceValidator(str(setup_config))
+        first = validator.get_entity_registry_id_mapping()
+
+        validator._entities = None
+        second = validator.get_entity_registry_id_mapping()
+
+        assert second is not first
+        assert second == first
+
+    def test_mapping_is_not_built_when_no_uuid_reference_exists(
+        self, setup_config, monkeypatch
+    ):
+        validator = ReferenceValidator(str(setup_config))
+        monkeypatch.setattr(
+            validator,
+            "get_entity_registry_id_mapping",
+            lambda: pytest.fail("UUID mapping should not be loaded"),
+        )
+        test_file = setup_config / "test.yaml"
+        test_file.write_text("entity_id: sensor.temperature\n")
+
+        assert validator.validate_file_references(test_file) is True
 
 
 class TestValidateFileReferencesHelpers:

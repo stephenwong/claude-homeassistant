@@ -225,24 +225,23 @@ AUTOMATIONS_FIXTURE = """\
 """
 
 
+@pytest.fixture
+def automation_editor(tmp_path):
+    from tools.ha.yaml_editor import YAMLEditor
+
+    path = tmp_path / "automations.yaml"
+    _write_yaml(path, AUTOMATIONS_FIXTURE)
+    return YAMLEditor(path)
+
+
 class TestFindAutomation:
-    def test_find_by_alias_returns_index(self, tmp_path):
-        from tools.ha.yaml_editor import YAMLEditor
-
-        path = tmp_path / "automations.yaml"
-        _write_yaml(path, AUTOMATIONS_FIXTURE)
-
-        editor = YAMLEditor(path)
+    def test_find_by_alias_returns_index(self, automation_editor):
+        editor = automation_editor
         idx = editor.find_automation("Evening Scene")
         assert idx == 1
 
-    def test_find_by_alias_returns_none_when_missing(self, tmp_path):
-        from tools.ha.yaml_editor import YAMLEditor
-
-        path = tmp_path / "automations.yaml"
-        _write_yaml(path, AUTOMATIONS_FIXTURE)
-
-        editor = YAMLEditor(path)
+    def test_find_by_alias_returns_none_when_missing(self, automation_editor):
+        editor = automation_editor
         idx = editor.find_automation("Nonexistent Automation")
         assert idx is None
 
@@ -258,13 +257,11 @@ class TestFindAutomation:
 
 
 class TestAddAutomation:
-    def test_append_new_automation(self, tmp_path):
+    def test_append_new_automation(self, automation_editor):
         from tools.ha.yaml_editor import YAMLEditor
 
-        path = tmp_path / "automations.yaml"
-        _write_yaml(path, AUTOMATIONS_FIXTURE)
-
-        editor = YAMLEditor(path)
+        path = automation_editor.path
+        editor = automation_editor
         new = {
             "alias": "New Automation",
             "id": "new_id",
@@ -303,14 +300,8 @@ class TestAddAutomation:
         assert len(reloaded) == 1
         assert reloaded[0]["alias"] == "Solo"
 
-    def test_add_duplicate_alias_raises(self, tmp_path):
-        import pytest
-
-        from tools.ha.yaml_editor import YAMLEditor
-
-        path = tmp_path / "automations.yaml"
-        _write_yaml(path, AUTOMATIONS_FIXTURE)
-        editor = YAMLEditor(path)
+    def test_add_duplicate_alias_raises(self, automation_editor):
+        editor = automation_editor
         with pytest.raises(ValueError, match="already exists"):
             editor.add_automation(
                 {"alias": "Morning Routine", "triggers": [], "actions": []}
@@ -318,13 +309,11 @@ class TestAddAutomation:
 
 
 class TestUpdateAutomation:
-    def test_update_by_alias(self, tmp_path):
+    def test_update_by_alias(self, automation_editor):
         from tools.ha.yaml_editor import YAMLEditor
 
-        path = tmp_path / "automations.yaml"
-        _write_yaml(path, AUTOMATIONS_FIXTURE)
-
-        editor = YAMLEditor(path)
+        path = automation_editor.path
+        editor = automation_editor
         editor.update_automation("Evening Scene", {"description": "Updated"})
         editor.save()
 
@@ -333,38 +322,29 @@ class TestUpdateAutomation:
         # Unaffected fields remain
         assert reloaded[1]["alias"] == "Evening Scene"
 
-    def test_update_adds_new_key(self, tmp_path):
+    def test_update_adds_new_key(self, automation_editor):
         from tools.ha.yaml_editor import YAMLEditor
 
-        path = tmp_path / "automations.yaml"
-        _write_yaml(path, AUTOMATIONS_FIXTURE)
-
-        editor = YAMLEditor(path)
+        path = automation_editor.path
+        editor = automation_editor
         editor.update_automation("Doorbell Alert", {"max_exceeded": "silent"})
         editor.save()
 
         reloaded = YAMLEditor(path).load()
         assert reloaded[2]["max_exceeded"] == "silent"
 
-    def test_update_missing_alias_raises(self, tmp_path):
-        from tools.ha.yaml_editor import YAMLEditor
-
-        path = tmp_path / "automations.yaml"
-        _write_yaml(path, AUTOMATIONS_FIXTURE)
-
-        editor = YAMLEditor(path)
+    def test_update_missing_alias_raises(self, automation_editor):
+        editor = automation_editor
         with pytest.raises(ValueError, match="Not Found"):
             editor.update_automation("Not Found", {"x": 1})
 
 
 class TestRemoveAutomation:
-    def test_remove_by_alias(self, tmp_path):
+    def test_remove_by_alias(self, automation_editor):
         from tools.ha.yaml_editor import YAMLEditor
 
-        path = tmp_path / "automations.yaml"
-        _write_yaml(path, AUTOMATIONS_FIXTURE)
-
-        editor = YAMLEditor(path)
+        path = automation_editor.path
+        editor = automation_editor
         editor.remove_automation("Evening Scene")
         editor.save()
 
@@ -375,13 +355,8 @@ class TestRemoveAutomation:
         assert "Morning Routine" in aliases
         assert "Doorbell Alert" in aliases
 
-    def test_remove_missing_alias_raises(self, tmp_path):
-        from tools.ha.yaml_editor import YAMLEditor
-
-        path = tmp_path / "automations.yaml"
-        _write_yaml(path, AUTOMATIONS_FIXTURE)
-
-        editor = YAMLEditor(path)
+    def test_remove_missing_alias_raises(self, automation_editor):
+        editor = automation_editor
         with pytest.raises(ValueError, match="Not Found"):
             editor.remove_automation("Not Found")
 
@@ -410,13 +385,11 @@ class TestRemoveAutomation:
 
 
 class TestSaveInPlace:
-    def test_save_writes_back_to_same_file(self, tmp_path):
+    def test_save_writes_back_to_same_file(self, automation_editor):
         from tools.ha.yaml_editor import YAMLEditor
 
-        path = tmp_path / "automations.yaml"
-        _write_yaml(path, AUTOMATIONS_FIXTURE)
-
-        editor = YAMLEditor(path)
+        path = automation_editor.path
+        editor = automation_editor
         editor.add_automation(
             {
                 "alias": "Added",
@@ -455,13 +428,11 @@ class FakeValidator:
 
 
 class TestAtomicSave:
-    def test_validator_passed_saves_atomically(self, tmp_path):
+    def test_validator_passed_saves_atomically(self, automation_editor):
         from tools.ha.yaml_editor import YAMLEditor
 
-        path = tmp_path / "automations.yaml"
-        _write_yaml(path, AUTOMATIONS_FIXTURE)
-
-        editor = YAMLEditor(path)
+        path = automation_editor.path
+        editor = automation_editor
         editor.add_automation(
             {
                 "alias": "New",
@@ -484,13 +455,11 @@ class TestAtomicSave:
         reloaded = YAMLEditor(path).load()
         assert len(reloaded) == 4
 
-    def test_validator_fails_preserves_original(self, tmp_path):
-        from tools.ha.yaml_editor import ValidationError, YAMLEditor
+    def test_validator_fails_preserves_original(self, automation_editor):
+        from tools.ha.yaml_editor import ValidationError
 
-        path = tmp_path / "automations.yaml"
-        _write_yaml(path, AUTOMATIONS_FIXTURE)
-
-        editor = YAMLEditor(path)
+        path = automation_editor.path
+        editor = automation_editor
         editor.add_automation(
             {
                 "alias": "Bad",
@@ -514,13 +483,11 @@ class TestAtomicSave:
         # Target file is unchanged
         assert path.read_text(encoding="utf-8") == original_content
 
-    def test_save_without_validator_overwrites_directly(self, tmp_path):
+    def test_save_without_validator_overwrites_directly(self, automation_editor):
         from tools.ha.yaml_editor import YAMLEditor
 
-        path = tmp_path / "automations.yaml"
-        _write_yaml(path, AUTOMATIONS_FIXTURE)
-
-        editor = YAMLEditor(path)
+        path = automation_editor.path
+        editor = automation_editor
         editor.add_automation(
             {
                 "alias": "Direct",
@@ -536,19 +503,16 @@ class TestAtomicSave:
         reloaded = YAMLEditor(path).load()
         assert len(reloaded) == 4
 
-    def test_save_preserves_existing_permissions(self, tmp_path):
-        from tools.ha.yaml_editor import YAMLEditor
-
-        path = tmp_path / "automations.yaml"
-        _write_yaml(path, AUTOMATIONS_FIXTURE)
+    def test_save_preserves_existing_permissions(self, automation_editor):
+        path = automation_editor.path
         path.chmod(0o600)
-        editor = YAMLEditor(path)
+        editor = automation_editor
         editor.add_automation({"alias": "Perms", "triggers": [], "actions": []})
         editor.save()
         assert path.stat().st_mode & 0o777 == 0o600
 
     def test_save_without_validator_keeps_original_on_dump_crash(
-        self, tmp_path, monkeypatch
+        self, automation_editor, monkeypatch
     ):
         """save() with no validator must not corrupt the original if dump raises
         mid-write."""
@@ -556,10 +520,9 @@ class TestAtomicSave:
 
         from tools.ha.yaml_editor import YAMLEditor
 
-        path = tmp_path / "automations.yaml"
-        original = "- alias: A\n  triggers: []\n  actions: []\n"
-        path.write_text(original)
-        editor = YAMLEditor(path)
+        path = automation_editor.path
+        original = path.read_text(encoding="utf-8")
+        editor = automation_editor
         editor.load()
         editor.add_automation({"alias": "B", "triggers": [], "actions": []})
 
@@ -572,6 +535,41 @@ class TestAtomicSave:
         with pytest.raises(RuntimeError):
             editor.save()
         assert path.read_text() == original  # original must survive the crash
+        assert list(path.parent.glob(".automations.yaml.*.tmp")) == []
+
+    def test_save_propagates_replace_error_and_cleans_temp(
+        self, automation_editor, monkeypatch
+    ):
+        from tools import common
+
+        path = automation_editor.path
+        original = path.read_text(encoding="utf-8")
+        editor = automation_editor
+        editor.load()
+        editor.add_automation({"alias": "B", "triggers": [], "actions": []})
+
+        def fail_replace(*args, **kwargs):
+            raise OSError("rename failed")
+
+        monkeypatch.setattr(common.os, "replace", fail_replace)
+
+        with pytest.raises(OSError, match="rename failed"):
+            editor.save()
+
+        assert path.read_text() == original
+        assert list(path.parent.glob(".automations.yaml.*.tmp")) == []
+
+    def test_save_does_not_fsync_temporary_file(self, automation_editor, monkeypatch):
+        from tools import common
+
+        fsynced = []
+        monkeypatch.setattr(common.os, "fsync", lambda fd: fsynced.append(fd))
+
+        editor = automation_editor
+        editor.load()
+        editor.save()
+
+        assert fsynced == []
 
     def test_save_with_validation_on_empty_data_noop(self, tmp_path):
         from tools.ha.yaml_editor import YAMLEditor
@@ -605,13 +603,21 @@ evening_scene:
 """
 
 
+@pytest.fixture
+def scripts_editor(tmp_path):
+    from tools.ha.yaml_editor import YAMLEditor
+
+    path = tmp_path / "scripts.yaml"
+    _write_yaml(path, SCRIPTS_FIXTURE)
+    return YAMLEditor(path)
+
+
 class TestDictHelpers:
-    def test_add_script(self, tmp_path):
+    def test_add_script(self, scripts_editor):
         from tools.ha.yaml_editor import YAMLEditor
 
-        path = tmp_path / "scripts.yaml"
-        _write_yaml(path, SCRIPTS_FIXTURE)
-        editor = YAMLEditor(path)
+        path = scripts_editor.path
+        editor = scripts_editor
         editor.add_script("new_script", {"alias": "New Script", "sequence": []})
         editor.save()
         reloaded = YAMLEditor(path).load()
@@ -619,12 +625,8 @@ class TestDictHelpers:
         assert "new_script" in reloaded
         assert reloaded["new_script"]["alias"] == "New Script"
 
-    def test_add_script_duplicate_key_raises(self, tmp_path):
-        from tools.ha.yaml_editor import YAMLEditor
-
-        path = tmp_path / "scripts.yaml"
-        _write_yaml(path, SCRIPTS_FIXTURE)
-        editor = YAMLEditor(path)
+    def test_add_script_duplicate_key_raises(self, scripts_editor):
+        editor = scripts_editor
         with pytest.raises(ValueError, match="already exists"):
             editor.add_script("morning_routine", {"sequence": []})
 
@@ -637,65 +639,55 @@ class TestDictHelpers:
         with pytest.raises(TypeError, match="expected a dict"):
             editor.add_script("x", {"sequence": []})
 
-    def test_update_script(self, tmp_path):
+    def test_update_script(self, scripts_editor):
         from tools.ha.yaml_editor import YAMLEditor
 
-        path = tmp_path / "scripts.yaml"
-        _write_yaml(path, SCRIPTS_FIXTURE)
-        editor = YAMLEditor(path)
+        path = scripts_editor.path
+        editor = scripts_editor
         editor.update_script("morning_routine", {"description": "Updated"})
         editor.save()
         reloaded = YAMLEditor(path).load()
         assert reloaded["morning_routine"]["description"] == "Updated"
 
-    def test_update_script_missing_key_raises(self, tmp_path):
-        from tools.ha.yaml_editor import YAMLEditor
-
-        path = tmp_path / "scripts.yaml"
-        _write_yaml(path, SCRIPTS_FIXTURE)
-        editor = YAMLEditor(path)
+    def test_update_script_missing_key_raises(self, scripts_editor):
+        editor = scripts_editor
         with pytest.raises(ValueError, match="not found"):
             editor.update_script("ghost", {"x": 1})
 
-    def test_remove_script(self, tmp_path):
+    def test_remove_script(self, scripts_editor):
         from tools.ha.yaml_editor import YAMLEditor
 
-        path = tmp_path / "scripts.yaml"
-        _write_yaml(path, SCRIPTS_FIXTURE)
-        editor = YAMLEditor(path)
+        path = scripts_editor.path
+        editor = scripts_editor
         editor.remove_script("evening_scene")
         editor.save()
         reloaded = YAMLEditor(path).load()
         assert "evening_scene" not in reloaded
         assert "morning_routine" in reloaded
 
-    def test_remove_script_missing_key_raises(self, tmp_path):
-        from tools.ha.yaml_editor import YAMLEditor
-
-        path = tmp_path / "scripts.yaml"
-        _write_yaml(path, SCRIPTS_FIXTURE)
-        editor = YAMLEditor(path)
+    def test_remove_script_missing_key_raises(self, scripts_editor):
+        editor = scripts_editor
         with pytest.raises(ValueError, match="not found"):
             editor.remove_script("ghost")
 
 
 class TestMappingUpdates:
     @pytest.mark.parametrize("kind", ["automation", "script"])
-    def test_mapping_updates_apply_same_merge_contract(self, tmp_path, kind):
+    def test_mapping_updates_apply_same_merge_contract(
+        self, automation_editor, scripts_editor, kind
+    ):
         from tools.ha.yaml_editor import YAMLEditor
 
         if kind == "automation":
-            path = tmp_path / "automations.yaml"
-            _write_yaml(path, AUTOMATIONS_FIXTURE)
-            editor = YAMLEditor(path)
+            path = automation_editor.path
+            editor = automation_editor
             editor.update_automation("Evening Scene", {"description": "Updated"})
             editor.save()
             data = YAMLEditor(path).load()
             target = data[1]
         else:
-            path = tmp_path / "scripts.yaml"
-            _write_yaml(path, SCRIPTS_FIXTURE)
-            editor = YAMLEditor(path)
+            path = scripts_editor.path
+            editor = scripts_editor
             editor.update_script("morning_routine", {"description": "Updated"})
             editor.save()
             data = YAMLEditor(path).load()
@@ -712,20 +704,14 @@ class TestMappingUpdates:
         ],
     )
     def test_mapping_updates_keep_missing_target_errors(
-        self, tmp_path, kind, target, message
+        self, automation_editor, scripts_editor, kind, target, message
     ):
-        from tools.ha.yaml_editor import YAMLEditor
-
         if kind == "automation":
-            path = tmp_path / "automations.yaml"
-            _write_yaml(path, AUTOMATIONS_FIXTURE)
-            editor = YAMLEditor(path)
+            editor = automation_editor
             with pytest.raises(ValueError, match=message):
                 editor.update_automation(target, {"description": "Updated"})
         else:
-            path = tmp_path / "scripts.yaml"
-            _write_yaml(path, SCRIPTS_FIXTURE)
-            editor = YAMLEditor(path)
+            editor = scripts_editor
             with pytest.raises(ValueError, match=message):
                 editor.update_script(target, {"description": "Updated"})
 

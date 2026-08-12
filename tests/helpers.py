@@ -3,7 +3,14 @@
 import io
 import tarfile
 from argparse import ArgumentParser
+from datetime import datetime
+from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
+
+import yaml
+
+from tools.backup_common import BackupRecord
 
 
 def make_tar(tmp_path, files, name="test.tar.gz"):
@@ -16,6 +23,50 @@ def make_tar(tmp_path, files, name="test.tar.gz"):
             info.size = len(data)
             tar.addfile(info, io.BytesIO(data))
     return tar_path
+
+
+def make_backup_record(path: Path, filename: str, timestamp: datetime) -> BackupRecord:
+    """Build complete metadata for one backup archive."""
+    return {"path": path, "filename": filename, "timestamp": timestamp}
+
+
+def write_yaml(config_dir: Path, data: Any, filename: str = "automations.yaml") -> Path:
+    """Write a YAML fixture and return its path."""
+    path = config_dir / filename
+    with path.open("w") as file:
+        yaml.dump(data, file)
+    return path
+
+
+def mock_json_client(
+    result: Any = None, *, side_effect: Exception | None = None
+) -> MagicMock:
+    """Create an HA client mock for a JSON endpoint."""
+    client = MagicMock()
+    if side_effect is None:
+        client.get_json.return_value = result
+    else:
+        client.get_json.side_effect = side_effect
+    return client
+
+
+def assert_diagnostic(validator: Any, severity: str, text: str) -> None:
+    """Assert that a validator emitted a diagnostic containing ``text``."""
+    diagnostics = getattr(validator, severity)
+    assert any(text.lower() in diagnostic.lower() for diagnostic in diagnostics), (
+        f"No {severity} diagnostic contained {text!r}: {diagnostics!r}"
+    )
+
+
+def assert_no_diagnostic(
+    validator: Any, severity: str, text: str | None = None
+) -> None:
+    """Assert that a validator emitted no diagnostics, optionally matching text."""
+    diagnostics = getattr(validator, severity)
+    if text is None:
+        assert not diagnostics
+    else:
+        assert not any(text.lower() in diagnostic.lower() for diagnostic in diagnostics)
 
 
 def make_parser() -> tuple[ArgumentParser, Any]:

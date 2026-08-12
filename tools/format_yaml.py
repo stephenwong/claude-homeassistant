@@ -1,12 +1,11 @@
 """Format one YAML file without replacing it until serialization succeeds."""
 
-import os
-import stat
 import sys
-import tempfile
 from pathlib import Path
 
 from ruamel.yaml import YAML
+
+from tools.common import _atomic_replace
 
 
 def main() -> int:
@@ -17,18 +16,11 @@ def main() -> int:
     if data is None:
         return 0
 
-    temp_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            "w", encoding="utf-8", dir=path.parent, delete=False
-        ) as temp:
-            temp_path = Path(temp.name)
+    def write_temp(temp_path: Path) -> None:
+        with temp_path.open("w", encoding="utf-8") as temp:
             yaml.dump(data, temp)
-        os.chmod(temp_path, stat.S_IMODE(path.stat().st_mode))
-        os.replace(temp_path, path)
-    finally:
-        if temp_path is not None:
-            temp_path.unlink(missing_ok=True)
+
+    _atomic_replace(path, write_temp, cleanup_missing_ok=True)
     return 0
 
 

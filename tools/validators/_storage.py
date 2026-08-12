@@ -19,17 +19,22 @@ def _reject_duplicate_keys(pairs: list[tuple[str, JSONValue]]) -> JSONObject:
     return result
 
 
-def _load_json(storage_path: Path) -> JSONObject:
-    """Open and parse a storage JSON object.
+def _load_storage_data(storage_path: Path) -> JSONObject | list[JSONValue]:
+    """Load the validated root envelope and return its ``data`` value.
 
     Storage files use different ``data`` shapes, so callers own validation
-    below the common top-level object envelope.
+    below the common top-level envelope.
     """
     with open(storage_path, encoding="utf-8") as f:
         data = json.load(f, object_pairs_hook=_reject_duplicate_keys)
     if not isinstance(data, dict):
         raise ValueError(f"{storage_path}: JSON root must be an object")
-    return data
+    if "data" not in data:
+        raise ValueError(f"{storage_path}: missing 'data' object")
+    storage_data = data["data"]
+    if not isinstance(storage_data, (dict, list)):
+        raise ValueError(f"{storage_path}: 'data' must be an object or list")
+    return storage_data
 
 
 def load_storage_registry(
@@ -65,10 +70,7 @@ def load_storage_registry(
         ValueError: The storage envelope, item list, or item mapping is
             malformed.
     """
-    data = _load_json(storage_path)
-    if "data" not in data:
-        raise ValueError(f"{storage_path}: missing 'data' object")
-    envelope = data["data"]
+    envelope = _load_storage_data(storage_path)
     if not isinstance(envelope, dict):
         raise ValueError(f"{storage_path}: 'data' must be an object")
 

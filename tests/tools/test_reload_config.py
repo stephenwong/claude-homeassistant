@@ -388,6 +388,31 @@ class TestReloadConfig:
             "/api/services/homeassistant/reload_all", json={}
         )
 
+    def test_service_resolution_returns_effective_ordered_services(self):
+        from tools.reload_config import _resolve_reload_services
+
+        assert _resolve_reload_services(
+            {"script/reload", "automation/reload"}, summary=True
+        ) == ("automation/reload", "script/reload")
+
+    def test_service_resolution_falls_back_for_git_failure(self, capsys):
+        from tools.reload_config import _resolve_reload_services
+
+        assert _resolve_reload_services(None, summary=False) == (FULL_RELOAD_SERVICE,)
+        assert "Could not detect config changes with git" in capsys.readouterr().err
+
+    def test_service_resolution_falls_back_for_no_changes(self, capsys):
+        from tools.reload_config import _resolve_reload_services
+
+        assert _resolve_reload_services(set(), summary=False) == (FULL_RELOAD_SERVICE,)
+        assert "No config changes detected" in capsys.readouterr().err
+
+    def test_service_resolution_suppresses_fallback_warnings_in_summary(self, capsys):
+        from tools.reload_config import _resolve_reload_services
+
+        assert _resolve_reload_services(None, summary=True) == (FULL_RELOAD_SERVICE,)
+        assert capsys.readouterr().err == ""
+
     def test_detect_none_explains_git_fallback(self, capsys):
         self._mock_client.post.return_value = MagicMock(status_code=200)
         with patch("tools.reload_config.detect_changed_services", return_value=None):

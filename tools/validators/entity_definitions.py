@@ -12,7 +12,7 @@ from typing import Any
 
 import yaml
 
-from tools.validators._storage import _load_json
+from tools.validators._storage import _load_storage_data
 from tools.validators.base import HAYamlLoader
 
 _OBJECT_ID_RE = re.compile(r"^[a-z0-9_]+$")
@@ -150,10 +150,7 @@ class EntityDefinitionExtractor:
             return self._restore_entities
 
         try:
-            payload = _load_json(restore_file)
-            if "data" not in payload:
-                raise ValueError("restore state missing 'data'")
-            items = payload["data"]
+            items = _load_storage_data(restore_file)
             if not isinstance(items, list):
                 raise ValueError("restore state 'data' must be a list")
         except (OSError, json.JSONDecodeError, ValueError) as e:
@@ -496,44 +493,55 @@ class EntityDefinitionExtractor:
             allow_id_fallback=True,
         )
 
-    def _extract_script_entities(self, config_data: dict | None = None) -> set[str]:
-        """Extract script entities from scripts.yaml."""
-        entities: set[str] = set()
-
+    def _extract_dictionary_entities(
+        self,
+        config_data: dict | None,
+        *,
+        domain: str,
+        config_key: str,
+        file_name: str,
+    ) -> set[str]:
+        """Extract entities whose configuration is keyed by object_id."""
+        data: dict[Any, Any] | None = None
         if isinstance(config_data, dict):
-            include_value = config_data.get("script")
+            include_value = config_data.get(config_key)
             is_explicit_include = isinstance(
                 include_value, str
             ) and include_value.startswith("!include")
             resolved = self._resolve_include(include_value)
             if is_explicit_include:
                 data = resolved if isinstance(resolved, dict) else {}
-                for script_name in data:
-                    if isinstance(script_name, str) and self._is_valid_object_id(
-                        script_name
-                    ):
-                        entities.add(f"script.{script_name}")
-                return entities
-            if isinstance(include_value, dict):
-                for script_name in include_value:
-                    if isinstance(script_name, str) and self._is_valid_object_id(
-                        script_name
-                    ):
-                        entities.add(f"script.{script_name}")
-                return entities
+            elif isinstance(include_value, dict):
+                data = include_value
 
-        scripts_file = self.config_dir / "scripts.yaml"
+            if data is not None:
+                return {
+                    f"{domain}.{object_id}"
+                    for object_id in data
+                    if isinstance(object_id, str)
+                    and self._is_valid_object_id(object_id)
+                }
 
-        if scripts_file.exists():
-            data = self._load_yaml_file(scripts_file)
-            if isinstance(data, dict):
-                for script_name in data:
-                    if isinstance(script_name, str) and self._is_valid_object_id(
-                        script_name
-                    ):
-                        entities.add(f"script.{script_name}")
+        sidecar_file = self.config_dir / file_name
+        if not sidecar_file.exists():
+            return set()
+        data = self._load_yaml_file(sidecar_file)
+        if not isinstance(data, dict):
+            return set()
+        return {
+            f"{domain}.{object_id}"
+            for object_id in data
+            if isinstance(object_id, str) and self._is_valid_object_id(object_id)
+        }
 
-        return entities
+    def _extract_script_entities(self, config_data: dict | None = None) -> set[str]:
+        """Extract script entities from scripts.yaml."""
+        return self._extract_dictionary_entities(
+            config_data,
+            domain="script",
+            config_key="script",
+            file_name="scripts.yaml",
+        )
 
     def _extract_scene_entities(self, config_data: dict | None = None) -> set[str]:
         """Extract scene entities from scenes.yaml."""
@@ -570,10 +578,7 @@ class EntityDefinitionExtractor:
         zone_storage = self.storage_dir / "core.zone"
         if zone_storage.exists():
             try:
-                data = _load_json(zone_storage)
-                if "data" not in data:
-                    raise ValueError("zone storage missing 'data'")
-                envelope = data["data"]
+                envelope = _load_storage_data(zone_storage)
                 if not isinstance(envelope, dict):
                     raise ValueError("zone storage 'data' must be an object")
                 items = envelope.get("items", [])

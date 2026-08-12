@@ -10,6 +10,7 @@ import functools
 import subprocess
 import sys
 import time
+from collections.abc import Collection
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -153,6 +154,30 @@ def detect_changed_services(
     return _classify_changed_files(diff_files | status_files)
 
 
+def _resolve_reload_services(
+    detected_services: set[str] | None, summary: bool
+) -> tuple[str, ...]:
+    """Return the effective reload services in deterministic order."""
+    if detected_services is None:
+        if not summary:
+            print(
+                "⚠️  Could not detect config changes with git; "
+                "reloading all domains to be safe",
+                file=sys.stderr,
+            )
+        return tuple(sorted(ALL_SERVICES))
+
+    if not detected_services:
+        if not summary:
+            print(
+                "⚠️  No config changes detected, reloading all domains to be safe",
+                file=sys.stderr,
+            )
+        return tuple(sorted(ALL_SERVICES))
+
+    return tuple(sorted(detected_services))
+
+
 def reload_service(client: HAClient, service: str) -> tuple[str, bool, str | None]:
     """Call a single HA reload service. Returns (service, success, error_detail).
 
@@ -173,17 +198,18 @@ def reload_service(client: HAClient, service: str) -> tuple[str, bool, str | Non
 
 
 def _execute_reload_plan(
-    client: HAClient, services: set[str]
+    client: HAClient, services: Collection[str]
 ) -> list[tuple[str, bool, str | None]]:
     """Execute core first, then sorted domain reloads with shared concurrency."""
-    if FULL_RELOAD_SERVICE in services:
+    service_set = set(services)
+    if FULL_RELOAD_SERVICE in service_set:
         return [reload_service(client, FULL_RELOAD_SERVICE)]
 
     core_service = CORE_RELOAD_SERVICE
-    domain_services = services - {core_service}
+    domain_services = service_set - {core_service}
     results: list[tuple[str, bool, str | None]] = []
 
-    if core_service in services:
+    if core_service in service_set:
         results.append(reload_service(client, core_service))
 
     # Domain reloads depend on helpers and integrations loaded by core config.
@@ -204,15 +230,16 @@ def _execute_reload_plan(
 
 def _render_reload_results(
     results: list[tuple[str, bool, str | None]],
-    services: set[str],
+    services: Collection[str],
     summary: bool,
     elapsed: float,
 ) -> bool:
     """Render reload outcomes and return whether every attempted reload passed."""
+    service_set = set(services)
     core_failed = any(
         service == CORE_RELOAD_SERVICE and not ok for service, ok, _error in results
     )
-    if core_failed and services - {CORE_RELOAD_SERVICE} and not summary:
+    if core_failed and service_set - {CORE_RELOAD_SERVICE} and not summary:
         print(
             "⚠️  Skipping domain reloads because core config failed "
             "(fix configuration.yaml first)",
@@ -288,22 +315,9 @@ def reload_config(summary: bool = False) -> bool:
         # longer than the default request timeout because reloads block on I/O).
         client.timeout = reload_timeout
 
-        services = detect_changed_services(git_timeout=git_timeout)
-        if services is None:
-            if not summary:
-                print(
-                    "⚠️  Could not detect config changes with git; "
-                    "reloading all domains to be safe",
-                    file=sys.stderr,
-                )
-            services = set(ALL_SERVICES)
-        elif not services:
-            if not summary:
-                print(
-                    "⚠️  No config changes detected, reloading all domains to be safe",
-                    file=sys.stderr,
-                )
-            services = set(ALL_SERVICES)
+        services = _resolve_reload_services(
+            detect_changed_services(git_timeout=git_timeout), summary
+        )
 
         if not summary:
             labels = sorted(SERVICE_LABELS.get(s, s) for s in services)

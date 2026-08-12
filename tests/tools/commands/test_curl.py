@@ -1,6 +1,7 @@
 """Tests for tools/commands/curl.py — pure-Python curl subcommand."""
 
 import json
+from functools import partial
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -63,15 +64,30 @@ _MISSING = object()
 
 
 def response_mock(
+    data=_MISSING,
     *,
     status=200,
     ok=None,
     headers=None,
     content_type=None,
-    text="",
+    ct=None,
+    text=None,
     json_data=_MISSING,
 ):
-    """Build a configurable response mock for curl tests."""
+    """Build a JSON or text response mock for curl tests."""
+    if ct is not None:
+        content_type = ct
+    if data is not _MISSING and json_data is not _MISSING:
+        raise ValueError("provide either data or json_data, not both")
+    if data is not _MISSING and (content_type is None or "json" in content_type):
+        json_data = data
+        content_type = content_type or "application/json"
+        text = json.dumps(data)
+    elif data is not _MISSING and text is None:
+        text = data
+    elif text is None:
+        text = ""
+
     r = MagicMock()
     r.ok = status < 400 if ok is None else ok
     r.status_code = status
@@ -84,19 +100,8 @@ def response_mock(
     return r
 
 
-def json_resp(data, status=200):
-    """Build a JSON response mock."""
-    return response_mock(
-        status=status,
-        content_type="application/json",
-        text=json.dumps(data),
-        json_data=data,
-    )
-
-
-def text_resp(text="ok", ct="text/plain", status=200):
-    """Build a non-JSON response mock."""
-    return response_mock(status=status, content_type=ct, text=text)
+json_resp = partial(response_mock, content_type="application/json")
+text_resp = partial(response_mock, content_type="text/plain")
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +260,7 @@ class TestExplicitOutputFlags:
     )
     def test_flag_matrix(self, overrides, expected):
         args = make_args(**overrides)
-        assert curl_cmd._has_explicit_output_flags(args) is expected
+        assert curl_cmd._has_guardrail_bypass_flags(args) is expected
 
 
 # ---------------------------------------------------------------------------
@@ -416,13 +421,29 @@ class TestHttpMethods:
         assert curl_cmd.run(args) == 0
         assert '"key":"val"' in capsys.readouterr().out
 
-    def test_post_with_data(self, mock_client):
-        mock_client.post.return_value = json_resp({"success": True})
-        args = make_args(method="POST", data='{"entity_id": "light.kitchen"}')
+    @pytest.mark.parametrize(
+        ("method", "endpoint", "body", "expected"),
+        [
+            (
+                "POST",
+                "/api/states",
+                '{"entity_id": "light.kitchen"}',
+                {"entity_id": "light.kitchen"},
+            ),
+            ("PUT", "/api/config", '{"key": "val"}', {"key": "val"}),
+            ("PATCH", "/api/config", '{"key": "val"}', {"key": "val"}),
+        ],
+    )
+    def test_body_methods_with_data(
+        self, mock_client, method, endpoint, body, expected
+    ):
+        client_method = getattr(mock_client, method.lower())
+        client_method.return_value = json_resp({"success": True})
+        args = make_args(method=method, endpoint=endpoint, data=body)
+
         assert curl_cmd.run(args) == 0
-        mock_client.post.assert_called_once()
-        _args, _kwargs = mock_client.post.call_args
-        assert _kwargs["json"] == {"entity_id": "light.kitchen"}
+
+        client_method.assert_called_once_with(endpoint, json=expected)
 
     @pytest.mark.parametrize("body, expected", [("42", 42), ("true", True)])
     def test_post_scalar_json_data(self, mock_client, body, expected):
@@ -434,45 +455,23 @@ class TestHttpMethods:
 
         mock_client.post.assert_called_once_with("/api/states", json=expected)
 
-    def test_post_without_data(self, mock_client):
-        mock_client.post.return_value = json_resp({"success": True})
-        args = make_args(method="POST")
-        assert curl_cmd.run(args) == 0
-        mock_client.post.assert_called_once()
+    @pytest.mark.parametrize(
+        ("method", "endpoint"),
+        [
+            ("POST", "/api/states"),
+            ("PUT", "/api/config"),
+            ("DELETE", "/api/config/section"),
+            ("PATCH", "/api/config"),
+        ],
+    )
+    def test_methods_without_data(self, mock_client, method, endpoint):
+        client_method = getattr(mock_client, method.lower())
+        client_method.return_value = json_resp({"ok": True})
+        args = make_args(method=method, endpoint=endpoint)
 
-    def test_put_without_data(self, mock_client):
-        mock_client.put.return_value = json_resp({"ok": True})
-        args = make_args(method="PUT", endpoint="/api/config")
         assert curl_cmd.run(args) == 0
-        mock_client.put.assert_called_once_with("/api/config", json=None)
 
-    def test_method_put(self, mock_client):
-        mock_client.put.return_value = json_resp({"ok": True})
-        args = make_args(method="PUT", endpoint="/api/config", data='{"key": "val"}')
-        assert curl_cmd.run(args) == 0
-        mock_client.put.assert_called_once()
-        _path, kwargs = mock_client.put.call_args
-        assert kwargs["json"] == {"key": "val"}
-
-    def test_method_delete(self, mock_client):
-        mock_client.delete.return_value = json_resp({"ok": True})
-        args = make_args(method="DELETE", endpoint="/api/config/section")
-        assert curl_cmd.run(args) == 0
-        mock_client.delete.assert_called_once_with("/api/config/section", json=None)
-
-    def test_method_patch(self, mock_client):
-        mock_client.patch.return_value = json_resp({"ok": True})
-        args = make_args(method="PATCH", endpoint="/api/config", data='{"key": "val"}')
-        assert curl_cmd.run(args) == 0
-        mock_client.patch.assert_called_once()
-        _path, kwargs = mock_client.patch.call_args
-        assert kwargs["json"] == {"key": "val"}
-
-    def test_patch_without_data(self, mock_client):
-        mock_client.patch.return_value = json_resp({"ok": True})
-        args = make_args(method="PATCH", endpoint="/api/config")
-        assert curl_cmd.run(args) == 0
-        mock_client.patch.assert_called_once_with("/api/config", json=None)
+        client_method.assert_called_once_with(endpoint, json=None)
 
 
 class TestClientCleanup:

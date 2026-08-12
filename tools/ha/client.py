@@ -5,7 +5,6 @@ lived in `tools/reload_config.py` and `tools/ha_api_diagnostic.py`.
 """
 
 import asyncio
-import os
 import sys
 from typing import Any, Protocol, cast
 
@@ -13,15 +12,13 @@ import aiohttp
 import requests
 
 from tools.common import (
-    DEFAULT_HA_URL,
+    DEFAULT_HA_TIMEOUT,
     HARequestError,
     MissingTokenError,
-    get_env_int,
-    load_env_file,
+    get_ha_config,
     validate_ha_url,
 )
 
-DEFAULT_HA_TIMEOUT = 10
 _MAX_RESULT_MESSAGES = 100
 
 
@@ -49,14 +46,8 @@ def _validate_connection(url: str, token: str) -> str:
 
 
 def _env_config() -> tuple[str, str, int]:
-    """Load .env once; return (url, token, timeout) from env or defaults."""
-    load_env_file()
-    url = os.getenv("HA_URL", DEFAULT_HA_URL)
-    token = os.getenv("HA_TOKEN", "")
-    timeout, warning = get_env_int("HA_REQUEST_TIMEOUT", DEFAULT_HA_TIMEOUT)
-    if warning:
-        print(f"\u26a0\ufe0f  {warning}", file=sys.stderr)
-    return url, token, timeout
+    """Return (url, token, timeout) from the shared environment configuration."""
+    return get_ha_config(warning_stream=sys.stderr)
 
 
 def _client_from_env[ClientT](client_cls: _ClientConstructor[ClientT]) -> ClientT:
@@ -101,10 +92,9 @@ class HAClient:
     def from_env(cls) -> HAClient:
         """Construct a client from HA_URL/HA_TOKEN/HA_REQUEST_TIMEOUT.
 
-        Loads ``.env`` exactly once via :func:`load_env_file` so that callers
-        don't need to remember to do it. ``load_env_file`` is idempotent — it
-        only sets env vars that are present in the file, so calling it again
-        later is safe.
+        Loads ``.env`` exactly once via the shared environment configuration
+        helper so callers don't need to remember to do it. The underlying
+        loader is idempotent and only sets variables absent from the environment.
         """
         return _client_from_env(cast(_ClientConstructor[HAClient], cls))
 
@@ -245,18 +235,14 @@ class HAWSClient:
 
     async def _authenticate(self, ws) -> None:
         """Perform the WebSocket auth handshake."""
-        msg = await ws.receive_json()
-        if not isinstance(msg, dict):
-            raise HARequestError("Invalid WebSocket message during authentication")
+        msg = await self._receive_dict(ws, "during authentication")
         if msg.get("type") != "auth_required":
             raise HARequestError(
                 f"unexpected WebSocket message: expected auth_required, "
                 f"got {msg.get('type')}"
             )
         await ws.send_json({"type": "auth", "access_token": self.token})
-        msg = await ws.receive_json()
-        if not isinstance(msg, dict):
-            raise HARequestError("Invalid WebSocket message during authentication")
+        msg = await self._receive_dict(ws, "during authentication")
         if msg.get("type") == "auth_invalid":
             raise HARequestError(
                 f"authentication failed \u2014 check HA_TOKEN: "
@@ -267,15 +253,20 @@ class HAWSClient:
                 f"unexpected WebSocket message: expected auth_ok, got {msg.get('type')}"
             )
 
+    async def _receive_dict(self, ws, context: str) -> dict[str, Any]:
+        """Receive and validate a dictionary WebSocket message."""
+        msg = await ws.receive_json()
+        if not isinstance(msg, dict):
+            raise HARequestError(f"Invalid WebSocket message {context}")
+        return msg
+
     async def _send_and_receive(self, ws, command_type: str, **params: Any) -> Any:
         """Send a command and loop until we receive the matching result."""
         msg_id = 1
         await ws.send_json({"id": msg_id, "type": command_type, **params})
 
         for _ in range(_MAX_RESULT_MESSAGES):
-            msg = await ws.receive_json()
-            if not isinstance(msg, dict):
-                raise HARequestError("Invalid WebSocket message while awaiting result")
+            msg = await self._receive_dict(ws, "while awaiting result")
             if msg.get("type") == "result" and msg.get("id") == msg_id:
                 if not msg.get("success", False):
                     error = msg.get("error", {})

@@ -34,18 +34,23 @@ from tools.common import (
 from tools.ha.client import HAClient
 from tools.output_shape import JSONValue, apply_output_shape, print_json
 
+_HTTP_METHODS = ("GET", "POST", "PUT", "DELETE", "PATCH")
+_BODY_METHODS = frozenset(("POST", "PUT", "PATCH"))
+_COLLECTION_OUTPUT_FLAGS = ("count", "keys", "raw")
+_GUARDRAIL_TRUTHY_FLAGS = (
+    *_COLLECTION_OUTPUT_FLAGS,
+    "pick",
+    "entity",
+    "domain",
+)
+_GUARDRAIL_SET_FLAGS = ("first", "max_chars")
 
-def _has_explicit_output_flags(args: argparse.Namespace) -> bool:
-    """Check if the curl command has any output-transforming flags active."""
+
+def _has_guardrail_bypass_flags(args: argparse.Namespace) -> bool:
+    """Check if any flag bypasses the bare endpoint guardrail."""
     return bool(
-        args.count
-        or args.keys
-        or args.first is not None
-        or args.raw
-        or bool(args.pick)
-        or bool(args.entity)
-        or bool(args.domain)
-        or args.max_chars is not None
+        any(getattr(args, flag) for flag in _GUARDRAIL_TRUTHY_FLAGS)
+        or any(getattr(args, flag) is not None for flag in _GUARDRAIL_SET_FLAGS)
     )
 
 
@@ -89,7 +94,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     method_group.add_argument(
         "--method",
         "-M",
-        choices=["GET", "POST", "PUT", "DELETE", "PATCH"],
+        choices=_HTTP_METHODS,
         help="HTTP method (default: GET)",
     )
 
@@ -171,7 +176,7 @@ class _CurlRequest:
 
 def _has_collection_output_flags(args: argparse.Namespace) -> bool:
     """Check whether a collection-oriented output flag is active."""
-    return bool(args.count or args.keys or args.raw)
+    return any(getattr(args, flag) for flag in _COLLECTION_OUTPUT_FLAGS)
 
 
 def _validate_args(args: argparse.Namespace, summary: bool) -> _CurlRequest:
@@ -224,9 +229,8 @@ def _build_client() -> HAClient:
 
 def _parse_json_body(method: str, args: argparse.Namespace, summary: bool) -> Any:
     """Parse --data JSON for body-applicable methods."""
-    body_methods = {"POST", "PUT", "PATCH"}
     json_data = None
-    if method in body_methods:
+    if method in _BODY_METHODS:
         if args.data is not None:
             try:
                 json_data = json.loads(args.data)
@@ -247,18 +251,13 @@ def _execute_request(
 
     Raises _CurlError for an unknown method or request failure.
     """
-    method_dispatch = {
-        "GET": lambda: client.get(endpoint),
-        "POST": lambda: client.post(endpoint, json=json_data),
-        "PUT": lambda: client.put(endpoint, json=json_data),
-        "DELETE": lambda: client.delete(endpoint, json=json_data),
-        "PATCH": lambda: client.patch(endpoint, json=json_data),
-    }
-    handler = method_dispatch.get(method)
-    if handler is None:
+    if method not in _HTTP_METHODS:
         raise _CurlError(f"Unknown HTTP method: {method}")
     try:
-        return handler()
+        handler = getattr(client, method.lower())
+        if method == "GET":
+            return handler(endpoint)
+        return handler(endpoint, json=json_data)
     except HARequestError as e:
         raise _CurlError(str(e)) from e
 
@@ -308,7 +307,7 @@ def _handle_guardrail(
     if (
         request.method == "GET"
         and request.endpoint == "/api/states"
-        and not _has_explicit_output_flags(args)
+        and not _has_guardrail_bypass_flags(args)
         and not args.pretty
         and summary
         and not args.no_guard

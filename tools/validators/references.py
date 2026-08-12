@@ -119,6 +119,8 @@ class ReferenceValidator(ValidatorBase):
         self._entities: dict[str, Any] | None = None
         self._devices: dict[str, Any] | None = None
         self._areas: dict[str, Any] | None = None
+        self._entity_registry_id_mapping: dict[str, str] | None = None
+        self._entity_registry_id_mapping_source: dict[str, Any] | None = None
         self._registry_load_failures: set[str] = set()
 
         self._definitions = EntityDefinitionExtractor(
@@ -165,6 +167,9 @@ class ReferenceValidator(ValidatorBase):
         cached = getattr(self, spec.cache_attr)
         if cached is not None:
             return cached
+        if spec.cache_attr == _ENTITY_REGISTRY_SPEC.cache_attr:
+            self._entity_registry_id_mapping = None
+            self._entity_registry_id_mapping_source = None
         registry_file = self.storage_dir / spec.filename
         bucket = getattr(self, spec.missing_bucket)
 
@@ -200,6 +205,32 @@ class ReferenceValidator(ValidatorBase):
     def load_area_registry(self) -> dict[str, Any]:
         """Load and cache area registry."""
         return self._load_registry(_AREA_REGISTRY_SPEC)
+
+    def get_entity_registry_id_mapping(
+        self, entities: dict[str, Any] | None = None
+    ) -> dict[str, str]:
+        """Lazily map entity-registry UUIDs to entity IDs."""
+        registry = self._entities if entities is None else entities
+        if (
+            self._entity_registry_id_mapping is not None
+            and self._entity_registry_id_mapping_source is registry
+        ):
+            return self._entity_registry_id_mapping
+
+        if entities is None:
+            entities = self.load_entity_registry()
+
+        mapping = self._entity_registry_id_mapping
+        if mapping is None or self._entity_registry_id_mapping_source is not entities:
+            mapping = {
+                entity_data["id"]: entity_data["entity_id"]
+                for entity_data in entities.values()
+                if isinstance(entity_data.get("id"), str)
+                and isinstance(entity_data.get("entity_id"), str)
+            }
+            self._entity_registry_id_mapping = mapping
+            self._entity_registry_id_mapping_source = entities
+        return mapping
 
     _UUID_RE = re.compile(
         r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
@@ -297,32 +328,27 @@ class ReferenceValidator(ValidatorBase):
         refs: set[str] = set()
         skip_keys = skip_keys or set()
         if isinstance(data, dict):
-            for key, value in data.items():
-                if key in keys:
-                    refs.update(self._collect_string_values(value, skip=skip))
-                elif key in skip_keys:
-                    continue
-                elif (
-                    template_callback is not None
-                    and isinstance(value, str)
-                    and is_jinja_template(value)
-                ):
-                    refs.update(template_callback(value))
-                else:
-                    refs.update(
-                        self._walk_references(
-                            value,
-                            keys=keys,
-                            skip=skip,
-                            template_callback=template_callback,
-                            skip_keys=skip_keys,
-                        )
-                    )
+            children = data.items()
         elif isinstance(data, list):
-            for item in data:
+            children = ((None, item) for item in data)
+        else:
+            return refs
+
+        for key, value in children:
+            if key in keys:
+                refs.update(self._collect_string_values(value, skip=skip))
+            elif key in skip_keys:
+                continue
+            elif (
+                template_callback is not None
+                and isinstance(value, str)
+                and is_jinja_template(value)
+            ):
+                refs.update(template_callback(value))
+            else:
                 refs.update(
                     self._walk_references(
-                        item,
+                        value,
                         keys=keys,
                         skip=skip,
                         template_callback=template_callback,
@@ -521,11 +547,9 @@ class ReferenceValidator(ValidatorBase):
         entities = self.load_entity_registry()
         devices = self.load_device_registry()
         areas = self.load_area_registry()
-        entity_id_mapping = {
-            e["id"]: e["entity_id"]
-            for e in entities.values()
-            if isinstance(e.get("id"), str) and isinstance(e.get("entity_id"), str)
-        }
+        entity_id_mapping = (
+            self.get_entity_registry_id_mapping(entities) if entity_registry_ids else {}
+        )
         config_entities = self.get_config_defined_entities()
         restore_entities = self.load_restore_state_entities()
 

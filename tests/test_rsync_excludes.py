@@ -10,7 +10,6 @@ Tests that the .rsync-excludes-* files correctly:
 
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -22,18 +21,9 @@ pytestmark = pytest.mark.skipif(not shutil.which("rsync"), reason="rsync not ins
 
 
 @pytest.fixture
-def temp_dir():
-    """Create a temporary directory for the test session."""
-    temp = Path(tempfile.mkdtemp(prefix="rsync_test_"))
-    yield temp
-    if temp.exists():
-        shutil.rmtree(temp)
-
-
-@pytest.fixture
-def local_dir(temp_dir):
+def local_dir(tmp_path):
     """Create a local config tree used as the rsync source."""
-    local = temp_dir / "local"
+    local = tmp_path / "local"
     local.mkdir()
     (local / ".storage" / "core").mkdir(parents=True)
     (local / ".storage" / "core" / "entity_registry").write_text(
@@ -45,9 +35,9 @@ def local_dir(temp_dir):
 
 
 @pytest.fixture
-def remote_dir(temp_dir):
+def remote_dir(tmp_path):
     """Create a remote config tree used as the rsync destination."""
-    remote = temp_dir / "remote"
+    remote = tmp_path / "remote"
     remote.mkdir()
     (remote / ".storage" / "auth").mkdir(parents=True)
     (remote / ".storage" / "core").mkdir(parents=True)
@@ -79,6 +69,14 @@ def remote_dir(temp_dir):
     (remote / "automations.yaml").write_text("automation: old")
 
     return remote
+
+
+@pytest.fixture
+def pull_dir(tmp_path):
+    """Create a local directory used as the rsync pull destination."""
+    pull = tmp_path / "local_pull"
+    pull.mkdir()
+    return pull
 
 
 def run_rsync(source, dest, excludes):
@@ -154,130 +152,106 @@ def test_push_preserves_custom_components(local_dir, remote_dir):
     )
 
 
-def test_pull_excludes_auth_tokens(temp_dir, remote_dir):
+def test_pull_excludes_auth_tokens(pull_dir, remote_dir):
     """Pull excludes auth tokens locally."""
-    local = temp_dir / "local_pull"
-    local.mkdir()
+    run_rsync(remote_dir, pull_dir, PULL_EXCLUDES)
 
-    run_rsync(remote_dir, local, PULL_EXCLUDES)
-
-    assert not (local / ".storage" / "auth" / "tokens.json").exists(), (
+    assert not (pull_dir / ".storage" / "auth" / "tokens.json").exists(), (
         "Auth tokens should NOT be pulled"
     )
 
 
-def test_pull_preserves_existing_excluded_auth_token(temp_dir, remote_dir):
+def test_pull_preserves_existing_excluded_auth_token(pull_dir, remote_dir):
     """--delete must not remove protected local auth state."""
-    local = temp_dir / "local_pull"
-    (local / ".storage" / "auth").mkdir(parents=True)
-    protected = local / ".storage" / "auth" / "tokens.json"
+    (pull_dir / ".storage" / "auth").mkdir(parents=True)
+    protected = pull_dir / ".storage" / "auth" / "tokens.json"
     protected.write_text("LOCAL_SECRET")
 
-    run_rsync(remote_dir, local, PULL_EXCLUDES)
+    run_rsync(remote_dir, pull_dir, PULL_EXCLUDES)
 
     assert protected.read_text() == "LOCAL_SECRET"
 
 
-def test_pull_allows_storage_core(temp_dir, remote_dir):
+def test_pull_allows_storage_core(pull_dir, remote_dir):
     """Pull includes non-sensitive .storage files."""
-    local = temp_dir / "local_pull"
-    local.mkdir()
-
-    run_rsync(remote_dir, local, PULL_EXCLUDES)
+    run_rsync(remote_dir, pull_dir, PULL_EXCLUDES)
 
     assert (
-        local / ".storage" / "core" / "entity_registry"
+        pull_dir / ".storage" / "core" / "entity_registry"
     ).read_text() == "entity_registry_v1", "Storage core should be pulled"
 
 
-def test_pull_excludes_backups(temp_dir, remote_dir):
+def test_pull_excludes_backups(pull_dir, remote_dir):
     """Pull excludes backups locally."""
-    local = temp_dir / "local_pull"
-    local.mkdir()
+    run_rsync(remote_dir, pull_dir, PULL_EXCLUDES)
 
-    run_rsync(remote_dir, local, PULL_EXCLUDES)
-
-    assert not (local / "backups" / "backup.tar").exists(), (
+    assert not (pull_dir / "backups" / "backup.tar").exists(), (
         "Backups should NOT be pulled"
     )
 
 
-def test_pull_gets_config_files(temp_dir, remote_dir):
+def test_pull_gets_config_files(pull_dir, remote_dir):
     """Pull brings down config files."""
-    local = temp_dir / "local_pull"
-    local.mkdir()
+    run_rsync(remote_dir, pull_dir, PULL_EXCLUDES)
 
-    run_rsync(remote_dir, local, PULL_EXCLUDES)
-
-    assert (local / "configuration.yaml").exists(), (
+    assert (pull_dir / "configuration.yaml").exists(), (
         "configuration.yaml should be pulled"
     )
-    assert (local / "automations.yaml").exists(), "automations.yaml should be pulled"
+    assert (pull_dir / "automations.yaml").exists(), "automations.yaml should be pulled"
 
 
-def test_pull_excludes_auth_file(temp_dir):
+def test_pull_excludes_auth_file(tmp_path, pull_dir):
     """Pull excludes .storage/auth when it exists as a plain file (real HA layout)."""
-    remote = temp_dir / "remote_auth_file"
+    remote = tmp_path / "remote_auth_file"
     remote.mkdir()
     (remote / ".storage").mkdir()
     (remote / ".storage" / "auth").write_text("SECRET_AUTH_DATA")
     (remote / ".storage" / "core.entity_registry").write_text("entities")
 
-    local = temp_dir / "local_auth_file"
-    local.mkdir()
+    run_rsync(remote, pull_dir, PULL_EXCLUDES)
 
-    run_rsync(remote, local, PULL_EXCLUDES)
-
-    assert not (local / ".storage" / "auth").exists(), (
+    assert not (pull_dir / ".storage" / "auth").exists(), (
         ".storage/auth file should NOT be pulled"
     )
 
 
-def test_pull_excludes_trace_saved_traces(temp_dir, remote_dir):
+def test_pull_excludes_trace_saved_traces(pull_dir, remote_dir):
     """Pull excludes .storage/trace.saved_traces."""
-    local = temp_dir / "local_pull"
-    local.mkdir()
+    run_rsync(remote_dir, pull_dir, PULL_EXCLUDES)
 
-    run_rsync(remote_dir, local, PULL_EXCLUDES)
-
-    assert not (local / ".storage" / "trace.saved_traces").exists(), (
+    assert not (pull_dir / ".storage" / "trace.saved_traces").exists(), (
         "trace.saved_traces should NOT be pulled"
     )
 
 
-def test_pull_zigbee2mqtt_selective(temp_dir, remote_dir):
+def test_pull_zigbee2mqtt_selective(pull_dir, remote_dir):
     """Pull includes Z2M config files but excludes runtime state."""
-    local = temp_dir / "local_pull"
-    local.mkdir()
+    run_rsync(remote_dir, pull_dir, PULL_EXCLUDES)
 
-    run_rsync(remote_dir, local, PULL_EXCLUDES)
-
-    assert (local / "zigbee2mqtt" / "configuration.yaml").exists(), (
+    assert (pull_dir / "zigbee2mqtt" / "configuration.yaml").exists(), (
         "zigbee2mqtt/configuration.yaml SHOULD be pulled"
     )
-    assert (local / "zigbee2mqtt" / "coordinator_backup.json").exists(), (
+    assert (pull_dir / "zigbee2mqtt" / "coordinator_backup.json").exists(), (
         "zigbee2mqtt/coordinator_backup.json SHOULD be pulled"
     )
-    assert not (local / "zigbee2mqtt" / "database.db").exists(), (
+    assert not (pull_dir / "zigbee2mqtt" / "database.db").exists(), (
         "zigbee2mqtt/database.db should NOT be pulled (runtime state)"
     )
-    assert not (local / "zigbee2mqtt" / "state.json").exists(), (
+    assert not (pull_dir / "zigbee2mqtt" / "state.json").exists(), (
         "zigbee2mqtt/state.json should NOT be pulled (runtime state)"
     )
-    assert not (local / "zigbee2mqtt" / "log").exists(), (
+    assert not (pull_dir / "zigbee2mqtt" / "log").exists(), (
         "zigbee2mqtt/log/ should NOT be pulled"
     )
 
 
-def test_pull_deletes_stale_local_files(temp_dir, remote_dir):
+def test_pull_deletes_stale_local_files(pull_dir, remote_dir):
     """Pull deletes stale local files with --delete."""
-    local = temp_dir / "local_pull"
-    local.mkdir()
-    (local / "stale_file.yaml").write_text("should be deleted")
+    (pull_dir / "stale_file.yaml").write_text("should be deleted")
 
-    run_rsync(remote_dir, local, PULL_EXCLUDES)
+    run_rsync(remote_dir, pull_dir, PULL_EXCLUDES)
 
-    assert not (local / "stale_file.yaml").exists(), (
+    assert not (pull_dir / "stale_file.yaml").exists(), (
         "Stale files should be deleted by --delete"
     )
 

@@ -89,6 +89,13 @@ def _trace_start(trace: dict) -> object:
     return timestamp
 
 
+def _validate_trace_list_response(data: object) -> list:
+    """Validate the top-level shape of a ``trace/list`` response."""
+    if not isinstance(data, list):
+        raise HARequestError("Invalid trace/list response")
+    return data
+
+
 def _fetch_single_trace(ws_client: HAWSClient, entity_id: str) -> dict:
     """Resolve an automation entity and fetch its newest trace run."""
     entity_short = entity_id.split(".", 1)[1]
@@ -102,9 +109,9 @@ def _fetch_single_trace(ws_client: HAWSClient, entity_id: str) -> dict:
     except HARequestError:
         item_id = entity_short
 
-    traces = ws_client.command("trace/list", domain="automation", item_id=item_id)
-    if not isinstance(traces, list):
-        raise HARequestError("Invalid trace/list response")
+    traces = _validate_trace_list_response(
+        ws_client.command("trace/list", domain="automation", item_id=item_id)
+    )
     traces = [trace for trace in traces if isinstance(trace, dict)]
     matching = [trace for trace in traces if trace.get("item_id") == item_id]
     if not matching:
@@ -168,27 +175,13 @@ def _summarize_trace_list(traces: list[dict]) -> list[dict]:
 def _fetch_data(
     ws_client: HAWSClient,
     args: argparse.Namespace,
-    summary: bool,
-) -> tuple[dict | list | None, int | None]:
-    """Fetch trace data via WebSocket (and optionally REST for single-entity).
-
-    Returns ``(data, None)`` on success, ``(None, 1)`` on error.
-    """
-    try:
-        if args.entity_id:
-            try:
-                data = _fetch_single_trace(ws_client, args.entity_id)
-            except _TraceNotFoundError:
-                return None, fail_stderr(f"No traces found for {args.entity_id}")
-        else:
-            data = ws_client.command("trace/list", domain="automation")
-            if not isinstance(data, list):
-                raise HARequestError("Invalid trace/list response")
-            if summary and not args.pretty:
-                data = _summarize_trace_list(data)
-    except HARequestError as e:
-        return None, fail_stderr(str(e))
-    return data, None
+) -> dict | list:
+    """Fetch and validate trace data without rendering CLI errors."""
+    if args.entity_id:
+        return _fetch_single_trace(ws_client, args.entity_id)
+    return _validate_trace_list_response(
+        ws_client.command("trace/list", domain="automation")
+    )
 
 
 def _shape_single_entity_data(
@@ -231,8 +224,10 @@ def _shape_list_data(
     summary: bool,
 ) -> list:
     """Apply output shaping (--first, --pick, --max-chars) to list data."""
+    if summary and not args.pretty:
+        data = _summarize_trace_list(data)
     shaped = apply_output_shape(
-        data,
+        cast(list[JSONValue], data),
         first=args.first,
         pick=args.pick,
         max_chars=resolve_max_chars(args, summary),
@@ -253,9 +248,12 @@ def run(args: argparse.Namespace) -> int:
     except HARequestError as e:
         return fail_stderr(str(e))
 
-    data, exit_code = _fetch_data(ws_client, args, summary)
-    if exit_code is not None:
-        return exit_code
+    try:
+        data = _fetch_data(ws_client, args)
+    except _TraceNotFoundError:
+        return fail_stderr(f"No traces found for {args.entity_id}")
+    except HARequestError as e:
+        return fail_stderr(str(e))
 
     if args.entity_id and isinstance(data, dict):
         data = _shape_single_entity_data(data, args, summary)
@@ -266,6 +264,22 @@ def run(args: argparse.Namespace) -> int:
 
     print_json(data, pretty=args.pretty)
     return 0
+
+
+def _project_changed_variables(changed_variables: dict) -> dict:
+    """Project entity-state values without their large ``attributes`` blobs."""
+    return {
+        key: (
+            {
+                nested_key: value
+                for nested_key, value in item.items()
+                if nested_key != "attributes"
+            }
+            if isinstance(item, dict) and "attributes" in item
+            else item
+        )
+        for key, item in changed_variables.items()
+    }
 
 
 def _prune_trace_entries(trace: dict) -> dict:
@@ -291,15 +305,10 @@ def _prune_trace_entries(trace: dict) -> dict:
                 continue
             cv = entry.get("changed_variables")
             if isinstance(cv, dict):
-                new_cv = {}
-                for k, v in cv.items():
-                    if isinstance(v, dict) and "attributes" in v:
-                        new_cv[k] = {
-                            kk: vv for kk, vv in v.items() if kk != "attributes"
-                        }
-                    else:
-                        new_cv[k] = v
-                entry = {**entry, "changed_variables": new_cv}
+                entry = {
+                    **entry,
+                    "changed_variables": _project_changed_variables(cv),
+                }
             new_entries.append(entry)
         pruned[step_key] = new_entries
     return pruned

@@ -40,6 +40,17 @@ _STDERR_BENIGN_PHRASES = (
 )
 
 
+def _is_explicit_error(line: str) -> bool:
+    """Return whether a stdout line starts with an explicit error prefix."""
+    return bool(re.match(r"^\W*(ERROR|RuntimeError)\b", line, re.I))
+
+
+def _is_benign_package_line(line: str) -> bool:
+    """Return whether output contains a known-benign package marker."""
+    line_lower = line.lower()
+    return any(marker in line_lower for marker in _BENIGN_PACKAGE_INSTALL_MARKERS)
+
+
 class HAOfficialValidator(ValidatorBase):
     """Validates Home Assistant configuration using the official HA package.
 
@@ -125,7 +136,7 @@ class HAOfficialValidator(ValidatorBase):
 
     def _has_benign_package_context(self, stdout: str, stderr: str) -> bool:
         blob = (stdout + "\n" + stderr).lower()
-        return any(m in blob for m in _BENIGN_PACKAGE_INSTALL_MARKERS)
+        return _is_benign_package_line(blob)
 
     def is_ignorable_message(self, line: str) -> bool:
         """Check if a message can be safely ignored (non-critical warnings).
@@ -168,11 +179,9 @@ class HAOfficialValidator(ValidatorBase):
             line = line.strip()
             if not line:
                 continue
-            is_explicit_error = re.match(r"^\W*(ERROR|RuntimeError)\b", line, re.I)
-            is_benign_package_line = any(
-                marker in line.lower() for marker in _BENIGN_PACKAGE_INSTALL_MARKERS
-            )
-            if is_explicit_error and not (benign_ctx and is_benign_package_line):
+            if _is_explicit_error(line) and not (
+                benign_ctx and _is_benign_package_line(line)
+            ):
                 self._classify_stdout_line(line)
                 continue
             if self.is_ignorable_message(line):
@@ -196,7 +205,7 @@ class HAOfficialValidator(ValidatorBase):
                 self.info.append(f"HA Check: {line}")
             else:
                 self.errors.append(f"HA Check: {line}")
-        elif re.match(r"^\W*(ERROR|RuntimeError)\b", line, re.I):
+        elif _is_explicit_error(line):
             self.errors.append(f"HA Check: {line}")
         elif re.match(r"^\W*WARNING\b", line, re.I):
             self.warnings.append(f"HA Check: {line}")

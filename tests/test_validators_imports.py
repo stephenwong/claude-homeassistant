@@ -9,6 +9,15 @@ from tools.validators.services import ServiceValidator
 from tools.validators.templates import TemplateValidator
 from tools.validators.yaml import YAMLValidator
 
+VALIDATOR_CLASSES = (
+    DuplicateIDValidator,
+    YAMLValidator,
+    ReferenceValidator,
+    ServiceValidator,
+    HAOfficialValidator,
+    TemplateValidator,
+)
+
 
 def test_common_reexports_base():
     import tools.common as c
@@ -34,17 +43,7 @@ def test_duplicate_id_validator_import():
     assert v.info == []
 
 
-@pytest.mark.parametrize(
-    "cls",
-    [
-        DuplicateIDValidator,
-        YAMLValidator,
-        ReferenceValidator,
-        ServiceValidator,
-        HAOfficialValidator,
-        TemplateValidator,
-    ],
-)
+@pytest.mark.parametrize("cls", VALIDATOR_CLASSES)
 def test_validator_quiet_kwarg_accepted(cls):
     assert cls(quiet=True).quiet is True
 
@@ -134,40 +133,24 @@ class TestL80FileDeps:
 
         from tools.cache import compute_hash
 
-        for cls, _desc in [
-            (DuplicateIDValidator, ""),
-            (YAMLValidator, ""),
-            (ReferenceValidator, ""),
-        ]:
+        for cls in (DuplicateIDValidator, YAMLValidator, ReferenceValidator):
             config_dir = Path(tmp_path)
             instance = cls(config_dir=str(config_dir))
             deps = instance.file_deps()
-            if deps:
-                for pattern in deps:
-                    if pattern.startswith("*"):
-                        path = config_dir / ("fixture" + pattern[1:])
-                        path.write_text("{}")
-                    else:
-                        path = config_dir / pattern
-                        path.parent.mkdir(parents=True, exist_ok=True)
-                        path.write_text("{}")
-                assert all(any(config_dir.glob(pattern)) for pattern in deps)
-                h = compute_hash(Path(config_dir), deps)
-                assert isinstance(h, str)
-                assert len(h) == 64
+            for pattern in deps:
+                if pattern.startswith("*"):
+                    path = config_dir / ("fixture" + pattern[1:])
+                else:
+                    path = config_dir / pattern
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("{}")
+            assert all(any(config_dir.glob(pattern)) for pattern in deps)
+            h = compute_hash(Path(config_dir), deps)
+            assert isinstance(h, str)
+            assert len(h) == 64
 
 
-ALL_VALIDATOR_SUBCLASSES = [
-    DuplicateIDValidator,
-    YAMLValidator,
-    ReferenceValidator,
-    ServiceValidator,
-    HAOfficialValidator,
-    TemplateValidator,
-]
-
-
-@pytest.mark.parametrize("cls", ALL_VALIDATOR_SUBCLASSES)
+@pytest.mark.parametrize("cls", VALIDATOR_CLASSES)
 def test_summary_kwarg_forwarded(cls):
     """L80 (AGENTS.md): every subclass __init__ must accept+forward summary=."""
     instance = cls(summary=True)

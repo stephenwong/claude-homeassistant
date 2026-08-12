@@ -5,7 +5,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tools.validators.ha_official import HAOfficialValidator
+from tools.validators.ha_official import (
+    HAOfficialValidator,
+    _is_benign_package_line,
+    _is_explicit_error,
+)
 
 
 @pytest.fixture
@@ -85,6 +89,43 @@ def test_runtimeerror_not_ignored_by_is_ignorable_message(validator):
 def test_normal_error_not_ignorable(validator):
     msg = "Invalid configuration for sensor"
     assert validator.is_ignorable_message(msg) is False
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "ERROR: invalid config",
+        "error: invalid config",
+        "^^^RuntimeError: invalid config",
+    ],
+)
+def test_is_explicit_error_matches_error_prefixes(line):
+    assert _is_explicit_error(line) is True
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["Configuration check successful!", "Found 0 errors", "some error in the middle"],
+)
+def test_is_explicit_error_rejects_non_prefixes(line):
+    assert _is_explicit_error(line) is False
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Unable to install package somepkg",
+        "NO SOLUTION FOUND WHEN RESOLVING dependencies",
+        "Requirements are unsatisfiable",
+        "requirements for package X",
+    ],
+)
+def test_is_benign_package_line_matches_known_markers(line):
+    assert _is_benign_package_line(line) is True
+
+
+def test_is_benign_package_line_rejects_unrelated_line():
+    assert _is_benign_package_line("RuntimeError: real configuration failure") is False
 
 
 class TestL53IgnorablePatterns:

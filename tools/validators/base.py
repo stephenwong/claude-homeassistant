@@ -97,7 +97,13 @@ class ValidatorBase(ABC):
         (``data is None``) are silently skipped — callers should snapshot
         ``len(self.errors)`` before iteration to detect load failures.
         """
-        for fp in self.get_yaml_files():
+        yield from self._iter_yaml_payloads(self.get_yaml_files())
+
+    def _iter_yaml_payloads(
+        self, yaml_files: Iterable[Path]
+    ) -> Iterator[tuple[Path, Any]]:
+        """Yield payloads from a precomputed YAML file list."""
+        for fp in yaml_files:
             if fp.name == "secrets.yaml":
                 continue
             data, ok = self.load_yaml_checked(fp)
@@ -165,13 +171,12 @@ class ValidatorBase(ABC):
 
             # Blueprint automations use 'use_blueprint' instead of
             # direct triggers/actions
-            if "use_blueprint" in automation:
-                if not isinstance(automation["use_blueprint"], dict):
-                    self.errors.append(
-                        f"{source}: Automation {i} 'use_blueprint' must be a dictionary"
-                    )
-                    all_valid = False
-            else:
+            blueprint_valid = self._check_optional_blueprint(
+                automation, f"{source}: Automation {i}"
+            )
+            if not blueprint_valid:
+                all_valid = False
+            elif "use_blueprint" not in automation:
                 trigger_key = "trigger" if "trigger" in automation else "triggers"
                 action_key = "action" if "action" in automation else "actions"
                 if trigger_key not in automation or automation[trigger_key] is None:
@@ -213,14 +218,14 @@ class ValidatorBase(ABC):
                 continue
 
             # Blueprint scripts use 'use_blueprint' instead of direct sequence
-            if "use_blueprint" in script_config:
-                if not isinstance(script_config["use_blueprint"], dict):
-                    self.errors.append(
-                        f"{source}: Script '{script_name}' 'use_blueprint' must be "
-                        "a dictionary"
-                    )
-                    all_valid = False
-            elif "sequence" not in script_config or script_config["sequence"] is None:
+            blueprint_valid = self._check_optional_blueprint(
+                script_config, f"{source}: Script '{script_name}'"
+            )
+            if not blueprint_valid:
+                all_valid = False
+            elif "use_blueprint" not in script_config and (
+                "sequence" not in script_config or script_config["sequence"] is None
+            ):
                 self.errors.append(
                     f"{source}: Script '{script_name}' missing required "
                     f"'sequence' or 'use_blueprint'"
@@ -228,6 +233,15 @@ class ValidatorBase(ABC):
                 all_valid = False
 
         return all_valid
+
+    def _check_optional_blueprint(self, config: dict, item_label: str) -> bool:
+        """Validate an optional ``use_blueprint`` mapping without extra checks."""
+        if "use_blueprint" not in config:
+            return True
+        if isinstance(config["use_blueprint"], dict):
+            return True
+        self.errors.append(f"{item_label} 'use_blueprint' must be a dictionary")
+        return False
 
     def validate_all(self) -> bool:
         """Template method: ensure config_dir exists, then run _validate()."""

@@ -10,7 +10,7 @@ from typing import Any
 
 from tools.common import HARequestError
 from tools.ha.client import HAClient
-from tools.validators._templates import TEMPLATE_DELIMITERS, is_jinja_template
+from tools.validators._templates import is_jinja_template, template_delimiter_state
 from tools.validators.base import ValidatorBase
 
 _RUNTIME_NAMES = frozenset(
@@ -51,10 +51,7 @@ class TemplateValidator(ValidatorBase):
 
     @staticmethod
     def _balanced(s: str) -> bool:
-        return all(
-            s.count(opening) == s.count(closing)
-            for opening, closing in TEMPLATE_DELIMITERS
-        )
+        return template_delimiter_state(s)[1]
 
     @classmethod
     def _collect(cls, data: Any, path: str, out: list[tuple[str, str]]) -> None:

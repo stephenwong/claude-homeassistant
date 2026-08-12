@@ -1,7 +1,8 @@
 """Tests for tools/ha/client.py — the shared HA REST API client."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+import sys
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 import requests
@@ -38,9 +39,8 @@ class TestFromEnv:
     """Tests for HAClient.from_env().
 
     These rely on the autouse ``_stub_load_env_file`` fixture in
-    ``tests/conftest.py``, which no-ops ``load_env_file`` for both
-    ``tools.ha.client`` and ``tools.validators.stale_sensors``. No per-test
-    patching is needed.
+    ``tests/conftest.py``, which no-ops the shared ``load_env_file`` helper
+    and the stale-sensor validator's reference. No per-test patching is needed.
     """
 
     @pytest.mark.parametrize(
@@ -82,17 +82,31 @@ class TestFromEnv:
         monkeypatch.setenv("HA_REQUEST_TIMEOUT", "not-a-number")
         c = HAClient.from_env()
         captured = capsys.readouterr()
-        assert "must be an integer" in captured.err
+        assert captured.out == ""
+        assert captured.err == (
+            "⚠️  HA_REQUEST_TIMEOUT must be an integer, got 'not-a-number'; using 10\n"
+        )
         assert c.timeout == 10
+
+    def test_env_config_delegates_to_shared_configuration(self):
+        with patch(
+            "tools.ha.client.get_ha_config",
+            return_value=("http://ha.example:8123", "tok", 42),
+        ) as get_config:
+            from tools.ha.client import _env_config
+
+            assert _env_config() == ("http://ha.example:8123", "tok", 42)
+
+        get_config.assert_called_once_with(warning_stream=sys.stderr)
 
     @pytest.mark.parametrize(
         "client_cls", [HAClient, HAWSClient], ids=["rest", "websocket"]
     )
     def test_load_env_file_called_once(self, monkeypatch, client_cls):
-        """Verify from_env delegates to load_env_file (the project's .env loader)."""
+        """Verify from_env delegates to the project's shared .env loader."""
         monkeypatch.setenv("HA_URL", "http://ha.example:8123")
         monkeypatch.setenv("HA_TOKEN", "tok")
-        with patch("tools.ha.client.load_env_file") as mock_load:
+        with patch("tools.common.load_env_file") as mock_load:
             client_cls.from_env()
             mock_load.assert_called_once()
 
@@ -376,6 +390,20 @@ def test_common_constructor_rejects_missing_token(client_cls):
 
 
 class TestHAWSAuthenticate:
+    def test_authentication_uses_receive_helper(self):
+        ws = _make_mock_ws([])
+        c = HAWSClient("http://ha:8123", "tok")
+        c._receive_dict = AsyncMock(
+            side_effect=[{"type": "auth_required"}, {"type": "auth_ok"}]
+        )
+
+        asyncio.run(c._authenticate(ws))
+
+        assert c._receive_dict.await_args_list == [
+            call(ws, "during authentication"),
+            call(ws, "during authentication"),
+        ]
+
     def test_success(self):
         ws = _make_mock_ws(
             [
@@ -415,6 +443,23 @@ class TestHAWSAuthenticate:
 
 
 class TestHAWSSendAndReceive:
+    def test_command_results_use_receive_helper(self):
+        ws = _make_mock_ws([])
+        c = HAWSClient("http://ha:8123", "tok")
+        c._receive_dict = AsyncMock(
+            side_effect=[
+                {"type": "event", "id": 1},
+                {"type": "result", "id": 1, "success": True, "result": "ok"},
+            ]
+        )
+
+        assert asyncio.run(c._send_and_receive(ws, "trace/list")) == "ok"
+
+        assert c._receive_dict.await_args_list == [
+            call(ws, "while awaiting result"),
+            call(ws, "while awaiting result"),
+        ]
+
     def test_success_returns_result(self):
         ws = _make_mock_ws(
             [
@@ -457,6 +502,38 @@ class TestHAWSSendAndReceive:
         c = HAWSClient("http://ha:8123", "tok")
         with pytest.raises(HARequestError, match="Invalid WebSocket message"):
             asyncio.run(c._send_and_receive(ws, "trace/list"))
+
+
+class TestHAWSReceive:
+    def test_returns_dictionary_message(self):
+        message = {"type": "auth_required"}
+        ws = _make_mock_ws([message])
+        c = HAWSClient("http://ha:8123", "tok")
+
+        assert asyncio.run(c._receive_dict(ws, "during authentication")) == message
+
+    @pytest.mark.parametrize(
+        ("context", "message"),
+        [
+            (
+                "during authentication",
+                "Invalid WebSocket message during authentication",
+            ),
+            (
+                "while awaiting result",
+                "Invalid WebSocket message while awaiting result",
+            ),
+        ],
+    )
+    @pytest.mark.parametrize("received", [None, ["message"]])
+    def test_rejects_non_dictionary_message(self, context, message, received):
+        ws = _make_mock_ws([received])
+        c = HAWSClient("http://ha:8123", "tok")
+
+        with pytest.raises(HARequestError) as exc_info:
+            asyncio.run(c._receive_dict(ws, context))
+
+        assert str(exc_info.value) == message
 
 
 class TestHAWSCommand:

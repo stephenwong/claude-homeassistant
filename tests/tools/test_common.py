@@ -2,6 +2,7 @@
 
 import argparse
 import os
+from io import StringIO
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ from tools.common import (
     _is_tty,
     format_diagnostics,
     get_env_int,
+    get_ha_config,
     load_env_file,
     resolve_summary,
     validate_ha_url,
@@ -88,6 +90,24 @@ class TestGetEnvInt:
         assert value == 10
         assert warning is not None
         assert "must be >=" in warning
+
+
+class TestGetHAConfig:
+    def test_reads_shared_environment_configuration(self, monkeypatch):
+        monkeypatch.setenv("HA_URL", "https://ha.example.com")
+        monkeypatch.setenv("HA_TOKEN", "secret")
+        monkeypatch.setenv("HA_REQUEST_TIMEOUT", "25")
+
+        assert get_ha_config() == ("https://ha.example.com", "secret", 25)
+
+    def test_warning_uses_caller_selected_stream(self, monkeypatch):
+        monkeypatch.setenv("HA_REQUEST_TIMEOUT", "not-a-number")
+        warning_stream = StringIO()
+
+        assert get_ha_config(warning_stream=warning_stream)[2] == 10
+        assert warning_stream.getvalue() == (
+            "⚠️  HA_REQUEST_TIMEOUT must be an integer, got 'not-a-number'; using 10\n"
+        )
 
 
 class TestValidateHAURL:
@@ -376,6 +396,15 @@ class TestValidatorBase:
         ]
         assert v.check_automations_structure(automations, "test") is True
 
+    def test_check_automations_structure_invalid_blueprint_mapping(self):
+        v = _ConcreteValidator(str(self.config_dir))
+        automations = [
+            {"alias": "Blueprint", "use_blueprint": "test.yaml"},
+        ]
+
+        assert v.check_automations_structure(automations, "test") is False
+        assert v.errors == ["test: Automation 0 'use_blueprint' must be a dictionary"]
+
     def test_check_automations_structure_not_dict(self):
         v = _ConcreteValidator(str(self.config_dir))
         automations = ["not a dict"]
@@ -413,6 +442,15 @@ class TestValidatorBase:
         v = _ConcreteValidator(str(self.config_dir))
         scripts = {"my_script": {"use_blueprint": {"path": "test.yaml"}}}
         assert v.check_scripts_structure(scripts, "test") is True
+
+    def test_check_scripts_structure_invalid_blueprint_mapping(self):
+        v = _ConcreteValidator(str(self.config_dir))
+        scripts = {"my_script": {"use_blueprint": "test.yaml"}}
+
+        assert v.check_scripts_structure(scripts, "test") is False
+        assert v.errors == [
+            "test: Script 'my_script' 'use_blueprint' must be a dictionary"
+        ]
 
     def test_check_scripts_structure_not_dict(self):
         v = _ConcreteValidator(str(self.config_dir))
@@ -652,6 +690,22 @@ class TestAtomicWriteText:
 
         assert target.read_text() == "original"
         assert not (tmp_path / "out.json.tmp").exists()
+
+    def test_fsyncs_temporary_file_before_replacement(self, tmp_path, monkeypatch):
+        from tools import common
+        from tools.common import atomic_write_text
+
+        target = tmp_path / "out.json"
+        fsynced = []
+
+        def record_fsync(fd):
+            fsynced.append(fd)
+
+        monkeypatch.setattr(common.os, "fsync", record_fsync)
+        assert atomic_write_text(target, "content") is True
+
+        assert len(fsynced) == 1
+        assert target.read_text() == "content"
 
     def test_warns_on_oserror(self, tmp_path, monkeypatch, capsys):
         from tools import common

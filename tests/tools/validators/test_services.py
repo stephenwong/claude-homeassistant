@@ -2,28 +2,28 @@
 
 from unittest.mock import MagicMock, patch
 
-import yaml
-
+from tests.helpers import (
+    assert_diagnostic,
+    assert_no_diagnostic,
+    mock_json_client,
+    write_yaml,
+)
 from tools.common import HARequestError
-from tools.validators.services import ServiceValidator
+from tools.validators.services import (
+    ServiceValidator,
+    _device_action_service,
+    _normalize_service_catalog,
+)
 
-
-def _write_automation(config_dir, data):
-    f = config_dir / "automations.yaml"
-    with open(f, "w") as fh:
-        yaml.dump(data, fh)
+_write_automation = write_yaml
 
 
 def _mock_services(entries: list[dict]) -> MagicMock:
-    client = MagicMock()
-    client.get_json.return_value = entries
-    return client
+    return mock_json_client(entries)
 
 
 def _mock_offline() -> MagicMock:
-    client = MagicMock()
-    client.get_json.side_effect = HARequestError("offline")
-    return client
+    return mock_json_client(side_effect=HARequestError("offline"))
 
 
 class TestFileDeps:
@@ -77,6 +77,45 @@ class TestM10aDeviceActions:
         assert found == []
 
 
+class TestDeviceActionService:
+    def test_valid_device_action_returns_synthetic_service(self):
+        assert (
+            _device_action_service(
+                {
+                    "device_id": "abc-123",
+                    "domain": "light",
+                    "type": "turn_on",
+                }
+            )
+            == "light.turn_on"
+        )
+
+    def test_device_conditions_and_triggers_are_not_services(self):
+        base = {
+            "device_id": "abc-123",
+            "domain": "light",
+            "type": "turn_on",
+        }
+        for key, value in (("condition", "device"), ("trigger", "device")):
+            step = {**base, key: value}
+            assert _device_action_service(step) is None
+
+    def test_missing_or_dynamic_device_action_fields_return_none(self):
+        assert (
+            _device_action_service({"device_id": "abc-123", "domain": "light"}) is None
+        )
+        assert (
+            _device_action_service(
+                {
+                    "device_id": "abc-123",
+                    "domain": "{{ domain }}",
+                    "type": "turn_on",
+                }
+            )
+            is None
+        )
+
+
 class TestM9DataPayloadNotExtracted:
     """M9: `action:` keys inside `data:` payloads are notification button labels,
     not service calls — must not be extracted."""
@@ -101,6 +140,34 @@ class TestM9DataPayloadNotExtracted:
         assert "DISMISS" not in services
 
 
+class TestServiceCatalogNormalization:
+    def test_normalizes_catalog_entries_to_domain_service_set(self):
+        catalog = [
+            {"domain": "light", "services": {"turn_on": {}, "turn_off": {}}},
+            {"domain": "notify", "services": {"mobile": {}}},
+            {"domain": "light", "services": {"turn_on": {}}},
+        ]
+        assert _normalize_service_catalog(catalog) == {
+            "light.turn_on",
+            "light.turn_off",
+            "notify.mobile",
+        }
+
+    def test_ignores_malformed_catalog_entries(self):
+        assert (
+            _normalize_service_catalog(
+                [
+                    "not an entry",
+                    {"domain": "light", "services": ["turn_on"]},
+                    {"domain": None, "services": {"turn_on": {}}},
+                    {"domain": "", "services": {"turn_on": {}}},
+                    {"domain": "light", "services": {"": {}, None: {}}},
+                ]
+            )
+            == set()
+        )
+
+
 class TestServiceValidation:
     def test_valid_service_passes(self, config_dir):
         _write_automation(
@@ -122,7 +189,7 @@ class TestServiceValidation:
         ):
             v = ServiceValidator(str(config_dir))
             assert v.validate_all() is True
-            assert len(v.errors) == 0
+            assert_no_diagnostic(v, "errors")
 
     def test_unknown_service_warns(self, config_dir):
         _write_automation(
@@ -144,7 +211,7 @@ class TestServiceValidation:
         ):
             v = ServiceValidator(str(config_dir))
             assert v.validate_all() is True
-            assert any("light.turn_onn" in w for w in v.warnings)
+            assert_diagnostic(v, "warnings", "light.turn_onn")
 
     def test_duplicate_service_references_have_stable_sorted_diagnostics(
         self, config_dir
@@ -226,7 +293,7 @@ class TestServiceValidation:
         ):
             v = ServiceValidator(str(config_dir))
             assert v.validate_all() is True
-            assert len(v.errors) == 0
+            assert_no_diagnostic(v, "errors")
 
     def test_secrets_yml_skipped(self, config_dir):
         f = config_dir / "secrets.yaml"
@@ -260,7 +327,7 @@ class TestServiceValidation:
         ):
             v = ServiceValidator(str(config_dir))
             assert v.validate_all() is True
-            assert any("non-domain" in i.lower() for i in v.info)
+            assert_diagnostic(v, "info", "non-domain")
 
     def test_no_actions_found_passes(self, config_dir):
         _write_automation(
@@ -277,19 +344,18 @@ class TestServiceValidation:
             assert v.validate_all() is True
 
     def test_service_in_script_detected(self, config_dir):
-        f = config_dir / "scripts.yaml"
-        with open(f, "w") as fh:
-            yaml.dump(
-                {"my_script": {"sequence": [{"action": "light.turn_on", "data": {}}]}},
-                fh,
-            )
+        write_yaml(
+            config_dir,
+            {"my_script": {"sequence": [{"action": "light.turn_on", "data": {}}]}},
+            "scripts.yaml",
+        )
         mock_client = _mock_services([{"domain": "light", "services": {"turn_on": {}}}])
         with patch(
             "tools.validators.services.HAClient.from_env", return_value=mock_client
         ):
             v = ServiceValidator(str(config_dir))
             assert v.validate_all() is True
-            assert len(v.warnings) == 0
+            assert_no_diagnostic(v, "warnings")
 
     def test_broken_yaml_fails(self, config_dir):
         (config_dir / "automations.yaml").write_text("{{{ not valid yaml\n")
@@ -299,7 +365,7 @@ class TestServiceValidation:
         ):
             v = ServiceValidator(str(config_dir))
             assert v.validate_all() is False
-            assert any("syntax error" in e.lower() for e in v.errors)
+            assert_diagnostic(v, "errors", "syntax error")
 
 
 class TestOfflineDegradation:
@@ -323,7 +389,7 @@ class TestOfflineDegradation:
         ):
             v = ServiceValidator(str(config_dir))
             assert v.validate_all() is True
-            assert any("skipped" in i.lower() for i in v.info)
+            assert_diagnostic(v, "info", "skipped")
 
     def test_offline_bad_format_fails(self, config_dir):
         _write_automation(
@@ -367,8 +433,8 @@ class TestOfflineDegradation:
         ):
             v = ServiceValidator(str(config_dir))
             assert v.validate_all() is True
-            assert any("skipped" in i.lower() for i in v.info)
-            assert len(v.errors) == 0
+            assert_diagnostic(v, "info", "skipped")
+            assert_no_diagnostic(v, "errors")
 
     def test_offline_from_env_fails(self, config_dir):
         _write_automation(
@@ -390,14 +456,14 @@ class TestOfflineDegradation:
         ):
             v = ServiceValidator(str(config_dir))
             assert v.validate_all() is True
-            assert any("skipped" in i.lower() for i in v.info)
+            assert_diagnostic(v, "info", "skipped")
 
 
 class TestEdgeCases:
     def test_nonexistent_dir_errors(self):
         v = ServiceValidator("/nonexistent")
         assert v.validate_all() is False
-        assert any("does not exist" in e for e in v.errors)
+        assert_diagnostic(v, "errors", "does not exist")
 
     def test_mixed_known_and_unknown(self, config_dir):
         _write_automation(
@@ -423,9 +489,9 @@ class TestEdgeCases:
         ):
             v = ServiceValidator(str(config_dir))
             assert v.validate_all() is True
-            assert any("light.nonexistent" in w for w in v.warnings)
-            assert not any("light.turn_on" in e for e in v.errors)
-            assert not any("light.turn_off" in e for e in v.errors)
+            assert_diagnostic(v, "warnings", "light.nonexistent")
+            assert_no_diagnostic(v, "errors", "light.turn_on")
+            assert_no_diagnostic(v, "errors", "light.turn_off")
 
 
 class TestL45NetworkGate:
@@ -452,7 +518,7 @@ class TestL45NetworkGate:
         v = ServiceValidator(str(config_dir))
         assert v.validate_all() is True
         # No "skipped" message means no network call was attempted
-        assert not any("skipped" in i.lower() for i in v.info)
+        assert_no_diagnostic(v, "info", "skipped")
 
 
 class TestMain:
@@ -531,4 +597,4 @@ class TestOfflineOSError:
         ):
             v = ServiceValidator(str(config_dir))
             assert v.validate_all() is True
-            assert any("skipped" in i.lower() for i in v.info)
+            assert_diagnostic(v, "info", "skipped")

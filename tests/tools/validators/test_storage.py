@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from tools.validators._storage import load_storage_registry
+from tools.validators._storage import _load_storage_data, load_storage_registry
 
 
 @pytest.fixture
@@ -140,3 +140,29 @@ class TestLoadStorageRegistry:
         )
         with pytest.raises(ValueError, match="duplicate"):
             load_storage_registry(path, list_key="entities", key_field="entity_id")
+
+
+class TestLoadStorageData:
+    @pytest.mark.parametrize(
+        ("data", "expected"),
+        [
+            ({"items": []}, {"items": []}),
+            (
+                [{"state": {"entity_id": "sensor.one"}}],
+                [{"state": {"entity_id": "sensor.one"}}],
+            ),
+        ],
+    )
+    def test_returns_storage_data_mapping_or_list(self, tmp_path, data, expected):
+        path = tmp_path / "storage"
+        path.write_text(json.dumps({"data": data}))
+
+        assert _load_storage_data(path) == expected
+
+    @pytest.mark.parametrize("data", [None, "not a mapping or list", 123])
+    def test_rejects_non_collection_data(self, tmp_path, data):
+        path = tmp_path / "storage"
+        path.write_text(json.dumps({"data": data}))
+
+        with pytest.raises(ValueError, match="'data' must be an object or list"):
+            _load_storage_data(path)

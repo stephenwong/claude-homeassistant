@@ -7,21 +7,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.helpers import assert_diagnostic, assert_no_diagnostic, mock_json_client
 from tools.common import HARequestError
 from tools.validators.stale_sensors import StaleSensorValidator
 
 
 @pytest.fixture(autouse=True)
-def patch_load_env():
-    """Prevent loading real .env files during test runs."""
-    with patch("tools.validators.stale_sensors.load_env_file") as mock_load:
-        yield mock_load
-
-
-@pytest.fixture(autouse=True)
 def setup_env():
     """Set up default environment variables for testing."""
-    # Ensure staleness-related env vars are isolated from the real environment
     env = {
         "HA_URL": "http://localhost:8123",
         "HA_TOKEN": "mock_token",
@@ -39,8 +32,7 @@ def setup_env():
 @pytest.fixture
 def config_dir(tmp_path):
     """Temporary configuration directory containing mock storage registry."""
-    storage_dir = tmp_path / ".storage"
-    storage_dir.mkdir()
+    (tmp_path / ".storage").mkdir()
     return tmp_path
 
 
@@ -59,9 +51,7 @@ def _write_entity_registry(config_dir, entities_list):
 
 def _mock_states(states_list) -> MagicMock:
     """Helper to mock HA API client response."""
-    client = MagicMock()
-    client.get_json.return_value = states_list
-    return client
+    return mock_json_client(states_list)
 
 
 def _run_stale_validation(
@@ -83,12 +73,7 @@ def _run_stale_validation(
 
 def _mock_offline() -> MagicMock:
     """Helper to mock unreachable HA API."""
-    client = MagicMock()
-    # Mocking HAClient instantiation behavior
-    # When HAClient is constructed, it might raise HARequestError or during get_json.
-    # To mock both, we can make the constructor raise it or get_json raise it.
-    client.get_json.side_effect = HARequestError("API Connection Timeout")
-    return client
+    return mock_json_client(side_effect=HARequestError("API Connection Timeout"))
 
 
 def test_file_deps_empty():
@@ -165,10 +150,7 @@ def test_api_offline_degrades_gracefully(config_dir):
     with patch("tools.validators.stale_sensors.HAClient", return_value=mock_client):
         v = StaleSensorValidator(str(config_dir))
         assert v.validate_all() is True
-        assert any(
-            "skipped" in info or "offline" in info or "unreachable" in info
-            for info in v.info
-        )
+        assert_diagnostic(v, "info", "skipped")
 
 
 def test_live_fetch_closes_client_on_success(config_dir):
@@ -221,7 +203,7 @@ def test_oserror_during_states_fetch_degrades(config_dir):
     ):
         v = StaleSensorValidator(str(config_dir))
         assert v.validate_all() is True
-        assert any("skipped" in i.lower() or "unreachable" in i.lower() for i in v.info)
+        assert_diagnostic(v, "info", "skipped")
 
 
 def test_stale_sensor_detected(config_dir):
@@ -247,9 +229,8 @@ def test_stale_sensor_detected(config_dir):
         datetime(2026, 6, 25, 21, 0, 0, tzinfo=UTC),
     )
     assert result is True
-    assert any(
-        "sensor.test_temp" in w and "stale" in w.lower() for w in validator.warnings
-    )
+    assert_diagnostic(validator, "warnings", "sensor.test_temp")
+    assert_diagnostic(validator, "warnings", "stale")
 
 
 def test_healthy_sensor_ignored(config_dir):
@@ -275,7 +256,7 @@ def test_healthy_sensor_ignored(config_dir):
         datetime(2026, 6, 25, 21, 0, 0, tzinfo=UTC),
     )
     assert result is True
-    assert len(validator.warnings) == 0
+    assert_no_diagnostic(validator, "warnings")
 
 
 def test_unavailable_state_flagged_immediately(config_dir):
@@ -302,8 +283,11 @@ def test_unavailable_state_flagged_immediately(config_dir):
         datetime(2026, 6, 25, 21, 0, 0, tzinfo=UTC),
     )
     v = validator
+    assert_diagnostic(v, "warnings", "sensor.dead_battery")
     assert any(
-        "unavailable" in w or "unknown" in w or "not reporting" in w for w in v.warnings
+        text in warning.lower()
+        for text in ("unavailable", "unknown", "not reporting")
+        for warning in v.warnings
     ), "unavailable state must surface immediately"
     assert "sensor.dead_battery" in v.stale_entities
 
@@ -363,7 +347,7 @@ def test_disabled_or_hidden_sensor_ignored(config_dir):
             return_value=datetime(2026, 6, 25, 21, 0, 0, tzinfo=UTC)
         )
         assert v.validate_all() is True
-        assert len(v.warnings) == 0
+        assert_no_diagnostic(v, "warnings")
 
 
 def test_virtual_platform_ignored(config_dir):
@@ -407,7 +391,7 @@ def test_virtual_platform_ignored(config_dir):
             return_value=datetime(2026, 6, 25, 21, 0, 0, tzinfo=UTC)
         )
         assert v.validate_all() is True
-        assert len(v.warnings) == 0
+        assert_no_diagnostic(v, "warnings")
 
 
 def test_restored_entity_flagged(config_dir):
@@ -433,10 +417,8 @@ def test_restored_entity_flagged(config_dir):
         datetime(2026, 6, 25, 21, 0, 0, tzinfo=UTC),
     )
     assert result is True
-    assert any(
-        "sensor.restored_temp" in w and "restored" in w.lower()
-        for w in validator.warnings
-    )
+    assert_diagnostic(validator, "warnings", "sensor.restored_temp")
+    assert_diagnostic(validator, "warnings", "restored")
 
 
 def test_custom_heartbeat_timestamp(config_dir):
@@ -462,9 +444,8 @@ def test_custom_heartbeat_timestamp(config_dir):
         datetime(2026, 6, 25, 21, 0, 0, tzinfo=UTC),
     )
     assert result is True
-    assert any(
-        "sensor.z2m_temp" in w and "stale" in w.lower() for w in validator.warnings
-    )
+    assert_diagnostic(validator, "warnings", "sensor.z2m_temp")
+    assert_diagnostic(validator, "warnings", "stale")
 
 
 def test_numeric_heartbeat_timestamp(config_dir):
@@ -490,9 +471,8 @@ def test_numeric_heartbeat_timestamp(config_dir):
         datetime.fromtimestamp(1782421200, tz=UTC),
     )
     assert result is True
-    assert any(
-        "sensor.numeric_temp" in w and "stale" in w.lower() for w in validator.warnings
-    )
+    assert_diagnostic(validator, "warnings", "sensor.numeric_temp")
+    assert_diagnostic(validator, "warnings", "stale")
 
 
 @pytest.mark.parametrize("ci_value", ["true", "TRUE", "1"])
@@ -505,7 +485,7 @@ def test_ci_environment_skips_validation(config_dir, ci_value):
     ):
         v = StaleSensorValidator(str(config_dir))
         assert v.validate_all() is True
-        assert any("CI environment" in info for info in v.info)
+        assert_diagnostic(v, "info", "CI environment")
 
 
 def test_registry_absent_falls_back_gracefully(config_dir):
@@ -528,10 +508,9 @@ def test_registry_absent_falls_back_gracefully(config_dir):
             return_value=datetime(2026, 6, 25, 21, 0, 0, tzinfo=UTC)
         )
         assert v.validate_all() is True
-        assert any(
-            "sensor.unknown_temp" in w and "stale" in w.lower() for w in v.warnings
-        )
-        assert any("registry" in i.lower() for i in v.info)
+    assert_diagnostic(v, "warnings", "sensor.unknown_temp")
+    assert_diagnostic(v, "warnings", "stale")
+    assert_diagnostic(v, "info", "registry")
 
 
 def test_retry_on_registry_read_failure(config_dir):
@@ -582,9 +561,29 @@ def test_retry_on_registry_read_failure(config_dir):
             return_value=datetime(2026, 6, 25, 21, 0, 0, tzinfo=UTC)
         )
         assert v.validate_all() is True
-        assert any("sensor.test_temp" in w for w in v.warnings)
+        assert_diagnostic(v, "warnings", "sensor.test_temp")
         assert call_count == 2
         mock_sleep.assert_called_once_with(0.1)
+
+
+def test_second_registry_decode_failure_warns_without_extra_retry(config_dir):
+    """A second JSON decode failure warns after exactly one bounded retry."""
+    _write_entity_registry(config_dir, [])
+    v = StaleSensorValidator(str(config_dir))
+    decode_error = json.JSONDecodeError("still invalid", "", 0)
+
+    with (
+        patch(
+            "tools.validators.stale_sensors.load_storage_registry",
+            side_effect=decode_error,
+        ) as load_registry,
+        patch("time.sleep") as mock_sleep,
+    ):
+        assert v._load_registry() is None
+
+    assert load_registry.call_count == 2
+    mock_sleep.assert_called_once_with(0.1)
+    assert_diagnostic(v, "warnings", "Failed to read entity registry: still invalid")
 
 
 @pytest.mark.parametrize(
@@ -614,9 +613,7 @@ def test_permanent_registry_failures_are_not_retried(config_dir, error):
 
     load_registry.assert_called_once()
     mock_sleep.assert_not_called()
-    assert any(
-        "Falling back to state-only analysis" in warning for warning in v.warnings
-    )
+    assert_diagnostic(v, "warnings", "Falling back to state-only analysis")
 
 
 def test_live_api_failure_does_not_load_registry(config_dir):
@@ -704,7 +701,7 @@ def test_fail_on_stale_mode_returns_false_when_stale(config_dir):
         fail_on_stale=True,
     )
     assert result is False
-    assert any("failed" in e.lower() for e in validator.errors)
+    assert_diagnostic(validator, "errors", "failed")
 
 
 def test_fail_on_stale_off_keeps_diagnostic(config_dir):
@@ -731,7 +728,7 @@ def test_fail_on_stale_off_keeps_diagnostic(config_dir):
         fail_on_stale=False,
     )
     assert result is True
-    assert any("sensor.test_temp" in w for w in validator.warnings)
+    assert_diagnostic(validator, "warnings", "sensor.test_temp")
 
 
 def test_fail_on_stale_no_stale_returns_true(config_dir):
@@ -758,7 +755,7 @@ def test_fail_on_stale_no_stale_returns_true(config_dir):
         fail_on_stale=True,
     )
     assert result is True
-    assert len(validator.warnings) == 0
+    assert_no_diagnostic(validator, "warnings")
 
 
 def test_fail_on_stale_env_var_picked_up_after_load_env(config_dir, monkeypatch):
@@ -794,7 +791,7 @@ def test_fail_on_stale_env_var_picked_up_after_load_env(config_dir, monkeypatch)
         )
         assert v.fail_on_stale is False
         assert v.validate_all() is False
-        assert any("failed" in e.lower() for e in v.errors)
+        assert_diagnostic(v, "errors", "failed")
 
 
 def test_repeated_validation_resets_run_state(config_dir, monkeypatch):
@@ -844,8 +841,8 @@ def test_repeated_validation_resets_run_state(config_dir, monkeypatch):
         assert validator.validate_all() is True
 
     assert validator.stale_entities == []
-    assert validator.errors == []
-    assert validator.warnings == []
+    assert_no_diagnostic(validator, "errors")
+    assert_no_diagnostic(validator, "warnings")
 
 
 def test_naive_datetime_handling():
@@ -889,13 +886,10 @@ def test_malformed_registry_json(config_dir):
             return_value=datetime(2026, 6, 25, 21, 0, 0, tzinfo=UTC)
         )
         assert v.validate_all() is True
-        # Verify fallback warning was logged (first warning is the
-        # registry load failure)
-        assert any(
-            "fallback" in w.lower() or "failed to read" in w.lower() for w in v.warnings
-        )
+        # Verify the registry-load warning was logged.
+        assert_diagnostic(v, "warnings", "Falling back")
         # Verify stale sensor detection still worked
-        assert any("sensor.test_temp" in w for w in v.warnings)
+        assert_diagnostic(v, "warnings", "sensor.test_temp")
 
 
 def test_main_dispatch_with_ci_short_circuit(monkeypatch):
@@ -926,14 +920,14 @@ def test_parse_timestamp_malformed_string_appends_warning():
     """A non-numeric, non-ISO string appends a warning and returns None."""
     v = StaleSensorValidator()
     assert v.parse_timestamp("not a date") is None
-    assert any("Failed to parse" in w for w in v.warnings)
+    assert_diagnostic(v, "warnings", "Failed to parse")
 
 
 def test_parse_timestamp_nonfinite_string_appends_warning():
     """A non-finite numeric string is treated as malformed input."""
     v = StaleSensorValidator()
     assert v.parse_timestamp("inf") is None
-    assert any("Failed to parse" in w for w in v.warnings)
+    assert_diagnostic(v, "warnings", "Failed to parse")
 
 
 def test_zero_epoch_is_a_valid_baseline_timestamp():
@@ -996,7 +990,7 @@ def test_missing_ha_url_token_skips_gracefully(config_dir):
     with patch.dict("os.environ", {}, clear=True):
         v = StaleSensorValidator(str(config_dir))
         assert v.validate_all() is True
-        assert any("not set" in i for i in v.info)
+        assert_diagnostic(v, "info", "not set")
 
 
 def test_invalid_ha_stale_timeout_warns(config_dir):
@@ -1008,7 +1002,7 @@ def test_invalid_ha_stale_timeout_warns(config_dir):
         with patch.dict("os.environ", {"HA_STALE_TIMEOUT": "notanint"}):
             v = StaleSensorValidator(str(config_dir))
             v.validate_all()
-            assert any("must be an integer" in i for i in v.info)
+            assert_diagnostic(v, "info", "must be an integer")
 
 
 # API shape-guard continue paths
@@ -1021,7 +1015,7 @@ def test_states_not_list_is_skipped(config_dir):
     with patch("tools.validators.stale_sensors.HAClient", return_value=client):
         v = StaleSensorValidator(str(config_dir))
         assert v.validate_all() is True
-        assert any("invalid API states format" in i for i in v.info)
+        assert_diagnostic(v, "info", "invalid API states format")
 
 
 def test_non_dict_state_entry_skipped(config_dir):
@@ -1104,7 +1098,8 @@ def test_binary_sensor_without_heartbeat_skipped(config_dir):
 
 def test_fail_on_stale_ignores_non_staleness_warnings(config_dir):
     """A registry-read failure (warning) with fresh sensors must NOT trip fail mode."""
-    (config_dir / ".storage" / "core.entity_registry").write_text("{ not valid json")
+    registry_file = config_dir / ".storage" / "core.entity_registry"
+    registry_file.write_text("{ not valid json")
     fresh = [
         {
             "entity_id": "sensor.ok",
@@ -1126,8 +1121,8 @@ def test_fail_on_stale_ignores_non_staleness_warnings(config_dir):
             str(config_dir), fail_on_stale=True, threshold_hours=24
         )
         assert v.validate_all() is True
-    assert len(v.warnings) >= 1
-    assert len(v.errors) == 0
+    assert v.warnings
+    assert_no_diagnostic(v, "errors")
 
 
 def test_fail_on_stale_trips_on_real_stale_sensor(config_dir):
@@ -1159,7 +1154,7 @@ def test_fail_on_stale_trips_on_real_stale_sensor(config_dir):
             str(config_dir), fail_on_stale=True, threshold_hours=24
         )
         assert v.validate_all() is False
-    assert any("Stale sensor check failed" in e for e in v.errors)
+    assert_diagnostic(v, "errors", "Stale sensor check failed")
 
 
 # Restored entities, timestamp selection, and threshold boundary behavior
@@ -1194,7 +1189,7 @@ def test_ignore_restored_true_skips_restored_entities(config_dir):
             return_value=datetime(2026, 6, 25, 21, 0, 0, tzinfo=UTC)
         )
         assert v.validate_all() is True
-        assert len(v.warnings) == 0
+        assert_no_diagnostic(v, "warnings")
 
 
 def test_last_changed_and_last_updated_uses_older_timestamp(config_dir):
@@ -1227,7 +1222,8 @@ def test_last_changed_and_last_updated_uses_older_timestamp(config_dir):
             return_value=datetime(2026, 6, 25, 21, 0, 0, tzinfo=UTC)
         )
         assert v.validate_all() is True
-        assert any("sensor.test_temp" in w and "stale" in w.lower() for w in v.warnings)
+        assert_diagnostic(v, "warnings", "sensor.test_temp")
+        assert_diagnostic(v, "warnings", "stale")
 
 
 def test_strict_boundary_not_flagged(config_dir):
@@ -1259,7 +1255,7 @@ def test_strict_boundary_not_flagged(config_dir):
             return_value=datetime(2026, 6, 25, 21, 0, 0, tzinfo=UTC)
         )
         assert v.validate_all() is True
-        assert len(v.warnings) == 0
+        assert_no_diagnostic(v, "warnings")
 
 
 def test_stale_validator_missing_config_dir_uses_base_validation():

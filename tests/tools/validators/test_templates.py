@@ -2,16 +2,13 @@
 
 from unittest.mock import MagicMock, patch
 
-import yaml
+import pytest
 
+from tests.helpers import assert_diagnostic, assert_no_diagnostic, write_yaml
 from tools.common import HARequestError
 from tools.validators.templates import TemplateValidator
 
-
-def _write_automation(config_dir, data):
-    f = config_dir / "automations.yaml"
-    with open(f, "w") as fh:
-        yaml.dump(data, fh)
+_write_automation = write_yaml
 
 
 def _mock_render(success: bool = True, message: str = "") -> MagicMock:
@@ -30,7 +27,7 @@ def _mock_render(success: bool = True, message: str = "") -> MagicMock:
 
 def _run_template_validation(config_dir, data, *, success=True, message=""):
     """Write one automation and run template validation with a mocked client."""
-    _write_automation(config_dir, data)
+    write_yaml(config_dir, data)
     client = _mock_render(success=success, message=message)
     with patch("tools.validators.templates.HAClient.from_env", return_value=client):
         validator = TemplateValidator(str(config_dir))
@@ -60,7 +57,7 @@ class TestTemplateValidation:
             ],
         )
         assert result is True
-        assert len(validator.errors) == 0
+        assert_no_diagnostic(validator, "errors")
 
     def test_syntax_error_fails(self, config_dir):
         validator, result = _run_template_validation(
@@ -79,7 +76,7 @@ class TestTemplateValidation:
             message="syntax error: unexpected end of template",
         )
         assert result is False
-        assert any("syntax error" in e.lower() for e in validator.errors)
+        assert_diagnostic(validator, "errors", "syntax error")
 
     def test_runtime_undefined_warns(self, config_dir):
         validator, result = _run_template_validation(
@@ -101,8 +98,8 @@ class TestTemplateValidation:
             message="'trigger' is undefined",
         )
         assert result is True
-        assert any("trigger" in w for w in validator.warnings)
-        assert len(validator.errors) == 0
+        assert_diagnostic(validator, "warnings", "trigger")
+        assert_no_diagnostic(validator, "errors")
 
     def test_unknown_filter_is_error(self, config_dir):
         validator, result = _run_template_validation(
@@ -124,7 +121,7 @@ class TestTemplateValidation:
             message="No filter named 'hash'",
         )
         assert result is False
-        assert any("no filter named" in e.lower() for e in validator.errors)
+        assert_diagnostic(validator, "errors", "no filter named")
 
     def test_extracts_from_value_template(self, config_dir):
         validator, result = _run_template_validation(
@@ -142,7 +139,7 @@ class TestTemplateValidation:
             ],
         )
         assert result is True
-        assert not validator.errors
+        assert_no_diagnostic(validator, "errors")
 
     def test_skips_non_template_strings(self, config_dir):
         validator, result = _run_template_validation(
@@ -159,8 +156,8 @@ class TestTemplateValidation:
             ],
         )
         assert result is True
-        assert len(validator.info) == 0  # no "skipped" — we connected to HA
-        assert len(validator.errors) == 0
+        assert_no_diagnostic(validator, "info")
+        assert_no_diagnostic(validator, "errors")
 
     def test_multiple_templates_all_valid(self, config_dir):
         validator, result = _run_template_validation(
@@ -194,7 +191,7 @@ class TestTemplateValidation:
             ],
         )
         assert result is True
-        assert not validator.errors
+        assert_no_diagnostic(validator, "errors")
 
 
 class TestRenderErrors:
@@ -221,8 +218,8 @@ class TestRenderErrors:
         with patch("tools.validators.templates.HAClient.from_env", return_value=client):
             v = TemplateValidator(str(config_dir))
             assert v.validate_all() is True
-            assert len(v.errors) == 0
-            assert any("warning" in w.lower() for w in v.warnings)
+            assert_no_diagnostic(v, "errors")
+            assert_diagnostic(v, "warnings", "warning")
 
     def test_post_raises_request_error(self, config_dir):
         """When from_env succeeds but post() raises HARequestError, warn."""
@@ -244,7 +241,7 @@ class TestRenderErrors:
         with patch("tools.validators.templates.HAClient.from_env", return_value=client):
             v = TemplateValidator(str(config_dir))
             assert v.validate_all() is True
-            assert any("connection refused" in w for w in v.warnings)
+            assert_diagnostic(v, "warnings", "connection refused")
 
     def test_non_json_error_body_handled(self, config_dir):
         """When HA returns 400 with non-JSON body, fall back to resp.text."""
@@ -270,8 +267,8 @@ class TestRenderErrors:
         with patch("tools.validators.templates.HAClient.from_env", return_value=client):
             v = TemplateValidator(str(config_dir))
             assert v.validate_all() is True
-            assert len(v.errors) == 0
-            assert any("warning" in w.lower() for w in v.warnings)
+            assert_no_diagnostic(v, "errors")
+            assert_diagnostic(v, "warnings", "warning")
 
 
 class TestOfflineDegradation:
@@ -298,7 +295,7 @@ class TestOfflineDegradation:
         ):
             v = TemplateValidator(str(config_dir))
             assert v.validate_all() is True
-            assert any("skipped" in i.lower() for i in v.info)
+            assert_diagnostic(v, "info", "skipped")
 
     def test_offline_balanced_template_passes(self, config_dir):
         _write_automation(
@@ -323,8 +320,8 @@ class TestOfflineDegradation:
         ):
             v = TemplateValidator(str(config_dir))
             assert v.validate_all() is True
-            assert len(v.errors) == 0
-            assert any("skipped" in i.lower() for i in v.info)
+            assert_no_diagnostic(v, "errors")
+            assert_diagnostic(v, "info", "skipped")
 
     def test_offline_unbalanced_brace_errors(self, config_dir):
         """A string with balanced {{ }} pairs PLUS extra unmatched }} is
@@ -351,7 +348,7 @@ class TestOfflineDegradation:
         ):
             v = TemplateValidator(str(config_dir))
             assert v.validate_all() is False
-            assert any("unbalanced" in e.lower() for e in v.errors)
+            assert_diagnostic(v, "errors", "unbalanced")
 
     def test_unmatched_opening_delimiter_is_checked(self, config_dir):
         found = []
@@ -363,7 +360,7 @@ class TestEdgeCases:
     def test_nonexistent_dir_errors(self):
         v = TemplateValidator("/nonexistent")
         assert v.validate_all() is False
-        assert any("does not exist" in e for e in v.errors)
+        assert_diagnostic(v, "errors", "does not exist")
 
     def test_no_templates_passes(self, config_dir):
         _write_automation(
@@ -383,7 +380,7 @@ class TestEdgeCases:
         with patch("tools.validators.templates.HAClient.from_env", return_value=client):
             v = TemplateValidator(str(config_dir))
             assert v.validate_all() is False
-            assert any("syntax error" in e.lower() for e in v.errors)
+            assert_diagnostic(v, "errors", "syntax error")
 
     def test_secrets_yaml_skipped(self, config_dir):
         (config_dir / "secrets.yaml").write_text(
@@ -418,7 +415,7 @@ class TestEdgeCases:
         with patch("tools.validators.templates.HAClient.from_env", return_value=client):
             v = TemplateValidator(str(config_dir))
             assert v.validate_all() is False  # syntax error = fail
-            assert any("nonexistent" in e.lower() for e in v.errors)
+            assert_diagnostic(v, "errors", "nonexistent")
 
     def test_control_flow_template_detected(self, config_dir):
         _write_automation(
@@ -474,7 +471,7 @@ class TestEmptyRenderErrorBody:
         with patch("tools.validators.templates.HAClient.from_env", return_value=client):
             v = TemplateValidator(str(config_dir))
             assert v.validate_all() is True
-            assert len(v.errors) == 0
+            assert_no_diagnostic(v, "errors")
 
 
 class TestClientCreationOSError:
@@ -504,7 +501,7 @@ class TestClientCreationOSError:
         ):
             v = TemplateValidator(str(config_dir))
             assert v.validate_all() is True
-            assert any("skipped" in i.lower() for i in v.info)
+            assert_diagnostic(v, "info", "skipped")
 
 
 class TestMain:
@@ -538,6 +535,21 @@ class TestMain:
 
 class TestIsJinjaTemplate:
     """Tests for the shared template-detection helper."""
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("{{ bad", (True, False)),
+            ("{{", (False, False)),
+            ("{{ foo %}", (True, False)),
+            ("}} {{", (False, True)),
+            ("{{ a }} }} {{ b }}", (True, False)),
+        ],
+    )
+    def test_malformed_delimiter_state_is_preserved(self, value, expected):
+        from tools.validators._templates import template_delimiter_state
+
+        assert template_delimiter_state(value) == expected
 
     def test_plain_string_not_template(self):
         from tools.validators._templates import is_jinja_template

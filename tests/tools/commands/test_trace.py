@@ -57,19 +57,27 @@ def make_args(**overrides):
 
 
 @pytest.fixture
-def mock_client():
+def mock_clients():
     with (
         patch("tools.commands.trace.HAWSClient.from_env") as mock_from_env,
         patch("tools.commands.trace.HAClient.from_env") as mock_rest_from_env,
     ):
-        client = MagicMock()
-        rest_client = MagicMock()
-        rest_client.__enter__.return_value = rest_client
-        rest_client.get_json.return_value = {"attributes": {}}
-        mock_from_env.return_value = client
-        mock_rest_from_env.return_value = rest_client
-        client.rest_client = rest_client
-        yield client
+        mock_ws = MagicMock()
+        mock_rest = MagicMock()
+        mock_rest.__enter__.return_value = mock_rest
+        mock_rest.get_json.return_value = {"attributes": {}}
+        mock_from_env.return_value = mock_ws
+        mock_rest_from_env.return_value = mock_rest
+        mock_ws.command.return_value = []
+        mock_ws.rest_client = mock_rest
+        yield mock_rest, mock_ws
+
+
+@pytest.fixture
+def mock_client(mock_clients):
+    """Expose the WebSocket client for command-level tests."""
+    _, mock_ws = mock_clients
+    return mock_ws
 
 
 def _configure_single_trace(mock_client, trace, item_id="test"):
@@ -92,6 +100,57 @@ def _iter_changed_variables(data):
             changed_variables = entry.get("changed_variables")
             if isinstance(changed_variables, dict):
                 yield changed_variables
+
+
+def _mock_trace_entry(
+    *,
+    item_id: str = "baz_qux",
+    run_id: str = "run456",
+    timestamp: dict | None = None,
+) -> dict:
+    """Build a trace/list entry matching the real HA response shape."""
+    return {
+        "item_id": item_id,
+        "run_id": run_id,
+        "state": "stopped",
+        "last_step": "action/0/choose/0/sequence/0",
+        "trigger": "state of binary_sensor.test",
+        "timestamp": timestamp
+        or {
+            "start": "2026-01-01T00:00:00+00:00",
+            "finish": "2026-01-01T00:00:01+00:00",
+        },
+        "domain": "automation",
+        "script_execution": "finished",
+    }
+
+
+def _make_ws_command_side_effect(
+    traces: list[dict] | None = None,
+    trace_detail: dict | None = None,
+):
+    """Build WebSocket responses for trace/list and trace/get calls."""
+    all_traces = traces if traces is not None else [_mock_trace_entry()]
+    detail = trace_detail or {
+        "item_id": "baz_qux",
+        "run_id": "run456",
+        "trace": {"1": [{"path": "action/0", "result": "ok"}]},
+    }
+
+    def _side_effect(cmd: str, **kw):
+        if cmd == "trace/list":
+            if "item_id" in kw:
+                return [t for t in all_traces if t["item_id"] == kw["item_id"]]
+            return list(all_traces)
+        if cmd == "trace/get":
+            item_id = kw.get("item_id", "")
+            run_id = kw.get("run_id", "")
+            if not item_id or not run_id:
+                raise HARequestError("trace/get: missing item_id or run_id")
+            return dict(detail, item_id=item_id, run_id=run_id)
+        raise HARequestError(f"Unknown command: {cmd}")
+
+    return _side_effect
 
 
 SAMPLE_TRACES = [
@@ -291,7 +350,15 @@ class TestRun:
         mock_client.command.return_value = {"not": "a list"}
 
         assert trace_cmd.run(make_args()) == 1
-        assert "invalid trace/list response" in capsys.readouterr().err.lower()
+        assert capsys.readouterr().err == "\u274c Invalid trace/list response\n"
+
+    def test_trace_list_transport_error_preserves_cli_rendering(
+        self, mock_client, capsys
+    ):
+        mock_client.command.side_effect = HARequestError("trace/list failed")
+
+        assert trace_cmd.run(make_args()) == 1
+        assert capsys.readouterr().err == "\u274c trace/list failed\n"
 
     def test_malformed_trace_get_response_returns_error(self, mock_client, capsys):
         mock_client.command.side_effect = [
@@ -300,7 +367,19 @@ class TestRun:
         ]
         args = make_args(entity_id="automation.morning_routine")
         assert trace_cmd.run(args) == 1
-        assert "invalid trace/get response" in capsys.readouterr().err.lower()
+        assert capsys.readouterr().err == "\u274c Invalid trace/get response\n"
+
+    def test_trace_get_transport_error_preserves_cli_rendering(
+        self, mock_client, capsys
+    ):
+        mock_client.command.side_effect = [
+            [{"item_id": "morning_routine", "run_id": "r1"}],
+            HARequestError("trace/get failed"),
+        ]
+        args = make_args(entity_id="automation.morning_routine")
+
+        assert trace_cmd.run(args) == 1
+        assert capsys.readouterr().err == "\u274c trace/get failed\n"
 
     def test_summary_dedupes_by_item_id(self, mock_client, capsys):
         """Summary mode dedupes trace list to one entry per item_id + runs field."""
@@ -339,7 +418,7 @@ class TestRun:
     def test_verbose_keeps_all_entries(self, mock_client, capsys):
         """Verbose mode (no summary) still returns all entries."""
         mock_client.command.return_value = DUPLICATE_TRACES
-        args = make_args()
+        args = make_args(summary=False, no_summary=True)
         assert trace_cmd.run(args) == 0
         result = json.loads(capsys.readouterr().out)
         assert len(result) == 5
@@ -365,7 +444,12 @@ class TestRun:
             SAMPLE_TRACES,
             {"trace": {}, "item_id": "morning_routine"},
         ]
-        args = make_args(entity_id="automation.morning_routine", first=3)
+        args = make_args(
+            entity_id="automation.morning_routine",
+            first=3,
+            summary=False,
+            no_summary=True,
+        )
         assert trace_cmd.run(args) == 0
         captured = capsys.readouterr()
         assert "ignored" in captured.err
@@ -414,8 +498,10 @@ class TestRun:
         mock_client.command.return_value = SAMPLE_TRACES
         args = make_args(entity_id="automation.nonexistent")
         assert trace_cmd.run(args) == 1
-        err = capsys.readouterr().err
-        assert "No traces found" in err
+        assert (
+            capsys.readouterr().err
+            == "\u274c No traces found for automation.nonexistent\n"
+        )
 
     def test_single_entity_trace_get_failure(self, mock_client, capsys):
         """trace/get may fail if run_id expired between list and get."""
@@ -644,6 +730,46 @@ class TestSummaryModeSingle:
         ]
         args = make_args(entity_id="automation.test", summary=True, no_summary=False)
         assert trace_cmd.run(args) == 0
+
+    def test_prune_malformed_trace_preserves_entries_and_strips_attributes(self):
+        from tools.commands.trace import _prune_trace_entries
+
+        trace = {
+            "not_a_list": "unchanged",
+            "entries": [
+                "not_a_dict",
+                {"path": "without_cv"},
+                {
+                    "changed_variables": {
+                        "this": {
+                            "entity_id": "automation.test",
+                            "state": "on",
+                            "attributes": {"id": "test"},
+                        },
+                        "scalar": "unchanged",
+                        "none": None,
+                    }
+                },
+            ],
+        }
+
+        assert _prune_trace_entries(trace) == {
+            "not_a_list": "unchanged",
+            "entries": [
+                "not_a_dict",
+                {"path": "without_cv"},
+                {
+                    "changed_variables": {
+                        "this": {
+                            "entity_id": "automation.test",
+                            "state": "on",
+                        },
+                        "scalar": "unchanged",
+                        "none": None,
+                    }
+                },
+            ],
+        }
 
     def test_summary_timestamp_is_start_string(self, mock_client, capsys):
         mock_client.command.return_value = [

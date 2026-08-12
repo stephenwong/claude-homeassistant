@@ -6,7 +6,10 @@ import os
 import re
 import stat
 import sys
+import tempfile
+from collections.abc import Callable
 from pathlib import Path
+from typing import TextIO
 from urllib.parse import urlparse
 
 from tools.validators.base import (  # noqa: F401 — re-exported
@@ -16,6 +19,7 @@ from tools.validators.base import (  # noqa: F401 — re-exported
 )
 
 DEFAULT_HA_URL = "http://homeassistant.local:8123"
+DEFAULT_HA_TIMEOUT = 10
 
 _ENTITY_RE = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")
 DEFAULT_SUMMARY_MAX_CHARS = 8000
@@ -67,6 +71,21 @@ def get_env_int(name: str, default: int, *, minimum: int = 1) -> tuple[int, str 
         )
 
     return value, None
+
+
+def get_ha_config(*, warning_stream: TextIO | None = None) -> tuple[str, str, int]:
+    """Load shared Home Assistant URL, token, and request timeout settings.
+
+    Environment variables take precedence over values loaded from ``.env``.
+    When provided, *warning_stream* receives the existing timeout warning text.
+    """
+    load_env_file()
+    url = os.getenv("HA_URL", DEFAULT_HA_URL)
+    token = os.getenv("HA_TOKEN", "")
+    timeout, warning = get_env_int("HA_REQUEST_TIMEOUT", DEFAULT_HA_TIMEOUT)
+    if warning and warning_stream is not None:
+        print(f"⚠️  {warning}", file=warning_stream)
+    return url, token, timeout
 
 
 def validate_ha_url(ha_url: str) -> str | None:
@@ -229,6 +248,56 @@ def add_config_dir_arg(parser: argparse.ArgumentParser, *, help: str) -> None:
     )
 
 
+def _atomic_replace(
+    path: Path,
+    write_temp: Callable[[Path], None],
+    *,
+    validate: Callable[[Path], None] | None = None,
+    temp_path: Path | None = None,
+    temp_prefix: str = "tmp",
+    temp_suffix: str = "",
+    preserve_mode_before_write: bool = False,
+    suppress_cleanup_errors: bool = False,
+    cleanup_missing_ok: bool = False,
+) -> None:
+    """Write a sibling temporary file, optionally validate it, then replace *path*.
+
+    The callbacks deliberately own serialization and validation so their exception
+    types and return contracts remain with the caller. This helper owns only the
+    shared temporary-file, permission, replacement, and cleanup lifecycle.
+    """
+    tmp_path = temp_path
+    mode = None
+    try:
+        if preserve_mode_before_write and path.exists():
+            mode = stat.S_IMODE(path.stat().st_mode)
+        if tmp_path is None:
+            with tempfile.NamedTemporaryFile(
+                dir=path.parent,
+                prefix=temp_prefix,
+                suffix=temp_suffix,
+                delete=False,
+            ) as tmp:
+                tmp_path = Path(tmp.name)
+        write_temp(tmp_path)
+        if not preserve_mode_before_write and path.exists():
+            mode = stat.S_IMODE(path.stat().st_mode)
+        if mode is not None:
+            os.chmod(tmp_path, mode)
+        if validate is not None:
+            validate(tmp_path)
+        os.replace(tmp_path, path)
+    finally:
+        if tmp_path is not None and tmp_path.exists():
+            if suppress_cleanup_errors:
+                with contextlib.suppress(OSError):
+                    tmp_path.unlink()
+            elif cleanup_missing_ok:
+                tmp_path.unlink(missing_ok=True)
+            else:
+                tmp_path.unlink()
+
+
 def atomic_write_text(path: Path, content: str) -> bool:
     """Write *content* to *path* atomically via temp file + ``os.replace``.
 
@@ -240,23 +309,25 @@ def atomic_write_text(path: Path, content: str) -> bool:
     preserves the extension (e.g. ``foo.json`` → ``foo.json.tmp``).
     """
     tmp = path.with_suffix(path.suffix + ".tmp")
-    try:
-        mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else None
-        with open(tmp, "w", encoding="utf-8") as f:
+
+    def write_temp(temp_path: Path) -> None:
+        with open(temp_path, "w", encoding="utf-8") as f:
             f.write(content)
             f.flush()
             os.fsync(f.fileno())
-        if mode is not None:
-            os.chmod(tmp, mode)
-        os.replace(tmp, path)
+
+    try:
+        _atomic_replace(
+            path,
+            write_temp,
+            temp_path=tmp,
+            preserve_mode_before_write=True,
+            suppress_cleanup_errors=True,
+        )
         return True
     except OSError as e:
         print(f"WARN: failed to write {path}: {e}", file=sys.stderr)
         return False
-    finally:
-        if tmp.exists():
-            with contextlib.suppress(OSError):
-                tmp.unlink()
 
 
 class HARequestError(Exception):

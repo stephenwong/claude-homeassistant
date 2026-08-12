@@ -8,7 +8,10 @@ import argparse
 import json
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
+from typing import Literal
 
 from ruamel.yaml import YAML, YAMLError
 
@@ -22,6 +25,27 @@ from tools.ha.yaml_editor import YAMLEditor
 
 _SAFE_YAML = YAML(typ="safe")
 _ALLOWED_FILES = frozenset({"automations.yaml", "scripts.yaml"})
+
+
+class _ShapeKind(StrEnum):
+    """Loaded YAML shape, including the states that need a filename default."""
+
+    LIST = "list"
+    DICT = "dict"
+    EMPTY = "empty"
+    MISSING = "missing"
+    UNSUPPORTED = "unsupported"
+
+
+type _EditableShape = Literal[_ShapeKind.LIST, _ShapeKind.DICT]
+
+
+@dataclass(frozen=True, slots=True)
+class _FileShape:
+    """Source shape and the list/dict shape used by edit operations."""
+
+    kind: _ShapeKind
+    editable: _EditableShape | None
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -140,15 +164,15 @@ def run(args: argparse.Namespace) -> int:
         if args.show or not any([args.set, args.remove]):
             return _run_show(editor, args.alias)
 
-        file_type = _resolve_file_type(editor)
+        shape = _resolve_shape(editor)
 
         alias: str = args.alias  # type: ignore[assignment]
 
         if args.set:
-            return _run_set(editor, alias, args.set, quiet, file_type=file_type)
+            return _run_set(editor, alias, args.set, quiet, shape=shape)
 
         if args.remove:
-            return _run_remove(editor, alias, quiet, file_type=file_type)
+            return _run_remove(editor, alias, quiet, shape=shape)
 
         return 1  # pragma: no cover  # unreachable; satisfies type checker
 
@@ -160,53 +184,44 @@ def run(args: argparse.Namespace) -> int:
         return fail_stderr(f"could not parse {target_file}: {e}")
 
 
-def _detect_file_type(editor: YAMLEditor) -> str:
-    """Return 'list' or 'dict' describing the loaded data shape."""
+def _resolve_shape(editor: YAMLEditor) -> _FileShape:
+    """Resolve a file's source and effective edit shape in one public-load path."""
+    default_shape: _EditableShape = (
+        _ShapeKind.DICT if editor.path.name == "scripts.yaml" else _ShapeKind.LIST
+    )
+    if not editor.path.exists():
+        return _FileShape(_ShapeKind.MISSING, default_shape)
+
     data = editor.load()
     if isinstance(data, list):
-        return "list"
+        return _FileShape(_ShapeKind.LIST, _ShapeKind.LIST)
     if isinstance(data, dict):
-        return "dict"
+        return _FileShape(_ShapeKind.DICT, _ShapeKind.DICT)
     if data is None:
-        return "empty"
-    return "unknown"
-
-
-def _resolve_file_type(editor: YAMLEditor, *, for_add: bool = False) -> str:
-    """Resolve an editor's shape once, with the new-file script fallback."""
-    if editor.path.exists():
-        detected = _detect_file_type(editor)
-        if detected == "empty":
-            return "dict" if editor.path.name == "scripts.yaml" else "list"
-        return detected
-    if for_add and editor.path.name == "scripts.yaml":
-        return "dict"
-    return "list"
+        return _FileShape(_ShapeKind.EMPTY, default_shape)
+    return _FileShape(_ShapeKind.UNSUPPORTED, None)
 
 
 def _dispatch_by_filetype[T](
     editor: YAMLEditor,
     alias: str,
     *,
-    file_type: str | None = None,
+    shape: _FileShape | None = None,
     on_dict: Callable[[YAMLEditor, str], T],
     on_list: Callable[[YAMLEditor, str], T],
 ) -> T:
     """Run the mapping callback, or the list fallback for other file shapes."""
-    resolved_type = file_type if file_type is not None else _resolve_file_type(editor)
-    if resolved_type == "dict":
+    resolved_shape = shape if shape is not None else _resolve_shape(editor)
+    if resolved_shape.editable is _ShapeKind.DICT:
         return on_dict(editor, alias)
-    if resolved_type == "list":
+    if resolved_shape.editable is _ShapeKind.LIST:
         return on_list(editor, alias)
     raise TypeError(
-        f"Cannot edit {editor.path.name}: expected a list or mapping, "
-        f"got {resolved_type}"
+        f"Cannot edit {editor.path.name}: expected a list or mapping, got unknown"
     )
 
 
-def _run_show(
-    editor: YAMLEditor, alias: str | None, *, file_type: str | None = None
-) -> int:
+def _run_show(editor: YAMLEditor, alias: str | None) -> int:
     data = editor.load()
     if data is None:
         print("(empty file)", file=sys.stderr)
@@ -243,7 +258,7 @@ def _run_add(
     json_str: str,
     quiet: bool,
     *,
-    file_type: str | None = None,
+    shape: _FileShape | None = None,
 ) -> int:
     try:
         entry = json.loads(json_str)
@@ -252,12 +267,10 @@ def _run_add(
     if not isinstance(entry, dict):
         return fail_stderr("--add value must be a JSON object")
 
-    ftype = (
-        file_type if file_type is not None else _resolve_file_type(editor, for_add=True)
-    )
-    if ftype not in {"dict", "list"}:
+    resolved_shape = shape if shape is not None else _resolve_shape(editor)
+    if resolved_shape.editable is None:
         return fail_stderr(
-            f"Cannot add to {editor.path.name}: expected a list or mapping, got {ftype}"
+            f"Cannot add to {editor.path.name}: expected a list or mapping, got unknown"
         )
 
     def add_script(ed: YAMLEditor) -> str:
@@ -272,7 +285,7 @@ def _run_add(
         return str(entry.get("alias") or entry.get("id") or "(no alias)")
 
     add_entry: Callable[[YAMLEditor], str] = (
-        add_script if ftype == "dict" else add_automation
+        add_script if resolved_shape.editable is _ShapeKind.DICT else add_automation
     )
 
     return _run_mutation(
@@ -289,7 +302,7 @@ def _run_set(
     kvs: list[str],
     quiet: bool,
     *,
-    file_type: str | None = None,
+    shape: _FileShape | None = None,
 ) -> int:
     updates: dict = {}
     for kv in kvs:
@@ -311,7 +324,7 @@ def _run_set(
         lambda: _dispatch_by_filetype(
             editor,
             alias,
-            file_type=file_type,
+            shape=shape,
             on_dict=lambda ed, al: ed.update_script(al, updates),
             on_list=lambda ed, al: ed.update_automation(al, updates),
         ),
@@ -352,14 +365,14 @@ def _run_remove(
     alias: str,
     quiet: bool,
     *,
-    file_type: str | None = None,
+    shape: _FileShape | None = None,
 ) -> int:
     return _run_mutation(
         editor,
         lambda: _dispatch_by_filetype(
             editor,
             alias,
-            file_type=file_type,
+            shape=shape,
             on_dict=lambda ed, al: ed.remove_script(al),
             on_list=lambda ed, al: ed.remove_automation(al),
         ),

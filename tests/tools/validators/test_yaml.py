@@ -150,6 +150,21 @@ class TestValidateScriptsStructure:
 
 
 class TestValidateAll:
+    def test_scans_yaml_directory_once(self, config_dir, monkeypatch):
+        (config_dir / "configuration.yaml").write_text("homeassistant:\n")
+        validator = YAMLValidator(str(config_dir))
+        original_get_yaml_files = validator.get_yaml_files
+        calls = []
+
+        def get_yaml_files():
+            calls.append(True)
+            return original_get_yaml_files()
+
+        monkeypatch.setattr(validator, "get_yaml_files", get_yaml_files)
+
+        assert validator.validate_all() is True
+        assert len(calls) == 1
+
     def test_nonexistent_config_dir(self):
         v = YAMLValidator("/nonexistent/path")
         assert v.validate_all() is False

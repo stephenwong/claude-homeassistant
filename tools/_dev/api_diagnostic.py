@@ -6,13 +6,13 @@ Combines functionality from multiple diagnostic scripts.
 """
 
 import json
-import os
+import sys
 from typing import TypedDict
 from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
-from tools.common import DEFAULT_HA_URL, get_env_int, load_env_file, validate_ha_url
+from tools.common import DEFAULT_HA_TIMEOUT, get_ha_config, validate_ha_url
 
 
 class DiagnosticConfig(TypedDict):
@@ -25,13 +25,10 @@ class DiagnosticConfig(TypedDict):
 
 def get_config() -> DiagnosticConfig:
     """Load configuration from environment."""
-    load_env_file()
-    request_timeout, timeout_warning = get_env_int("HA_REQUEST_TIMEOUT", 10)
-    if timeout_warning:
-        print(f"⚠️  {timeout_warning}")
+    ha_url, token, request_timeout = get_ha_config(warning_stream=sys.stdout)
     return {
-        "ha_url": os.getenv("HA_URL", DEFAULT_HA_URL),
-        "token": os.getenv("HA_TOKEN", ""),
+        "ha_url": ha_url,
+        "token": token,
         "request_timeout": request_timeout,
     }
 
@@ -42,7 +39,7 @@ def _request(
     endpoint: str,
     *,
     method: str = "GET",
-    request_timeout: int = 10,
+    request_timeout: int = DEFAULT_HA_TIMEOUT,
     payload: object | None = None,
 ) -> requests.Response:
     """Send a diagnostic request with the shared authentication settings."""
@@ -77,28 +74,50 @@ def _safe_json_response(response, error_prefix: str):
         return None
 
 
-def test_api_connection(ha_url, token, request_timeout: int = 10):
+def _request_with_failure_handling(
+    ha_url,
+    token,
+    endpoint,
+    *,
+    request_timeout,
+    error_prefix,
+    sentinel,
+):
+    """Make a request, reporting failures and returning the probe sentinel."""
+    try:
+        return _request(ha_url, token, endpoint, request_timeout=request_timeout)
+    except requests.RequestException as error:
+        print(f"{error_prefix} Exception: {error}")
+        return sentinel
+
+
+def test_api_connection(ha_url, token, request_timeout: int = DEFAULT_HA_TIMEOUT):
     """Test basic API connection."""
     print("🔗 Testing API Connection...")
-    try:
-        response = _request(ha_url, token, "/api/", request_timeout=request_timeout)
+    response = _request_with_failure_handling(
+        ha_url,
+        token,
+        "/api/",
+        request_timeout=request_timeout,
+        error_prefix="  ",
+        sentinel=None,
+    )
+    if response is None:
+        return False
 
-        print(f"   Status: {response.status_code}")
-        if response.status_code == 200:
-            data = _safe_json_response(response, "   ❌")
-            if data is None:
-                return False
-            print(f"   Message: {data.get('message', 'No message')}")
-            return True
-        else:
-            print(f"   Error: {response.text}")
+    print(f"   Status: {response.status_code}")
+    if response.status_code == 200:
+        data = _safe_json_response(response, "   ❌")
+        if data is None:
             return False
-    except requests.RequestException as e:
-        print(f"   Exception: {e}")
+        print(f"   Message: {data.get('message', 'No message')}")
+        return True
+    else:
+        print(f"   Error: {response.text}")
         return False
 
 
-def test_api_endpoints(ha_url, token, request_timeout: int = 10):
+def test_api_endpoints(ha_url, token, request_timeout: int = DEFAULT_HA_TIMEOUT):
     """Test various API endpoints to find entity registry access."""
     print("\n🔍 Testing Various API Endpoints...")
 
@@ -115,104 +134,113 @@ def test_api_endpoints(ha_url, token, request_timeout: int = 10):
     successful_endpoints = []
 
     for endpoint, description in endpoints_to_test:
-        try:
-            print(f"\n   Testing: {endpoint} ({description})")
-            response = _request(
-                ha_url, token, endpoint, request_timeout=request_timeout
-            )
-            print(f"   Status: {response.status_code}")
+        print(f"\n   Testing: {endpoint} ({description})")
+        response = _request_with_failure_handling(
+            ha_url,
+            token,
+            endpoint,
+            request_timeout=request_timeout,
+            error_prefix="   ❌",
+            sentinel=None,
+        )
+        if response is None:
+            continue
 
-            if response.status_code == 200:
-                successful_endpoints.append(endpoint)
-                data = _safe_json_response(response, "   ✅")
-                if data is None:
-                    print(f"   ✅ Non-JSON response ({len(response.text)} chars)")
-                elif isinstance(data, list):
-                    print(f"   ✅ List with {len(data)} items")
-                    if len(data) > 0:
-                        print(f"      Sample type: {type(data[0])}")
-                elif isinstance(data, dict):
-                    keys = list(data.keys())[:5]
-                    print(f"   ✅ Dict with keys: {keys}")
-                else:
-                    print(f"   ✅ {type(data)}")
+        print(f"   Status: {response.status_code}")
+
+        if response.status_code == 200:
+            successful_endpoints.append(endpoint)
+            data = _safe_json_response(response, "   ✅")
+            if data is None:
+                print(f"   ✅ Non-JSON response ({len(response.text)} chars)")
+            elif isinstance(data, list):
+                print(f"   ✅ List with {len(data)} items")
+                if len(data) > 0:
+                    print(f"      Sample type: {type(data[0])}")
+            elif isinstance(data, dict):
+                keys = list(data.keys())[:5]
+                print(f"   ✅ Dict with keys: {keys}")
             else:
-                print(f"   ❌ {response.text[:100]}")
-
-        except requests.RequestException as e:
-            print(f"   ❌ Exception: {e}")
+                print(f"   ✅ {type(data)}")
+        else:
+            print(f"   ❌ {response.text[:100]}")
 
     return successful_endpoints
 
 
-def test_entity_registry_read(ha_url, token, request_timeout: int = 10):
+def test_entity_registry_read(ha_url, token, request_timeout: int = DEFAULT_HA_TIMEOUT):
     """Test reading entity registry."""
     print("\n📋 Testing Entity Registry Read Access...")
-    try:
-        response = _request(
-            ha_url,
-            token,
-            "/api/config/entity_registry",
-            request_timeout=request_timeout,
-        )
+    response = _request_with_failure_handling(
+        ha_url,
+        token,
+        "/api/config/entity_registry",
+        request_timeout=request_timeout,
+        error_prefix="   ❌",
+        sentinel=None,
+    )
+    if response is None:
+        return []
 
-        print(f"   Status: {response.status_code}")
-        if response.status_code == 200:
-            data = _safe_json_response(response, "   ❌")
-            if not isinstance(data, list):
-                return []
-            print(f"   ✅ Found {len(data)} entities")
-
-            # Sample first 3 entities for inspection
-            sample_entities = data[:3]
-            for entity in sample_entities:
-                entity_id = entity.get("entity_id")
-                print(f"   ✅ Sample: {entity_id}")
-                print(f"      Platform: {entity.get('platform')}")
-                print(f"      Device ID: {entity.get('device_id')}")
-                print(f"      Unique ID: {entity.get('unique_id')}")
-
-            return sample_entities
-        else:
-            print(f"   ❌ Error: {response.text}")
+    print(f"   Status: {response.status_code}")
+    if response.status_code == 200:
+        data = _safe_json_response(response, "   ❌")
+        if not isinstance(data, list):
             return []
-    except requests.RequestException as e:
-        print(f"   ❌ Exception: {e}")
+        print(f"   ✅ Found {len(data)} entities")
+
+        # Sample first 3 entities for inspection
+        sample_entities = data[:3]
+        for entity in sample_entities:
+            entity_id = entity.get("entity_id")
+            print(f"   ✅ Sample: {entity_id}")
+            print(f"      Platform: {entity.get('platform')}")
+            print(f"      Device ID: {entity.get('device_id')}")
+            print(f"      Unique ID: {entity.get('unique_id')}")
+
+        return sample_entities
+    else:
+        print(f"   ❌ Error: {response.text}")
         return []
 
 
 def test_states_endpoint(ha_url, token, request_timeout: int = 10):
     """Test the /api/states endpoint to see entity data."""
     print("\n📊 Testing States Endpoint for Entity Info...")
-    try:
-        response = _request(
-            ha_url, token, "/api/states", request_timeout=request_timeout
-        )
+    response = _request_with_failure_handling(
+        ha_url,
+        token,
+        "/api/states",
+        request_timeout=request_timeout,
+        error_prefix="   ❌",
+        sentinel=None,
+    )
+    if response is None:
+        return False
 
-        print(f"   Status: {response.status_code}")
-        if response.status_code == 200:
-            states = _safe_json_response(response, "   ❌")
-            if not isinstance(states, list):
-                return False
-            print(f"   ✅ Found {len(states)} states")
-
-            # Sample first 3 entities for inspection
-            for state in states[:3]:
-                entity_id = state.get("entity_id")
-                print(f"   ✅ Sample: {entity_id}")
-                attrs = list(state.get("attributes", {}).keys())[:5]
-                print(f"      Attributes: {attrs}")
-
-            return len(states) > 0
-        else:
-            print(f"   ❌ Error: {response.text}")
+    print(f"   Status: {response.status_code}")
+    if response.status_code == 200:
+        states = _safe_json_response(response, "   ❌")
+        if not isinstance(states, list):
             return False
-    except requests.RequestException as e:
-        print(f"   ❌ Exception: {e}")
+        print(f"   ✅ Found {len(states)} states")
+
+        # Sample first 3 entities for inspection
+        for state in states[:3]:
+            entity_id = state.get("entity_id")
+            print(f"   ✅ Sample: {entity_id}")
+            attrs = list(state.get("attributes", {}).keys())[:5]
+            print(f"      Attributes: {attrs}")
+
+        return len(states) > 0
+    else:
+        print(f"   ❌ Error: {response.text}")
         return False
 
 
-def test_entity_rename(ha_url, token, entity_data_list, request_timeout: int = 10):
+def test_entity_rename(
+    ha_url, token, entity_data_list, request_timeout: int = DEFAULT_HA_TIMEOUT
+):
     """Explain entity rename methods without changing Home Assistant state."""
     print("\n🔄 Entity Rename Methods (read-only)...")
 
@@ -231,7 +259,7 @@ def test_entity_rename(ha_url, token, entity_data_list, request_timeout: int = 1
 
 
 def test_service_call_method(
-    ha_url, token, entity_data_list, request_timeout: int = 10
+    ha_url, token, entity_data_list, request_timeout: int = DEFAULT_HA_TIMEOUT
 ):
     """Explain the service-call rename behavior without making a service call."""
     print("\n🔧 Service Call Method (read-only)...")

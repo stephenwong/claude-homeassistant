@@ -11,6 +11,7 @@ from tools.backup_common import (
     backup_path_for_changelog,
     changelog_path_for,
     get_backups,
+    iter_managed_artifacts,
     iter_tarball_file_members,
     parse_backup_filename,
 )
@@ -117,6 +118,21 @@ class TestManagedBackups:
         monkeypatch.setattr("tools.backup_common.BACKUP_DIR", backup_dir)
 
         assert [item["path"] for item in get_backups()] == [valid]
+
+    def test_iter_managed_artifacts_filters_canonical_regular_files(
+        self, tmp_path, monkeypatch
+    ):
+        backup_dir = tmp_path / "backups"
+        backup_dir.mkdir()
+        valid = backup_dir / "ha_config_20260721_120000.changelog"
+        valid.write_text("data")
+        (backup_dir / "notes.changelog").write_text("skip")
+        (backup_dir / "ha_config_20260721_120001.changelog").mkdir()
+        symlink = backup_dir / "ha_config_20260721_120002.changelog"
+        symlink.symlink_to(valid)
+        monkeypatch.setattr("tools.backup_common.BACKUP_DIR", backup_dir)
+
+        assert list(iter_managed_artifacts("changelog")) == [valid]
 
     def test_pairing_is_local_to_archive_parent(self, tmp_path):
         archive_dir = tmp_path / "archive"

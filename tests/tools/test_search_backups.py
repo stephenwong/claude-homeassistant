@@ -6,19 +6,15 @@ import tarfile
 from datetime import datetime
 from unittest.mock import patch
 
-from tests.helpers import make_tar
+from tests.helpers import make_backup_record, make_tar
 from tools.backup_common import BackupRecord
 from tools.search_backups import is_likely_unsafe_regex, search_backup
 
 
-def _make_backup_record(tmp_path, files_dict, *, name="test.tar.gz") -> BackupRecord:
+def _make_backup(tmp_path, files_dict, *, name="test.tar.gz") -> BackupRecord:
     """Create a backup and its standard metadata for main-flow tests."""
     tar_path = make_tar(tmp_path, files_dict, name=name)
-    return {
-        "path": tar_path,
-        "filename": tar_path.name,
-        "timestamp": datetime(2026, 2, 1),
-    }
+    return make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
 
 
 def _run_main(monkeypatch, backups, *arguments):
@@ -36,11 +32,7 @@ class TestSearchBackup:
             tmp_path,
             {"config/automations.yaml": "- alias: Test\n  entity_id: sensor.test\n"},
         )
-        backup = {
-            "path": tar_path,
-            "filename": tar_path.name,
-            "timestamp": datetime(2026, 2, 1),
-        }
+        backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
         matches, _u = search_backup(backup, re.compile("sensor.test"))
         assert len(matches) == 1
         assert matches[0]["file"] == "config/automations.yaml"
@@ -54,11 +46,7 @@ class TestSearchBackup:
                 "config/test.sh": "pattern_match\n",
             },
         )
-        backup = {
-            "path": tar_path,
-            "filename": tar_path.name,
-            "timestamp": datetime(2026, 2, 1),
-        }
+        backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
         matches, _u = search_backup(backup, re.compile("pattern_match"), yaml_only=True)
         assert len(matches) == 1
         assert matches[0]["file"] == "config/test.yaml"
@@ -68,11 +56,7 @@ class TestSearchBackup:
     def test_zero_context_accepted(self, tmp_path):
         """The default zero-context search does not crash."""
         tar_path = make_tar(tmp_path, {"x.yaml": "line1\npattern\nline3\n"})
-        backup = {
-            "path": tar_path,
-            "filename": tar_path.name,
-            "timestamp": datetime(2026, 2, 1),
-        }
+        backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
         matches, _u = search_backup(backup, re.compile("pattern"), context_lines=0)
         assert len(matches) >= 1
 
@@ -84,11 +68,7 @@ class TestSearchBackup:
                 "config/test.sh": "pattern_match\n",
             },
         )
-        backup = {
-            "path": tar_path,
-            "filename": tar_path.name,
-            "timestamp": datetime(2026, 2, 1),
-        }
+        backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
         matches, _u = search_backup(
             backup, re.compile("pattern_match"), yaml_only=False
         )
@@ -101,11 +81,7 @@ class TestSearchBackup:
                 "config/test.yaml": "line1\nline2\nMATCH\nline4\nline5\n",
             },
         )
-        backup = {
-            "path": tar_path,
-            "filename": tar_path.name,
-            "timestamp": datetime(2026, 2, 1),
-        }
+        backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
         matches, _u = search_backup(backup, re.compile("MATCH"), context_lines=1)
         assert len(matches) == 1
         assert matches[0]["context_before"] == ["line2"]
@@ -116,18 +92,14 @@ class TestSearchBackup:
             tmp_path,
             {"config/test.yaml": "nothing interesting here\n"},
         )
-        backup = {
-            "path": tar_path,
-            "filename": tar_path.name,
-            "timestamp": datetime(2026, 2, 1),
-        }
+        backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
         matches, _u = search_backup(backup, re.compile("nonexistent_pattern"))
         assert matches == []
 
     def test_handles_corrupt_tar(self, tmp_path):
         bad_file = tmp_path / "bad.tar.gz"
         bad_file.write_text("not a tar")
-        backup = {
+        backup: BackupRecord = {
             "path": bad_file,
             "filename": bad_file.name,
             "timestamp": datetime(2026, 2, 1),
@@ -141,11 +113,7 @@ class TestSearchBackup:
             tmp_path,
             {"config/test.yaml": "match1\nno\nmatch2\n"},
         )
-        backup = {
-            "path": tar_path,
-            "filename": tar_path.name,
-            "timestamp": datetime(2026, 2, 1),
-        }
+        backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
         matches, _u = search_backup(backup, re.compile("match"))
         assert len(matches) == 2
 
@@ -163,11 +131,7 @@ class TestSearchBackup:
             finfo.size = len(data)
             tar.addfile(finfo, io.BytesIO(data))
 
-        backup = {
-            "path": tar_path,
-            "filename": tar_path.name,
-            "timestamp": datetime(2026, 2, 1),
-        }
+        backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
         matches, _u = search_backup(backup, re.compile("match"))
         assert len(matches) == 1
 
@@ -181,11 +145,7 @@ class TestSearchBackup:
             info.size = len(data)
             tar.addfile(info, io.BytesIO(data))
 
-        backup = {
-            "path": tar_path,
-            "filename": tar_path.name,
-            "timestamp": datetime(2026, 2, 1),
-        }
+        backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
         matches, _u = search_backup(backup, re.compile("match"))
         assert matches == []
 
@@ -198,11 +158,7 @@ class TestSearchBackup:
             info.size = len(data)
             tar.addfile(info, io.BytesIO(data))
 
-        backup = {
-            "path": tar_path,
-            "filename": tar_path.name,
-            "timestamp": datetime(2026, 2, 1),
-        }
+        backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
         matches, unreadable = search_backup(backup, re.compile("match"))
         assert len(matches) == 1
         assert matches[0]["line"] == "match"
@@ -224,19 +180,19 @@ class TestSearchBackupsMainFlow:
         assert _run_main(monkeypatch, [], "pattern") == 1
 
     def test_main_with_matches(self, tmp_path, capsys, monkeypatch):
-        backups = [
-            _make_backup_record(tmp_path, {"config/test.yaml": "sensor.temperature\n"})
+        backups: list[BackupRecord] = [
+            _make_backup(tmp_path, {"config/test.yaml": "sensor.temperature\n"})
         ]
         assert _run_main(monkeypatch, backups, "sensor") == 0
         assert "MATCH" in capsys.readouterr().out
 
     def test_main_files_only(self, tmp_path, capsys, monkeypatch):
-        backups = [_make_backup_record(tmp_path, {"config/test.yaml": "sensor.test\n"})]
+        backups = [_make_backup(tmp_path, {"config/test.yaml": "sensor.test\n"})]
         assert _run_main(monkeypatch, backups, "--files-only", "sensor") == 0
 
     def test_main_with_context(self, tmp_path, capsys, monkeypatch):
         backups = [
-            _make_backup_record(
+            _make_backup(
                 tmp_path,
                 {"config/test.yaml": "before\nsensor.test\nafter\n"},
             )
@@ -244,14 +200,12 @@ class TestSearchBackupsMainFlow:
         assert _run_main(monkeypatch, backups, "-C", "1", "sensor") == 0
 
     def test_main_no_matches(self, tmp_path, capsys, monkeypatch):
-        backups = [
-            _make_backup_record(tmp_path, {"config/test.yaml": "nothing here\n"})
-        ]
+        backups = [_make_backup(tmp_path, {"config/test.yaml": "nothing here\n"})]
         assert _run_main(monkeypatch, backups, "nonexistent_pattern") == 0
         assert "Found in 0" in capsys.readouterr().err
 
     def test_main_all_files(self, tmp_path, capsys, monkeypatch):
-        backups = [_make_backup_record(tmp_path, {"config/test.sh": "sensor_match\n"})]
+        backups = [_make_backup(tmp_path, {"config/test.sh": "sensor_match\n"})]
         assert _run_main(monkeypatch, backups, "--all", "sensor_match") == 0
 
     def test_main_invalid_regex(self, capsys, monkeypatch):
@@ -285,11 +239,7 @@ class TestMemberNameNormalization:
             info.size = len(data)
             tar.addfile(info, io.BytesIO(data))
 
-        backup = {
-            "path": tar_path,
-            "filename": tar_path.name,
-            "timestamp": datetime(2026, 2, 1),
-        }
+        backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
         matches, unreadable = search_backup(backup, re.compile("sensor"))
         assert unreadable is False
         assert len(matches) == 1
@@ -323,11 +273,7 @@ class TestLazyTarIteration:
             finfo.size = len(data)
             tar.addfile(finfo, io.BytesIO(data))
 
-        backup = {
-            "path": tar_path,
-            "filename": tar_path.name,
-            "timestamp": datetime(2026, 2, 1),
-        }
+        backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
         matches, unreadable = search_backup(backup, re.compile("match_this"))
         assert unreadable is False
         assert len(matches) == 1
@@ -374,11 +320,7 @@ class TestMatchResultShape:
             tmp_path,
             {"config/test.yaml": "line1\nsensor.test\nline3\n"},
         )
-        backup = {
-            "path": tar_path,
-            "filename": tar_path.name,
-            "timestamp": datetime(2026, 2, 1),
-        }
+        backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
         matches, _unreadable = search_backup(
             backup, re.compile("sensor"), context_lines=1
         )
@@ -416,11 +358,7 @@ class TestTarExtractionSafety:
             tar.addfile(info, io.BytesIO(data))
 
         before_files = set(tmp_path.rglob("*"))
-        backup = {
-            "path": tar_path,
-            "filename": tar_path.name,
-            "timestamp": datetime(2026, 2, 1),
-        }
+        backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
         search_backup(backup, re.compile("root"))
         after_files = set(tmp_path.rglob("*"))
         # No new files should appear outside the expected ones
@@ -445,11 +383,7 @@ class TestTarExtractionSafety:
             finfo.size = len(data)
             tar.addfile(finfo, io.BytesIO(data))
 
-        backup = {
-            "path": tar_path,
-            "filename": tar_path.name,
-            "timestamp": datetime(2026, 2, 1),
-        }
+        backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
         matches, unreadable = search_backup(backup, re.compile("actual_content"))
         assert unreadable is False
         assert len(matches) == 1

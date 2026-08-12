@@ -32,6 +32,43 @@ _NO_RECURSE = {
 }
 
 
+def _device_action_service(data: Any) -> str | None:
+    """Return the synthetic service name for a device-action step."""
+    if (
+        not isinstance(data, dict)
+        or "device_id" not in data
+        or "domain" not in data
+        or "type" not in data
+        or data.get("condition") == "device"
+        or data.get("trigger") == "device"
+        or data.get("platform") == "device"
+        or not isinstance(data.get("domain"), str)
+        or not isinstance(data.get("type"), str)
+    ):
+        return None
+
+    synthetic = f"{data['domain']}.{data['type']}"
+    if synthetic.startswith("!") or is_jinja_template(synthetic):
+        return None
+    return synthetic
+
+
+def _normalize_service_catalog(catalog: list[Any]) -> set[str]:
+    """Flatten a validated Home Assistant service catalog into service IDs."""
+    valid: set[str] = set()
+    for entry in catalog:
+        if not isinstance(entry, dict):
+            continue
+        domain = entry.get("domain")
+        services = entry.get("services")
+        if not isinstance(services, dict):
+            continue
+        for svc in services:
+            if domain and svc:
+                valid.add(f"{domain}.{svc}")
+    return valid
+
+
 class ServiceValidator(ValidatorBase):
     """Validates service references in automation/script steps."""
 
@@ -51,19 +88,9 @@ class ServiceValidator(ValidatorBase):
     ) -> None:
         if isinstance(data, dict):
             # M10a: HA device-action steps have no `service`/`action` key.
-            if (
-                "device_id" in data
-                and "domain" in data
-                and "type" in data
-                and data.get("condition") != "device"
-                and data.get("trigger") != "device"
-                and data.get("platform") != "device"
-                and isinstance(data.get("domain"), str)
-                and isinstance(data.get("type"), str)
-            ):
-                synthetic = f"{data['domain']}.{data['type']}"
-                if not cls._looks_dynamic(synthetic):
-                    out.append((synthetic, f"{path}.device_action"))
+            synthetic = _device_action_service(data)
+            if synthetic is not None:
+                out.append((synthetic, f"{path}.device_action"))
             for k, v in data.items():
                 p = f"{path}.{k}" if path else str(k)
                 if k in _STEP_SERVICE_KEYS and isinstance(v, str):
@@ -93,18 +120,7 @@ class ServiceValidator(ValidatorBase):
                 "Live service check skipped: invalid response from /api/services"
             )
             return None
-        valid: set[str] = set()
-        for entry in catalog:
-            if not isinstance(entry, dict):
-                continue
-            domain = entry.get("domain")
-            services = entry.get("services")
-            if not isinstance(services, dict):
-                continue
-            for svc in services:
-                if domain and svc:
-                    valid.add(f"{domain}.{svc}")
-        return valid
+        return _normalize_service_catalog(catalog)
 
     def _validate(self) -> bool:
         """Validate service references in all YAML files against HA API."""

@@ -30,6 +30,11 @@ class BackupRecord(TypedDict):
 
 ArtifactKind = Literal["backup", "changelog"]
 
+_ARTIFACT_GLOB: dict[ArtifactKind, str] = {
+    "backup": "*.tar.gz",
+    "changelog": "*.changelog",
+}
+
 
 def changelog_path_for(backup: BackupRecord) -> Path:
     """Return the changelog path paired with *backup* (sibling of the tarball)."""
@@ -72,15 +77,20 @@ def _is_managed_artifact(path: Path, kind: ArtifactKind) -> bool:
     return False
 
 
+def iter_managed_artifacts(kind: ArtifactKind) -> Iterator[Path]:
+    """Yield canonical, non-symlink managed artifacts of *kind*."""
+    if not BACKUP_DIR.exists():
+        return
+
+    for path in BACKUP_DIR.glob(_ARTIFACT_GLOB[kind]):
+        if _is_managed_artifact(path, kind):
+            yield path
+
+
 def get_backups() -> list[BackupRecord]:
     """Get all backup files with their timestamps."""
-    if not BACKUP_DIR.exists():
-        return []
-
     backups: list[BackupRecord] = []
-    for file in BACKUP_DIR.glob("*.tar.gz"):
-        if not _is_managed_artifact(file, "backup"):
-            continue
+    for file in iter_managed_artifacts("backup"):
         timestamp = parse_backup_filename(file.name)
         if timestamp is not None:
             backups.append(

@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.helpers import make_backup_record
 from tools.backup_common import parse_backup_filename
 from tools.prune_backups import (
     apply_retention,
@@ -102,6 +103,13 @@ class TestGetBackups:
 
 
 class TestGroupByRetentionPeriod:
+    def test_retention_boundaries_are_named(self):
+        from tools import prune_backups as prune
+
+        assert prune.RECENT_MAX_AGE_DAYS == 7
+        assert prune.DAILY_MAX_AGE_DAYS == 30
+        assert prune.WEEKLY_MIN_AGE_DAYS == 31
+
     def test_recent_backups_keep_all(self):
         now = datetime(2026, 2, 12, 12, 0, 0)
         backups = [
@@ -283,6 +291,25 @@ class TestApplyRetention:
 
 
 class TestCleanOrphanedChangelogs:
+    def test_orphan_discovery_uses_public_artifact_iterator(
+        self, tmp_path, monkeypatch
+    ):
+        from tools import prune_backups as prune
+
+        orphan = tmp_path / "ha_config_20260101_120000.changelog"
+        iterator_calls = []
+
+        def fake_iterator(kind):
+            iterator_calls.append(kind)
+            return iter([orphan]) if kind == "changelog" else iter([])
+
+        monkeypatch.setattr(
+            prune.backup_common, "iter_managed_artifacts", fake_iterator
+        )
+
+        assert prune._find_orphaned_changelogs() == [orphan]
+        assert iterator_calls == ["backup", "changelog"]
+
     def test_orphan_discovery_is_pure(self, tmp_path):
         from tools import prune_backups as prune
 
@@ -298,6 +325,18 @@ class TestCleanOrphanedChangelogs:
             assert prune._find_orphaned_changelogs() == [orphan]
         assert orphan.exists()
         assert matched.exists()
+
+    def test_cleanup_returns_discovered_paths(self, tmp_path):
+        from tools import prune_backups as prune
+
+        backup_dir = tmp_path / "backups"
+        backup_dir.mkdir()
+        orphan = backup_dir / "ha_config_20260101_120000.changelog"
+        orphan.write_text("orphan")
+
+        with patch("tools.backup_common.BACKUP_DIR", backup_dir):
+            assert prune._clean_orphaned_changelogs() == [orphan]
+        assert not orphan.exists()
 
     def test_removes_orphaned_changelogs(self, tmp_path):
         backup_dir = tmp_path / "backups"
@@ -363,6 +402,27 @@ class TestCleanOrphanedChangelogs:
         with patch("tools.backup_common.BACKUP_DIR", backup_dir):
             assert clean_orphaned_changelogs() == 1
         assert not changelog.exists()
+
+    def test_apply_check_does_not_rescan_orphans(self, tmp_path, monkeypatch):
+        from tools import prune_backups as prune
+
+        backup_dir = tmp_path / "backups"
+        backup_dir.mkdir()
+        orphan = backup_dir / "ha_config_20260101_120000.changelog"
+        orphan.write_text("orphan")
+        discovery_calls = 0
+        original_find = prune._find_orphaned_changelogs
+
+        def count_discovery_calls():
+            nonlocal discovery_calls
+            discovery_calls += 1
+            return original_find()
+
+        monkeypatch.setattr(prune, "_find_orphaned_changelogs", count_discovery_calls)
+        monkeypatch.setattr(prune.backup_common, "BACKUP_DIR", backup_dir)
+
+        assert prune._clean_orphans_and_check(dry_run=False)
+        assert discovery_calls == 1
 
 
 class TestFormatSize:
@@ -728,11 +788,7 @@ class TestFormatLines:
     def _backup(self, tmp_path, timestamp):
         path = tmp_path / "ha_config_20240101_000000.tar.gz"
         path.write_bytes(b"x" * 1024)
-        return {
-            "filename": path.name,
-            "path": path,
-            "timestamp": timestamp,
-        }
+        return make_backup_record(path, path.name, timestamp)
 
     def test_delete_line_includes_filename_size_and_age(self, tmp_path):
         from tools.prune_backups import _format_delete_line
@@ -742,6 +798,14 @@ class TestFormatLines:
         assert backup["filename"] in line
         assert "7 days old" in line
         assert "1.0KB" in line
+
+    def test_shared_line_formatter_preserves_delete_output(self, tmp_path):
+        from tools.prune_backups import _format_backup_line
+
+        backup = self._backup(tmp_path, datetime(2024, 1, 1))
+        assert _format_backup_line(backup, 1024, "7 days old") == (
+            "  - ha_config_20240101_000000.tar.gz (1.0KB, 7 days old)"
+        )
 
     def test_delete_line_missing_file_size_zero(self, tmp_path):
         from tools.prune_backups import _format_delete_line

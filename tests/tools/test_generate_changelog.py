@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from tests.helpers import make_tar
+from tests.helpers import make_backup_record, make_tar
 from tools.backup_common import backup_path_for_changelog
 from tools.generate_changelog import (
     changelog_path_for,
@@ -25,11 +25,6 @@ def clear_extract_files_cache():
     extract_files.cache_clear()
     yield
     extract_files.cache_clear()
-
-
-def _backup_record(path, filename, timestamp):
-    """Build the common backup metadata used by changelog tests."""
-    return {"path": path, "filename": filename, "timestamp": timestamp}
 
 
 @pytest.mark.parametrize(
@@ -201,7 +196,7 @@ class TestGenerateChangelog:
 
     def test_initial_backup(self, tmp_path):
         tar_path = make_tar(tmp_path, {"config/test.yaml": "key: value\n"})
-        backup = _backup_record(
+        backup = make_backup_record(
             tar_path,
             "ha_config_20260201_120000.tar.gz",
             datetime(2026, 2, 1, 12, 0, 0),
@@ -218,8 +213,8 @@ class TestGenerateChangelog:
         tar_path_1 = make_tar(sub1, {"config/test.yaml": "same"})
         tar_path_2 = make_tar(sub2, {"config/test.yaml": "same"})
 
-        prev = _backup_record(tar_path_1, "prev.tar.gz", datetime(2026, 2, 1, 12))
-        curr = _backup_record(tar_path_2, "curr.tar.gz", datetime(2026, 2, 2, 12))
+        prev = make_backup_record(tar_path_1, "prev.tar.gz", datetime(2026, 2, 1, 12))
+        curr = make_backup_record(tar_path_2, "curr.tar.gz", datetime(2026, 2, 2, 12))
         content = generate_changelog(curr, prev)
         assert "No changes detected" in content
 
@@ -233,8 +228,8 @@ class TestGenerateChangelog:
             name="b2.tar.gz",
         )
 
-        prev = _backup_record(tar_path_1, "prev.tar.gz", datetime(2026, 2, 1, 12))
-        curr = _backup_record(tar_path_2, "curr.tar.gz", datetime(2026, 2, 2, 12))
+        prev = make_backup_record(tar_path_1, "prev.tar.gz", datetime(2026, 2, 1, 12))
+        curr = make_backup_record(tar_path_2, "curr.tar.gz", datetime(2026, 2, 2, 12))
         content = generate_changelog(curr, prev)
         assert "M config/test.yaml" in content
 
@@ -244,8 +239,8 @@ class TestGenerateChangelog:
             tmp_path, {"config/new.yaml": "new file\n"}, name="b2.tar.gz"
         )
 
-        prev = _backup_record(tar_path_1, "prev.tar.gz", datetime(2026, 2, 1, 12))
-        curr = _backup_record(tar_path_2, "curr.tar.gz", datetime(2026, 2, 2, 12))
+        prev = make_backup_record(tar_path_1, "prev.tar.gz", datetime(2026, 2, 1, 12))
+        curr = make_backup_record(tar_path_2, "curr.tar.gz", datetime(2026, 2, 2, 12))
         content = generate_changelog(curr, prev)
         assert "A config/new.yaml" in content
 
@@ -255,8 +250,8 @@ class TestGenerateChangelog:
         )
         tar_path_2 = make_tar(tmp_path, {}, name="b2.tar.gz")
 
-        prev = _backup_record(tar_path_1, "prev.tar.gz", datetime(2026, 2, 1, 12))
-        curr = _backup_record(tar_path_2, "curr.tar.gz", datetime(2026, 2, 2, 12))
+        prev = make_backup_record(tar_path_1, "prev.tar.gz", datetime(2026, 2, 1, 12))
+        curr = make_backup_record(tar_path_2, "curr.tar.gz", datetime(2026, 2, 2, 12))
         content = generate_changelog(curr, prev)
         assert "D config/old.yaml" in content
 
@@ -291,11 +286,11 @@ class TestChangelogPathFor:
 class TestGenerateForBackup:
     def test_generates_for_single_backup(self, tmp_path):
         tar_path = make_tar(tmp_path, {"config/test.yaml": "key: value\n"})
-        backup = {
-            "path": tar_path,
-            "filename": "ha_config_20260201_120000.tar.gz",
-            "timestamp": datetime(2026, 2, 1, 12, 0, 0),
-        }
+        backup = make_backup_record(
+            tar_path,
+            "ha_config_20260201_120000.tar.gz",
+            datetime(2026, 2, 1, 12, 0, 0),
+        )
         backups_list = [backup]
 
         with patch("tools.backup_common.BACKUP_DIR", tmp_path):
@@ -311,16 +306,16 @@ class TestGenerateForBackup:
         sub.mkdir()
         tar2 = make_tar(sub, {"config/test.yaml": "new\n"})
 
-        prev = {
-            "path": tar1,
-            "filename": "ha_config_20260201_120000.tar.gz",
-            "timestamp": datetime(2026, 2, 1, 12, 0, 0),
-        }
-        curr = {
-            "path": tar2,
-            "filename": "ha_config_20260202_120000.tar.gz",
-            "timestamp": datetime(2026, 2, 2, 12, 0, 0),
-        }
+        prev = make_backup_record(
+            tar1,
+            "ha_config_20260201_120000.tar.gz",
+            datetime(2026, 2, 1, 12, 0, 0),
+        )
+        curr = make_backup_record(
+            tar2,
+            "ha_config_20260202_120000.tar.gz",
+            datetime(2026, 2, 2, 12, 0, 0),
+        )
         backups_list = [prev, curr]
 
         with patch("tools.backup_common.BACKUP_DIR", tmp_path):
@@ -347,7 +342,7 @@ class TestGenerateForBackup:
         from tools.generate_changelog import _write_changelog
 
         tar_path = make_tar(tmp_path, {"config/test.yaml": "key: value\n"})
-        backup = _backup_record(
+        backup = make_backup_record(
             tar_path,
             "ha_config_20260201_120000.tar.gz",
             datetime(2026, 2, 1, 12, 0, 0),
@@ -377,16 +372,16 @@ class TestMain:
         tar2 = make_tar(sub, {"config/test.yaml": "content2\n"})
 
         backups = [
-            {
-                "path": tar1,
-                "filename": "ha_config_20260201_120000.tar.gz",
-                "timestamp": datetime(2026, 2, 1, 12, 0, 0),
-            },
-            {
-                "path": tar2,
-                "filename": "ha_config_20260202_120000.tar.gz",
-                "timestamp": datetime(2026, 2, 2, 12, 0, 0),
-            },
+            make_backup_record(
+                tar1,
+                "ha_config_20260201_120000.tar.gz",
+                datetime(2026, 2, 1, 12, 0, 0),
+            ),
+            make_backup_record(
+                tar2,
+                "ha_config_20260202_120000.tar.gz",
+                datetime(2026, 2, 2, 12, 0, 0),
+            ),
         ]
 
         monkeypatch.setattr("sys.argv", ["generate_changelog", "--generate-all"])
@@ -413,11 +408,7 @@ class TestMain:
                 name=filename,
             )
             backups.append(
-                {
-                    "path": archive,
-                    "filename": filename,
-                    "timestamp": datetime(2026, 2, index + 1, 12),
-                }
+                make_backup_record(archive, filename, datetime(2026, 2, index + 1, 12))
             )
 
         monkeypatch.setattr("sys.argv", ["generate_changelog", "--generate-all"])
@@ -443,11 +434,11 @@ class TestMain:
 
         tar1 = make_tar(tmp_path, {"config/test.yaml": "content1\n"})
         backups = [
-            {
-                "path": tar1,
-                "filename": "ha_config_20260201_120000.tar.gz",
-                "timestamp": datetime(2026, 2, 1, 12, 0, 0),
-            },
+            make_backup_record(
+                tar1,
+                "ha_config_20260201_120000.tar.gz",
+                datetime(2026, 2, 1, 12, 0, 0),
+            ),
         ]
         # Pre-create changelog
         (tmp_path / "ha_config_20260201_120000.changelog").write_text("existing")
@@ -467,11 +458,11 @@ class TestMain:
 
         tar1 = make_tar(tmp_path, {"config/test.yaml": "content\n"})
         backups = [
-            {
-                "path": tar1,
-                "filename": "ha_config_20260201_120000.tar.gz",
-                "timestamp": datetime(2026, 2, 1, 12, 0, 0),
-            },
+            make_backup_record(
+                tar1,
+                "ha_config_20260201_120000.tar.gz",
+                datetime(2026, 2, 1, 12, 0, 0),
+            ),
         ]
 
         monkeypatch.setattr(
@@ -491,11 +482,11 @@ class TestMain:
         from tools.generate_changelog import main
 
         backups = [
-            {
-                "path": tmp_path / "other.tar.gz",
-                "filename": "other.tar.gz",
-                "timestamp": datetime(2026, 2, 1, 12, 0, 0),
-            },
+            make_backup_record(
+                tmp_path / "other.tar.gz",
+                "other.tar.gz",
+                datetime(2026, 2, 1, 12, 0, 0),
+            ),
         ]
 
         monkeypatch.setattr(
@@ -529,11 +520,11 @@ class TestMain:
 
         tar_path = make_tar(tmp_path, {"config/test.yaml": "content1\n"})
         backups = [
-            {
-                "path": tar_path,
-                "filename": "ha_config_20260201_120000.tar.gz",
-                "timestamp": datetime(2026, 2, 1, 12, 0, 0),
-            },
+            make_backup_record(
+                tar_path,
+                "ha_config_20260201_120000.tar.gz",
+                datetime(2026, 2, 1, 12, 0, 0),
+            ),
         ]
         cl_path = tmp_path / "ha_config_20260201_120000.changelog"
         cl_path.write_text("old content")
@@ -559,11 +550,11 @@ class TestL59AtomicWrite:
         from tools.generate_changelog import generate_for_backup
 
         tar_path = make_tar(tmp_path, {"config/test.yaml": "key: value\n"})
-        backup = {
-            "path": tar_path,
-            "filename": "ha_config_20260201_120000.tar.gz",
-            "timestamp": datetime(2026, 2, 1, 12, 0, 0),
-        }
+        backup = make_backup_record(
+            tar_path,
+            "ha_config_20260201_120000.tar.gz",
+            datetime(2026, 2, 1, 12, 0, 0),
+        )
 
         # Pre-create a changelog to verify it survives a failure
         cl_path = tmp_path / "ha_config_20260201_120000.changelog"
@@ -598,16 +589,16 @@ class TestL60ValueError:
         from tools.generate_changelog import generate_for_backup
 
         tar_path = make_tar(tmp_path, {"config/test.yaml": "key: value\n"})
-        backup = {
-            "path": tar_path,
-            "filename": "ha_config_20260201_120000.tar.gz",
-            "timestamp": datetime(2026, 2, 1, 12, 0, 0),
-        }
-        other_backup = {
-            "path": tar_path,
-            "filename": "nonexistent.tar.gz",
-            "timestamp": datetime(2026, 2, 1, 12, 0, 0),
-        }
+        backup = make_backup_record(
+            tar_path,
+            "ha_config_20260201_120000.tar.gz",
+            datetime(2026, 2, 1, 12, 0, 0),
+        )
+        other_backup = make_backup_record(
+            tar_path,
+            "nonexistent.tar.gz",
+            datetime(2026, 2, 1, 12, 0, 0),
+        )
         with (
             patch("tools.backup_common.BACKUP_DIR", tmp_path),
             pytest.raises(ValueError, match="not found in the backup list"),
@@ -626,11 +617,9 @@ class TestL62Format:
 
         tar_path = make_tar(tmp_path, {"config/test.yaml": "key: value\n"})
         tz_aware = datetime(2026, 2, 1, 12, 0, 0, tzinfo=timezone(timedelta(hours=11)))
-        backup = {
-            "path": tar_path,
-            "filename": "ha_config_20260201_120000.tar.gz",
-            "timestamp": tz_aware,
-        }
+        backup = make_backup_record(
+            tar_path, "ha_config_20260201_120000.tar.gz", tz_aware
+        )
         content = generate_changelog(backup, None)
         assert "+1100" in content or "+11:00" in content
 
@@ -655,11 +644,11 @@ class TestL63Gaps:
 
         content = "key: value\nemoji: 🔥\n"
         tar_path = make_tar(tmp_path, {"config/test.yaml": content})
-        backup = {
-            "path": tar_path,
-            "filename": "ha_config_20260201_120000.tar.gz",
-            "timestamp": datetime(2026, 2, 1, 12, 0, 0),
-        }
+        backup = make_backup_record(
+            tar_path,
+            "ha_config_20260201_120000.tar.gz",
+            datetime(2026, 2, 1, 12, 0, 0),
+        )
         with patch("tools.backup_common.BACKUP_DIR", tmp_path):
             cl_path = generate_for_backup(backup, [backup])
         text = cl_path.read_text(encoding="utf-8")
@@ -685,16 +674,16 @@ class TestL63Gaps:
         from tools.generate_changelog import generate_changelog
 
         tar_path = make_tar(tmp_path, {"config/test.yaml": "content\n"})
-        backup = {
-            "path": tar_path,
-            "filename": "ha_config_20260201_120000.tar.gz",
-            "timestamp": datetime(2026, 2, 1, 12, 0, 0),
-        }
-        prev = {
-            "path": tar_path,
-            "filename": "ha_config_20260101_120000.tar.gz",
-            "timestamp": datetime(2026, 1, 1, 12, 0, 0),
-        }
+        backup = make_backup_record(
+            tar_path,
+            "ha_config_20260201_120000.tar.gz",
+            datetime(2026, 2, 1, 12, 0, 0),
+        )
+        prev = make_backup_record(
+            tar_path,
+            "ha_config_20260101_120000.tar.gz",
+            datetime(2026, 1, 1, 12, 0, 0),
+        )
         c1 = generate_changelog(backup, prev)
         c2 = generate_changelog(backup, prev)
         assert c1 == c2
@@ -708,16 +697,16 @@ class TestL63Gaps:
         tar1 = make_tar(sub, {"config/test.yaml": "old\n"})
         tar2 = make_tar(tmp_path, {"config/test.yaml": "new\n"})
 
-        older = {
-            "path": tar1,
-            "filename": "ha_config_20260101_120000.tar.gz",
-            "timestamp": datetime(2026, 1, 1, 12, 0, 0),
-        }
-        newer = {
-            "path": tar2,
-            "filename": "ha_config_20260201_120000.tar.gz",
-            "timestamp": datetime(2026, 2, 1, 12, 0, 0),
-        }
+        older = make_backup_record(
+            tar1,
+            "ha_config_20260101_120000.tar.gz",
+            datetime(2026, 1, 1, 12, 0, 0),
+        )
+        newer = make_backup_record(
+            tar2,
+            "ha_config_20260201_120000.tar.gz",
+            datetime(2026, 2, 1, 12, 0, 0),
+        )
         backups = [older, newer]
 
         with patch("tools.backup_common.BACKUP_DIR", tmp_path):
