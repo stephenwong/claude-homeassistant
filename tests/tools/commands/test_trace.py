@@ -2,11 +2,14 @@
 
 import json
 from argparse import Namespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import pytest
+import requests
 
 from tests.helpers import make_parser, parse_command_args
+from tests.tools.trace_support import (
+    make_args,
+)
 from tools.commands import trace as trace_cmd
 from tools.common import HARequestError
 
@@ -42,44 +45,6 @@ def test_cap_trace_dict_includes_markers_in_fit_check():
     )
 
 
-def make_args(**overrides):
-    defaults = dict(
-        entity_id=None,
-        first=None,
-        pretty=False,
-        summary=False,
-        no_summary=True,
-        pick=None,
-        max_chars=None,
-    )
-    defaults.update(overrides)
-    return Namespace(**defaults)
-
-
-@pytest.fixture
-def mock_clients():
-    with (
-        patch("tools.commands.trace.HAWSClient.from_env") as mock_from_env,
-        patch("tools.commands.trace.HAClient.from_env") as mock_rest_from_env,
-    ):
-        mock_ws = MagicMock()
-        mock_rest = MagicMock()
-        mock_rest.__enter__.return_value = mock_rest
-        mock_rest.get_json.return_value = {"attributes": {}}
-        mock_from_env.return_value = mock_ws
-        mock_rest_from_env.return_value = mock_rest
-        mock_ws.command.return_value = []
-        mock_ws.rest_client = mock_rest
-        yield mock_rest, mock_ws
-
-
-@pytest.fixture
-def mock_client(mock_clients):
-    """Expose the WebSocket client for command-level tests."""
-    _, mock_ws = mock_clients
-    return mock_ws
-
-
 def _configure_single_trace(mock_client, trace, item_id="test"):
     """Configure the shared list/get response for a single-trace test."""
     mock_client.command.side_effect = [
@@ -100,57 +65,6 @@ def _iter_changed_variables(data):
             changed_variables = entry.get("changed_variables")
             if isinstance(changed_variables, dict):
                 yield changed_variables
-
-
-def _mock_trace_entry(
-    *,
-    item_id: str = "baz_qux",
-    run_id: str = "run456",
-    timestamp: dict | None = None,
-) -> dict:
-    """Build a trace/list entry matching the real HA response shape."""
-    return {
-        "item_id": item_id,
-        "run_id": run_id,
-        "state": "stopped",
-        "last_step": "action/0/choose/0/sequence/0",
-        "trigger": "state of binary_sensor.test",
-        "timestamp": timestamp
-        or {
-            "start": "2026-01-01T00:00:00+00:00",
-            "finish": "2026-01-01T00:00:01+00:00",
-        },
-        "domain": "automation",
-        "script_execution": "finished",
-    }
-
-
-def _make_ws_command_side_effect(
-    traces: list[dict] | None = None,
-    trace_detail: dict | None = None,
-):
-    """Build WebSocket responses for trace/list and trace/get calls."""
-    all_traces = traces if traces is not None else [_mock_trace_entry()]
-    detail = trace_detail or {
-        "item_id": "baz_qux",
-        "run_id": "run456",
-        "trace": {"1": [{"path": "action/0", "result": "ok"}]},
-    }
-
-    def _side_effect(cmd: str, **kw):
-        if cmd == "trace/list":
-            if "item_id" in kw:
-                return [t for t in all_traces if t["item_id"] == kw["item_id"]]
-            return list(all_traces)
-        if cmd == "trace/get":
-            item_id = kw.get("item_id", "")
-            run_id = kw.get("run_id", "")
-            if not item_id or not run_id:
-                raise HARequestError("trace/get: missing item_id or run_id")
-            return dict(detail, item_id=item_id, run_id=run_id)
-        raise HARequestError(f"Unknown command: {cmd}")
-
-    return _side_effect
 
 
 SAMPLE_TRACES = [
@@ -478,21 +392,27 @@ class TestRun:
             "run_id": "abc123",
         }
 
-    def test_single_entity_rest_lookup_closes_after_success(self, mock_client, capsys):
+    def test_single_entity_rest_lookup_closes_after_success(
+        self, mock_clients, mock_client, capsys
+    ):
+        mock_rest, _ = mock_clients
         mock_client.command.side_effect = [
             SAMPLE_TRACES,
             {"trace": {}, "item_id": "morning_routine"},
         ]
         args = make_args(entity_id="automation.morning_routine")
         assert trace_cmd.run(args) == 0
-        mock_client.rest_client.__exit__.assert_called_once()
+        mock_rest._session.close.assert_called_once()
 
-    def test_single_entity_rest_lookup_closes_after_failure(self, mock_client, capsys):
-        mock_client.rest_client.get_json.side_effect = HARequestError("missing")
+    def test_single_entity_rest_lookup_closes_after_failure(
+        self, mock_clients, mock_client, capsys
+    ):
+        mock_rest, _ = mock_clients
+        mock_rest._session.get.side_effect = requests.RequestException("missing")
         mock_client.command.return_value = []
         args = make_args(entity_id="automation.morning_routine")
         assert trace_cmd.run(args) == 1
-        mock_client.rest_client.__exit__.assert_called_once()
+        mock_rest._session.close.assert_called_once()
 
     def test_single_entity_not_found_returns_1(self, mock_client, capsys):
         mock_client.command.return_value = SAMPLE_TRACES

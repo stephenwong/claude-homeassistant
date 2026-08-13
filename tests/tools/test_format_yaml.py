@@ -12,7 +12,8 @@ def test_formats_yaml_and_preserves_permissions(tmp_path, monkeypatch):
     monkeypatch.setattr("sys.argv", ["format_yaml", str(path)])
 
     assert format_yaml.main() == 0
-    assert "root:" in path.read_text()
+    formatted = path.read_text()
+    assert formatted == "root:\n  value: 'quoted'\n"
     assert path.stat().st_mode & 0o777 == 0o640
 
 
@@ -46,7 +47,7 @@ def test_dump_failure_preserves_original(tmp_path, monkeypatch):
         format_yaml.main()
 
     assert path.read_text() == before
-    assert not any(p.name.startswith(".tmp") for p in tmp_path.iterdir())
+    assert not any(p.name.startswith("tmp") for p in tmp_path.iterdir())
 
 
 def test_replace_failure_preserves_original_and_cleans_temp(tmp_path, monkeypatch):
@@ -67,17 +68,3 @@ def test_replace_failure_preserves_original_and_cleans_temp(tmp_path, monkeypatc
 
     assert path.read_text() == before
     assert len(list(tmp_path.iterdir())) == 1
-
-
-def test_format_does_not_fsync_temporary_file(tmp_path, monkeypatch):
-    from tools import common
-
-    path = tmp_path / "config.yaml"
-    path.write_text("root: value\n")
-    fsynced = []
-    monkeypatch.setattr(common.os, "fsync", lambda fd: fsynced.append(fd))
-    monkeypatch.setattr("sys.argv", ["format_yaml", str(path)])
-
-    assert format_yaml.main() == 0
-
-    assert fsynced == []

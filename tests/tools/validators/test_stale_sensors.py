@@ -308,7 +308,7 @@ def test_parse_timestamp_handles_positive_offset_aest():
 
 def test_disabled_or_hidden_sensor_ignored(config_dir):
     """Disabled or hidden entities are excluded from staleness checks."""
-    _write_entity_registry(
+    validator, result = _run_stale_validation(
         config_dir,
         [
             {
@@ -324,8 +324,6 @@ def test_disabled_or_hidden_sensor_ignored(config_dir):
                 "hidden_by": "user",
             },
         ],
-    )
-    mock_client = _mock_states(
         [
             {
                 "entity_id": "sensor.disabled_temp",
@@ -339,20 +337,16 @@ def test_disabled_or_hidden_sensor_ignored(config_dir):
                 "last_updated": "2026-06-24T20:00:00+00:00",
                 "attributes": {},
             },
-        ]
+        ],
+        datetime(2026, 6, 25, 21, 0, 0, tzinfo=UTC),
     )
-    with patch("tools.validators.stale_sensors.HAClient", return_value=mock_client):
-        v = StaleSensorValidator(str(config_dir))
-        v._get_current_time = MagicMock(
-            return_value=datetime(2026, 6, 25, 21, 0, 0, tzinfo=UTC)
-        )
-        assert v.validate_all() is True
-        assert_no_diagnostic(v, "warnings")
+    assert result is True
+    assert_no_diagnostic(validator, "warnings")
 
 
 def test_virtual_platform_ignored(config_dir):
     """Template/group/utility_meter platform entities are ignored."""
-    _write_entity_registry(
+    validator, result = _run_stale_validation(
         config_dir,
         [
             {
@@ -368,8 +362,6 @@ def test_virtual_platform_ignored(config_dir):
                 "hidden_by": None,
             },
         ],
-    )
-    mock_client = _mock_states(
         [
             {
                 "entity_id": "sensor.template_temp",
@@ -383,15 +375,11 @@ def test_virtual_platform_ignored(config_dir):
                 "last_updated": "2026-06-24T20:00:00+00:00",
                 "attributes": {},
             },
-        ]
+        ],
+        datetime(2026, 6, 25, 21, 0, 0, tzinfo=UTC),
     )
-    with patch("tools.validators.stale_sensors.HAClient", return_value=mock_client):
-        v = StaleSensorValidator(str(config_dir))
-        v._get_current_time = MagicMock(
-            return_value=datetime(2026, 6, 25, 21, 0, 0, tzinfo=UTC)
-        )
-        assert v.validate_all() is True
-        assert_no_diagnostic(v, "warnings")
+    assert result is True
+    assert_no_diagnostic(validator, "warnings")
 
 
 def test_restored_entity_flagged(config_dir):
@@ -667,8 +655,7 @@ def test_unexpected_timestamp_parser_error_propagates(config_dir):
 def test_ha_stale_timeout_env_overrides_default(config_dir):
     """HA_STALE_TIMEOUT env var overrides the default 2-second timeout."""
     with patch("tools.validators.stale_sensors.HAClient") as mock_class:
-        inst = MagicMock()
-        inst.get_json.return_value = []
+        inst = _mock_states([])
         mock_class.return_value = inst
         with patch.dict("os.environ", {"HA_STALE_TIMEOUT": "9"}):
             v = StaleSensorValidator(str(config_dir))
@@ -996,8 +983,7 @@ def test_missing_ha_url_token_skips_gracefully(config_dir):
 def test_invalid_ha_stale_timeout_warns(config_dir):
     """Non-integer HA_STALE_TIMEOUT logs an info warning with the default fallback."""
     with patch("tools.validators.stale_sensors.HAClient") as mock_class:
-        inst = MagicMock()
-        inst.get_json.return_value = []
+        inst = _mock_states([])
         mock_class.return_value = inst
         with patch.dict("os.environ", {"HA_STALE_TIMEOUT": "notanint"}):
             v = StaleSensorValidator(str(config_dir))
@@ -1010,8 +996,7 @@ def test_invalid_ha_stale_timeout_warns(config_dir):
 
 def test_states_not_list_is_skipped(config_dir):
     """When /api/states returns a dict instead of a list, skip with info."""
-    client = MagicMock()
-    client.get_json.return_value = {}
+    client = _mock_states({})
     with patch("tools.validators.stale_sensors.HAClient", return_value=client):
         v = StaleSensorValidator(str(config_dir))
         assert v.validate_all() is True

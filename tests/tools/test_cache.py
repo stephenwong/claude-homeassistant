@@ -355,15 +355,6 @@ class TestM2AtomicSaveCache:
         # And no .tmp left behind.
         assert not (cache_file.with_suffix(".json.tmp")).exists()
 
-    def test_load_cache_retries_on_transient_json_error(self, tmp_path):
-        """M2: load_cache degrades gracefully on transient JSONDecodeError."""
-        from tools.cache import load_cache
-
-        cache_file = tmp_path / ".cache" / "validators" / "TestValidator.json"
-        cache_file.parent.mkdir(parents=True)
-        cache_file.write_text("")  # invalid JSON
-        assert load_cache(tmp_path, "TestValidator") is None
-
     def test_load_cache_succeeds_after_transient_json_error(
         self, tmp_path, monkeypatch, cache_record
     ):
@@ -373,6 +364,8 @@ class TestM2AtomicSaveCache:
         cache_file = tmp_path / ".cache" / "validators" / "TestValidator.json"
         cache_file.parent.mkdir(parents=True)
         valid = cache_record(hash="h", duration=0.1)
+        cache_file.write_text(json.dumps(valid))
+        real_load = cache_mod.json.load
         calls = 0
 
         def load(_file):
@@ -380,29 +373,33 @@ class TestM2AtomicSaveCache:
             calls += 1
             if calls == 1:
                 raise cache_mod.json.JSONDecodeError("transient", "", 0)
-            return valid
+            return real_load(_file)
 
         monkeypatch.setattr(cache_mod.json, "load", load)
-        cache_file.write_text("ignored")
+        monkeypatch.setattr(cache_mod.time, "sleep", lambda _seconds: None)
         assert load_cache(tmp_path, "TestValidator") == valid
+        assert calls == 2
 
 
 class TestSaveBlobErrors:
-    def test_save_blob_warns_on_oserror(self, tmp_path, capsys):
-        """save_blob prints WARN to stderr when file write fails."""
-        with patch("builtins.open", side_effect=OSError("permission denied")):
-            save_blob(tmp_path, "testkey", {"output": "data"})
+    @pytest.mark.parametrize(
+        ("save_function", "name", "error"),
+        [
+            (save_blob, "testkey", "permission denied"),
+            (save_cache, "Foo", "disk full"),
+        ],
+        ids=["blob", "validator"],
+    )
+    def test_save_warns_on_oserror(self, tmp_path, capsys, save_function, name, error):
+        """Cache writers print WARN to stderr when file writes fail."""
+        with patch("builtins.open", side_effect=OSError(error)):
+            if save_function is save_blob:
+                save_function(tmp_path, name, {"output": "data"})
+            else:
+                save_function(tmp_path, name, "Test", "hash", True, 0.5)
         _, err = capsys.readouterr()
         assert "WARN" in err
-        assert "testkey" in err
-
-    def test_save_cache_warns_on_oserror(self, tmp_path, capsys):
-        """save_cache prints WARN to stderr when file write fails."""
-        with patch("builtins.open", side_effect=OSError("disk full")):
-            save_cache(tmp_path, "Foo", "Test", "hash", True, 0.5)
-        _, err = capsys.readouterr()
-        assert "WARN" in err
-        assert "Foo" in err
+        assert name in err
 
 
 class TestBlobCache:

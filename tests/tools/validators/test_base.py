@@ -51,7 +51,7 @@ class TestRunCli:
         (tmp_path / "config" / "configuration.yaml").write_text("homeassistant:\n")
         assert _DummyValidator.run_cli("dummy description") == 0
 
-    def test_description_propagated_to_argparse(self, monkeypatch, dummy_config):
+    def test_description_propagated_to_argparse(self, monkeypatch):
         monkeypatch.setattr("sys.argv", ["dummy", "--help"])
         with pytest.raises(SystemExit) as exc:
             _DummyValidator.run_cli("UNIQUE_DESCRIPTION_TOKEN")

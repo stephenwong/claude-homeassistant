@@ -63,15 +63,31 @@ test_prerequisites_preserve_macos_check() {
 
 test_install_dependencies() {
     local bin_dir="$TEST_ROOT/install-bin"
+    local calls_file="$TEST_ROOT/uv-calls"
     local output
 
     mkdir -p "$bin_dir"
-    printf '#!/bin/bash\nexit 0\n' > "$bin_dir/uv"
+    UV_CALLS_FILE="$calls_file" cat > "$bin_dir/uv" <<'EOF'
+#!/bin/bash
+set -u
+printf '%s\n' "$*" >> "$UV_CALLS_FILE"
+case "$*" in
+    "sync") exit 0 ;;
+    "run python -c import aiohttp, homeassistant, jsonschema, requests, ruamel.yaml, voluptuous, yaml") exit 0 ;;
+    *) exit 1 ;;
+esac
+EOF
     chmod +x "$bin_dir/uv"
 
-    output=$(PATH="$bin_dir:$PATH" install_dependencies 2>&1)
+    output=$(UV_CALLS_FILE="$calls_file" PATH="$bin_dir:$PATH" install_dependencies 2>&1)
     [[ "$output" == *"All Python dependencies verified"* ]] || \
         fail "install_dependencies should verify Python dependencies"
+    mapfile -t calls < "$calls_file"
+    assert_equal 2 "${#calls[@]}" "install_dependencies should make two uv calls"
+    assert_equal "sync" "${calls[0]}" "install_dependencies should sync dependencies"
+    assert_equal \
+        "run python -c import aiohttp, homeassistant, jsonschema, requests, ruamel.yaml, voluptuous, yaml" \
+        "${calls[1]}" "install_dependencies should verify expected dependencies"
 }
 
 test_configure_environment() {
@@ -138,18 +154,20 @@ EOF
 }
 
 test_summary() {
-    local output
+    local output state expected
 
     HA_HOST=homeassistant.local
-    SSH_CONFIGURED=true
-    output=$(print_summary)
-    [[ "$output" == *"SSH Access: ✅ Configured and tested"* ]] || \
-        fail "print_summary should report configured SSH"
-
-    SSH_CONFIGURED=false
-    output=$(print_summary)
-    [[ "$output" == *"SSH Access: ⚠️  Needs configuration"* ]] || \
-        fail "print_summary should report unconfigured SSH"
+    for state in true false; do
+        if [[ "$state" == true ]]; then
+            expected="SSH Access: ✅ Configured and tested"
+        else
+            expected="SSH Access: ⚠️  Needs configuration"
+        fi
+        SSH_CONFIGURED=$state
+        output=$(print_summary)
+        [[ "$output" == *"$expected"* ]] || \
+            fail "print_summary should report SSH state '$state'"
+    done
 }
 
 test_main_orchestration() {

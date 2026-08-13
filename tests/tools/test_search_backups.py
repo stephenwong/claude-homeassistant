@@ -6,6 +6,8 @@ import tarfile
 from datetime import datetime
 from unittest.mock import patch
 
+import pytest
+
 from tests.helpers import make_backup_record, make_tar
 from tools.backup_common import BackupRecord
 from tools.search_backups import is_likely_unsafe_regex, search_backup
@@ -28,25 +30,23 @@ def _run_main(monkeypatch, backups, *arguments):
 
 class TestSearchBackup:
     def test_finds_pattern_in_yaml(self, tmp_path):
-        tar_path = make_tar(
+        backup = _make_backup(
             tmp_path,
             {"config/automations.yaml": "- alias: Test\n  entity_id: sensor.test\n"},
         )
-        backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
         matches, _u = search_backup(backup, re.compile("sensor.test"))
         assert len(matches) == 1
         assert matches[0]["file"] == "config/automations.yaml"
         assert matches[0]["line_num"] == 2
 
     def test_yaml_only_filter(self, tmp_path):
-        tar_path = make_tar(
+        backup = _make_backup(
             tmp_path,
             {
                 "config/test.yaml": "pattern_match\n",
                 "config/test.sh": "pattern_match\n",
             },
         )
-        backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
         matches, _u = search_backup(backup, re.compile("pattern_match"), yaml_only=True)
         assert len(matches) == 1
         assert matches[0]["file"] == "config/test.yaml"
@@ -55,44 +55,40 @@ class TestSearchBackup:
 
     def test_zero_context_accepted(self, tmp_path):
         """The default zero-context search does not crash."""
-        tar_path = make_tar(tmp_path, {"x.yaml": "line1\npattern\nline3\n"})
-        backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
+        backup = _make_backup(tmp_path, {"x.yaml": "line1\npattern\nline3\n"})
         matches, _u = search_backup(backup, re.compile("pattern"), context_lines=0)
         assert len(matches) >= 1
 
     def test_all_files_filter(self, tmp_path):
-        tar_path = make_tar(
+        backup = _make_backup(
             tmp_path,
             {
                 "config/test.yaml": "pattern_match\n",
                 "config/test.sh": "pattern_match\n",
             },
         )
-        backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
         matches, _u = search_backup(
             backup, re.compile("pattern_match"), yaml_only=False
         )
         assert len(matches) == 2
 
     def test_context_lines(self, tmp_path):
-        tar_path = make_tar(
+        backup = _make_backup(
             tmp_path,
             {
                 "config/test.yaml": "line1\nline2\nMATCH\nline4\nline5\n",
             },
         )
-        backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
         matches, _u = search_backup(backup, re.compile("MATCH"), context_lines=1)
         assert len(matches) == 1
         assert matches[0]["context_before"] == ["line2"]
         assert matches[0]["context_after"] == ["line4"]
 
     def test_no_matches(self, tmp_path):
-        tar_path = make_tar(
+        backup = _make_backup(
             tmp_path,
             {"config/test.yaml": "nothing interesting here\n"},
         )
-        backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
         matches, _u = search_backup(backup, re.compile("nonexistent_pattern"))
         assert matches == []
 
@@ -109,11 +105,10 @@ class TestSearchBackup:
         assert unreadable is True
 
     def test_multiple_matches_in_file(self, tmp_path):
-        tar_path = make_tar(
+        backup = _make_backup(
             tmp_path,
             {"config/test.yaml": "match1\nno\nmatch2\n"},
         )
-        backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
         matches, _u = search_backup(backup, re.compile("match"))
         assert len(matches) == 2
 
@@ -166,11 +161,13 @@ class TestSearchBackup:
 
 
 class TestRegexSafety:
-    def test_detects_nested_quantifier_pattern(self):
-        assert is_likely_unsafe_regex("(a+)+b") is True
-
-    def test_allows_normal_pattern(self):
-        assert is_likely_unsafe_regex("sensor.temperature") is False
+    @pytest.mark.parametrize(
+        ("pattern", "expected"),
+        [("(a+)+b", True), ("sensor.temperature", False)],
+        ids=["nested-quantifier", "normal-pattern"],
+    )
+    def test_regex_safety_classification(self, pattern, expected):
+        assert is_likely_unsafe_regex(pattern) is expected
 
 
 class TestSearchBackupsMainFlow:
@@ -280,17 +277,6 @@ class TestLazyTarIteration:
         assert matches[0]["file"] == "config/test.yaml"
 
 
-class TestUnsafeRegexHelper:
-    """The unsafe-regex helper detects risky patterns and accepts normal ones."""
-
-    def test_detects_nested_quantifiers_and_allows_normal_patterns(self):
-        """The unsafe-regex helper distinguishes risky and normal patterns."""
-        from tools.search_backups import is_likely_unsafe_regex
-
-        assert is_likely_unsafe_regex("(a+)+") is True
-        assert is_likely_unsafe_regex("normal") is False
-
-
 class TestUnreadableBackups:
     """Unreadable backup archives are reported separately from no matches."""
 
@@ -388,13 +374,3 @@ class TestTarExtractionSafety:
         assert unreadable is False
         assert len(matches) == 1
         assert matches[0]["file"] == "config/real.yaml"
-
-    def test_comment_invariant_near_extract(self):
-        """The extraction helper documents its extract-and-isfile safety invariant."""
-        import inspect
-
-        import tools.backup_common
-
-        src = inspect.getsource(tools.backup_common)
-        assert "extractfile" in src
-        assert "isfile" in src

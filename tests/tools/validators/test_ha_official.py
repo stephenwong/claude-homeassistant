@@ -1,10 +1,11 @@
 """Tests for tools/ha_official_validator.py - official HA validation."""
 
 import subprocess
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
+from tests.helpers import make_completed_process
 from tools.validators.ha_official import (
     HAOfficialValidator,
     _is_benign_package_line,
@@ -26,29 +27,28 @@ def validator(config_dir):
 class TestHAOfficialValidatorMain:
     """Cover lines 169-186: main() function."""
 
-    def test_main_valid(self, tmp_path, monkeypatch):
+    def test_main_returns_zero_for_valid_config(self, tmp_path, monkeypatch):
         from tools.validators.ha_official import main
 
         (tmp_path / "configuration.yaml").write_text("homeassistant:\n  name: Test\n")
         monkeypatch.setattr("sys.argv", ["ha_official_validator", str(tmp_path)])
 
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "Configuration check successful!"
-        mock_result.stderr = ""
+        mock_result = make_completed_process(
+            returncode=0, stdout="Configuration check successful!"
+        )
         with patch(
             "tools.validators.ha_official.subprocess.run", return_value=mock_result
         ):
             assert main() == 0
 
-    def test_main_invalid(self, tmp_path, monkeypatch):
+    def test_main_returns_one_for_missing_config(self, tmp_path, monkeypatch):
         from tools.validators.ha_official import main
 
         monkeypatch.setattr("sys.argv", ["ha_official_validator", "/nonexistent"])
         assert main() == 1
 
     def test_subprocess_output_uses_replacement_decoding(self, validator, monkeypatch):
-        result = MagicMock(returncode=0, stdout="ok", stderr="")
+        result = make_completed_process(returncode=0, stdout="ok")
         with patch(
             "tools.validators.ha_official.subprocess.run", return_value=result
         ) as run:
@@ -162,11 +162,7 @@ class TestL52ErrorCountRegex:
     )
     def test_error_count_regex_matches_variants(self, validator, line, expected):
         validator.parse_check_config_output(line + "\n", "")
-        # Should produce info for 0 errors, error for non-zero
-        if expected == 0:
-            assert any(str(expected) in i for i in validator.info)
-        else:
-            assert any(str(expected) in e for e in validator.errors)
+        assert any(str(expected) in e for e in validator.errors)
 
 
 class TestIsIgnorableTracebackLine:
@@ -334,10 +330,9 @@ class TestM12RuntimeErrorScoping:
 
 class TestRunHACheckConfig:
     def test_successful_check(self, validator):
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "Configuration check successful!"
-        mock_result.stderr = ""
+        mock_result = make_completed_process(
+            returncode=0, stdout="Configuration check successful!"
+        )
 
         with patch(
             "tools.validators.ha_official.subprocess.run",
@@ -346,10 +341,9 @@ class TestRunHACheckConfig:
             assert validator.run_ha_check_config() is True
 
     def test_failed_check(self, validator):
-        mock_result = MagicMock()
-        mock_result.returncode = 1
-        mock_result.stdout = "ERROR: Invalid configuration"
-        mock_result.stderr = ""
+        mock_result = make_completed_process(
+            returncode=1, stdout="ERROR: Invalid configuration"
+        )
 
         with patch(
             "tools.validators.ha_official.subprocess.run",
@@ -358,7 +352,7 @@ class TestRunHACheckConfig:
             assert validator.run_ha_check_config() is False
 
     def test_failed_check_without_output_has_diagnostic(self, validator):
-        mock_result = MagicMock(returncode=1, stdout="", stderr="")
+        mock_result = make_completed_process(returncode=1)
 
         with patch(
             "tools.validators.ha_official.subprocess.run",
@@ -397,10 +391,10 @@ class TestRunHACheckConfig:
     def test_exit0_demotes_parsed_errors_to_warnings(self, validator):
         """HA exits 0 but stdout has an ERROR line not in the ignore list →
         demote to warnings, return passed=True (CI green)."""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "INFO: Successful config (partial)\nERROR: real error\n"
-        mock_result.stderr = ""
+        mock_result = make_completed_process(
+            returncode=0,
+            stdout="INFO: Successful config (partial)\nERROR: real error\n",
+        )
         with patch(
             "tools.validators.ha_official.subprocess.run",
             return_value=mock_result,
@@ -410,10 +404,7 @@ class TestRunHACheckConfig:
         assert len(validator.warnings) >= 1
 
     def test_nonzero_exit_treats_parsed_errors_as_authoritative(self, validator):
-        mock_result = MagicMock()
-        mock_result.returncode = 1
-        mock_result.stdout = "ERROR: bad config\n"
-        mock_result.stderr = ""
+        mock_result = make_completed_process(returncode=1, stdout="ERROR: bad config\n")
         with patch(
             "tools.validators.ha_official.subprocess.run",
             return_value=mock_result,
@@ -431,10 +422,9 @@ class TestRunHACheckConfig:
         assert any("configuration.yaml not found" in e for e in v.errors)
 
     def test_delegates_to_check_config(self, config_dir, validator):
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "Configuration check successful!"
-        mock_result.stderr = ""
+        mock_result = make_completed_process(
+            returncode=0, stdout="Configuration check successful!"
+        )
 
         with patch(
             "tools.validators.ha_official.subprocess.run",

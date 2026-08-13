@@ -26,6 +26,16 @@ def _mock_offline() -> MagicMock:
     return mock_json_client(side_effect=HARequestError("offline"))
 
 
+def _run_service_validation(config_dir, data, catalog, *, filename="automations.yaml"):
+    """Write an ordinary YAML fixture and validate it against a catalog."""
+    write_yaml(config_dir, data, filename)
+    client = _mock_services(catalog)
+    with patch("tools.validators.services.HAClient.from_env", return_value=client):
+        validator = ServiceValidator(str(config_dir))
+        result = validator.validate_all()
+    return validator, result
+
+
 class TestFileDeps:
     def test_file_deps_empty(self):
         v = ServiceValidator()
@@ -170,7 +180,7 @@ class TestServiceCatalogNormalization:
 
 class TestServiceValidation:
     def test_valid_service_passes(self, config_dir):
-        _write_automation(
+        v, result = _run_service_validation(
             config_dir,
             [
                 {
@@ -182,17 +192,13 @@ class TestServiceValidation:
                     ],
                 },
             ],
+            [{"domain": "light", "services": {"turn_on": {}}}],
         )
-        mock_client = _mock_services([{"domain": "light", "services": {"turn_on": {}}}])
-        with patch(
-            "tools.validators.services.HAClient.from_env", return_value=mock_client
-        ):
-            v = ServiceValidator(str(config_dir))
-            assert v.validate_all() is True
-            assert_no_diagnostic(v, "errors")
+        assert result is True
+        assert_no_diagnostic(v, "errors")
 
     def test_unknown_service_warns(self, config_dir):
-        _write_automation(
+        v, result = _run_service_validation(
             config_dir,
             [
                 {
@@ -204,19 +210,15 @@ class TestServiceValidation:
                     ],
                 },
             ],
+            [{"domain": "light", "services": {"turn_on": {}}}],
         )
-        mock_client = _mock_services([{"domain": "light", "services": {"turn_on": {}}}])
-        with patch(
-            "tools.validators.services.HAClient.from_env", return_value=mock_client
-        ):
-            v = ServiceValidator(str(config_dir))
-            assert v.validate_all() is True
-            assert_diagnostic(v, "warnings", "light.turn_onn")
+        assert result is True
+        assert_diagnostic(v, "warnings", "light.turn_onn")
 
     def test_duplicate_service_references_have_stable_sorted_diagnostics(
         self, config_dir
     ):
-        _write_automation(
+        v, result = _run_service_validation(
             config_dir,
             [
                 {
@@ -230,13 +232,9 @@ class TestServiceValidation:
                     ],
                 },
             ],
+            [{"domain": "light", "services": {}}],
         )
-        mock_client = _mock_services([{"domain": "light", "services": {}}])
-        with patch(
-            "tools.validators.services.HAClient.from_env", return_value=mock_client
-        ):
-            v = ServiceValidator(str(config_dir))
-            assert v.validate_all() is True
+        assert result is True
 
         unknown = [warning for warning in v.warnings if "Unknown service" in warning]
         assert unknown == [
@@ -249,7 +247,7 @@ class TestServiceValidation:
         ]
 
     def test_legacy_service_key_supported(self, config_dir):
-        _write_automation(
+        v, result = _run_service_validation(
             config_dir,
             [
                 {
@@ -261,20 +259,12 @@ class TestServiceValidation:
                     ],
                 },
             ],
+            [{"domain": "notify", "services": {"mobile_devices": {}}}],
         )
-        mock_client = _mock_services(
-            [
-                {"domain": "notify", "services": {"mobile_devices": {}}},
-            ]
-        )
-        with patch(
-            "tools.validators.services.HAClient.from_env", return_value=mock_client
-        ):
-            v = ServiceValidator(str(config_dir))
-            assert v.validate_all() is True
+        assert result is True
 
     def test_template_action_skipped(self, config_dir):
-        _write_automation(
+        v, result = _run_service_validation(
             config_dir,
             [
                 {
@@ -286,14 +276,10 @@ class TestServiceValidation:
                     ],
                 },
             ],
+            [{"domain": "light", "services": {"turn_on": {}}}],
         )
-        mock_client = _mock_services([{"domain": "light", "services": {"turn_on": {}}}])
-        with patch(
-            "tools.validators.services.HAClient.from_env", return_value=mock_client
-        ):
-            v = ServiceValidator(str(config_dir))
-            assert v.validate_all() is True
-            assert_no_diagnostic(v, "errors")
+        assert result is True
+        assert_no_diagnostic(v, "errors")
 
     def test_secrets_yml_skipped(self, config_dir):
         f = config_dir / "secrets.yaml"
@@ -330,32 +316,24 @@ class TestServiceValidation:
             assert_diagnostic(v, "info", "non-domain")
 
     def test_no_actions_found_passes(self, config_dir):
-        _write_automation(
+        v, result = _run_service_validation(
             config_dir,
             [
                 {"id": "t", "alias": "T", "triggers": [], "actions": []},
             ],
+            [],
         )
-        mock_client = _mock_services([])
-        with patch(
-            "tools.validators.services.HAClient.from_env", return_value=mock_client
-        ):
-            v = ServiceValidator(str(config_dir))
-            assert v.validate_all() is True
+        assert result is True
 
     def test_service_in_script_detected(self, config_dir):
-        write_yaml(
+        v, result = _run_service_validation(
             config_dir,
             {"my_script": {"sequence": [{"action": "light.turn_on", "data": {}}]}},
-            "scripts.yaml",
+            [{"domain": "light", "services": {"turn_on": {}}}],
+            filename="scripts.yaml",
         )
-        mock_client = _mock_services([{"domain": "light", "services": {"turn_on": {}}}])
-        with patch(
-            "tools.validators.services.HAClient.from_env", return_value=mock_client
-        ):
-            v = ServiceValidator(str(config_dir))
-            assert v.validate_all() is True
-            assert_no_diagnostic(v, "warnings")
+        assert result is True
+        assert_no_diagnostic(v, "warnings")
 
     def test_broken_yaml_fails(self, config_dir):
         (config_dir / "automations.yaml").write_text("{{{ not valid yaml\n")
@@ -426,8 +404,7 @@ class TestOfflineDegradation:
                 },
             ],
         )
-        mock_client = MagicMock()
-        mock_client.get_json.return_value = None
+        mock_client = mock_json_client()
         with patch(
             "tools.validators.services.HAClient.from_env", return_value=mock_client
         ):
@@ -466,7 +443,7 @@ class TestEdgeCases:
         assert_diagnostic(v, "errors", "does not exist")
 
     def test_mixed_known_and_unknown(self, config_dir):
-        _write_automation(
+        v, result = _run_service_validation(
             config_dir,
             [
                 {
@@ -480,18 +457,12 @@ class TestEdgeCases:
                     ],
                 },
             ],
+            [{"domain": "light", "services": {"turn_on": {}, "turn_off": {}}}],
         )
-        mock_client = _mock_services(
-            [{"domain": "light", "services": {"turn_on": {}, "turn_off": {}}}]
-        )
-        with patch(
-            "tools.validators.services.HAClient.from_env", return_value=mock_client
-        ):
-            v = ServiceValidator(str(config_dir))
-            assert v.validate_all() is True
-            assert_diagnostic(v, "warnings", "light.nonexistent")
-            assert_no_diagnostic(v, "errors", "light.turn_on")
-            assert_no_diagnostic(v, "errors", "light.turn_off")
+        assert result is True
+        assert_diagnostic(v, "warnings", "light.nonexistent")
+        assert_no_diagnostic(v, "errors", "light.turn_on")
+        assert_no_diagnostic(v, "errors", "light.turn_off")
 
 
 class TestL45NetworkGate:

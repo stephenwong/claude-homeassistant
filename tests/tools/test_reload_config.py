@@ -1,12 +1,13 @@
 """Tests for tools/reload_config.py - HA config reload via API."""
 
 import subprocess
-from collections.abc import Callable
 from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
+from tests.helpers import make_completed_process, make_response
 from tools.common import HARequestError
 from tools.ha.client import HAClient
 from tools.reload_config import (
@@ -14,29 +15,18 @@ from tools.reload_config import (
     FILE_TO_SERVICE,
     FULL_RELOAD_SERVICE,
     SERVICE_LABELS,
+    _run_git_status_changes,
     detect_changed_services,
     reload_config,
     reload_service,
 )
 
 
-def _status_changes_helper() -> Callable[..., set[str] | None]:
-    """Return the renamed status helper, regardless of its accepted final name."""
-    import tools.reload_config as reload_module
-
-    for name in ("_run_git_status_changes", "_run_git_status_paths"):
-        helper = getattr(reload_module, name, None)
-        if helper is not None:
-            return helper
-    pytest.fail("git status helper should describe all status changes")
-    raise AssertionError("unreachable")
-
-
 def _diff_only(stdout):
     """Return side_effect list: diff stdout is NUL-delimited, status is empty."""
     return [
-        MagicMock(returncode=0, stdout=stdout),
-        MagicMock(returncode=0, stdout=""),
+        make_completed_process(stdout=stdout),
+        make_completed_process(),
     ]
 
 
@@ -47,8 +37,11 @@ def _nul(s: str) -> str:
 
 def _make_client():
     """Return a mock HAClient with post stubbed to return success by default."""
-    client = MagicMock()
-    client.post.return_value = MagicMock(status_code=200)
+    client = MagicMock(spec=HAClient)
+    client.close = MagicMock()
+    client.__enter__.return_value = client
+    client.__exit__.return_value = None
+    client.post.return_value = make_response()
     client.timeout = 30
     return client
 
@@ -119,9 +112,8 @@ class TestDetectChangedServices:
     def test_modified_added_and_deleted_statuses_are_classified(self):
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = [
-                MagicMock(returncode=0, stdout=""),
-                MagicMock(
-                    returncode=0,
+                make_completed_process(),
+                make_completed_process(
                     stdout=(
                         "M  config/automations.yaml\0"
                         "A  config/scripts.yaml\0"
@@ -139,8 +131,8 @@ class TestDetectChangedServices:
     def test_unstaged_status_entries_are_classified(self):
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = [
-                MagicMock(returncode=0, stdout=""),
-                MagicMock(returncode=0, stdout=" M config/automations.yaml\0"),
+                make_completed_process(),
+                make_completed_process(stdout=" M config/automations.yaml\0"),
             ]
             result = detect_changed_services()
         assert result == {"automation/reload"}
@@ -148,8 +140,8 @@ class TestDetectChangedServices:
     def test_git_diff_and_status_share_execution_contract(self):
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = [
-                MagicMock(returncode=0, stdout=""),
-                MagicMock(returncode=0, stdout=""),
+                make_completed_process(),
+                make_completed_process(),
             ]
             assert detect_changed_services("custom", git_timeout=7) == set()
 
@@ -171,7 +163,7 @@ class TestDetectChangedServices:
 
     def test_git_nonzero_returns_none(self):
         with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=1, stdout="")
+            mock_run.return_value = make_completed_process(returncode=1)
             result = detect_changed_services()
         assert result is None
 
@@ -184,8 +176,8 @@ class TestDetectChangedServices:
     def test_status_short_picks_up_untracked_files(self):
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = [
-                MagicMock(returncode=0, stdout=""),
-                MagicMock(returncode=0, stdout="?? config/automations.yaml\0"),
+                make_completed_process(),
+                make_completed_process(stdout="?? config/automations.yaml\0"),
             ]
             result = detect_changed_services()
         assert result == {"automation/reload"}
@@ -199,7 +191,7 @@ class TestDetectChangedServices:
     def test_timeout_on_status_triggers_safe_full_reload(self):
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = [
-                MagicMock(returncode=0, stdout="config/automations.yaml\0"),
+                make_completed_process(stdout="config/automations.yaml\0"),
                 subprocess.TimeoutExpired(cmd="git", timeout=10),
             ]
             result = detect_changed_services()
@@ -209,9 +201,8 @@ class TestDetectChangedServices:
         """Rename status classifies both old and new reloadable paths."""
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = [
-                MagicMock(returncode=0, stdout=""),
-                MagicMock(
-                    returncode=0,
+                make_completed_process(),
+                make_completed_process(
                     stdout="R  config/automations.yaml\0config/scripts.yaml\0",
                 ),
             ]
@@ -224,7 +215,7 @@ class TestReloadService:
 
     def test_success_returns_service_and_true(self):
         client = _make_client()
-        client.post.return_value = MagicMock(status_code=200)
+        client.post.return_value = make_response()
         svc, ok, err = reload_service(client, "automation/reload")
         assert svc == "automation/reload"
         assert ok is True
@@ -232,7 +223,9 @@ class TestReloadService:
 
     def test_failure_returns_service_and_false_with_detail(self):
         client = _make_client()
-        resp = MagicMock(status_code=500, text="Internal Server Error: bad config")
+        resp = make_response(
+            "Internal Server Error: bad config", status=500, content_type="text/plain"
+        )
         client.post.return_value = resp
         svc, ok, err = reload_service(client, "automation/reload")
         assert svc == "automation/reload"
@@ -241,13 +234,13 @@ class TestReloadService:
 
     def test_post_invoked_with_correct_path(self):
         client = _make_client()
-        client.post.return_value = MagicMock(status_code=200)
+        client.post.return_value = make_response()
         reload_service(client, "automation/reload")
         client.post.assert_called_once_with("/api/services/automation/reload", json={})
 
     def test_core_config_service_dispatches_correctly(self):
         client = _make_client()
-        client.post.return_value = MagicMock(status_code=200)
+        client.post.return_value = make_response()
         reload_service(client, "homeassistant/reload_core_config")
         client.post.assert_called_once_with(
             "/api/services/homeassistant/reload_core_config", json={}
@@ -306,8 +299,8 @@ class TestReloadConfig:
             assert reload_config() is True
 
     def test_success_closes_client_session(self, monkeypatch):
-        session = MagicMock()
-        session.post.return_value = MagicMock(status_code=200)
+        session = MagicMock(spec=requests.sessions.Session)
+        session.post.return_value = make_response()
         client = HAClient("http://ha:8123", "tok", session=session)
         monkeypatch.setattr("tools.reload_config.HAClient.from_env", lambda: client)
         with patch(
@@ -318,7 +311,7 @@ class TestReloadConfig:
         session.close.assert_called_once()
 
     def test_exception_closes_client_session(self, monkeypatch):
-        session = MagicMock()
+        session = MagicMock(spec=requests.sessions.Session)
         client = HAClient("http://ha:8123", "tok", session=session)
         monkeypatch.setattr("tools.reload_config.HAClient.from_env", lambda: client)
         with (
@@ -336,7 +329,7 @@ class TestReloadConfig:
         session.close.assert_called_once()
 
     def test_api_failure(self):
-        self._mock_client.post.return_value = MagicMock(status_code=500)
+        self._mock_client.post.return_value = make_response(status=500)
         with patch(
             "tools.reload_config.detect_changed_services",
             return_value={FULL_RELOAD_SERVICE},
@@ -378,7 +371,7 @@ class TestReloadConfig:
         assert "long_lived_access_token" in err
 
     def test_detect_returns_none_reloads_all_services(self):
-        ok_resp = MagicMock(status_code=200)
+        ok_resp = make_response()
         self._mock_client.post.return_value = ok_resp
         with patch("tools.reload_config.detect_changed_services", return_value=None):
             result = reload_config()
@@ -414,13 +407,13 @@ class TestReloadConfig:
         assert capsys.readouterr().err == ""
 
     def test_detect_none_explains_git_fallback(self, capsys):
-        self._mock_client.post.return_value = MagicMock(status_code=200)
+        self._mock_client.post.return_value = make_response()
         with patch("tools.reload_config.detect_changed_services", return_value=None):
             assert reload_config() is True
         assert "git" in capsys.readouterr().err.lower()
 
     def test_detect_returns_empty_set_reloads_all_services(self):
-        ok_resp = MagicMock(status_code=200)
+        ok_resp = make_response()
         self._mock_client.post.return_value = ok_resp
         with patch("tools.reload_config.detect_changed_services", return_value=set()):
             result = reload_config()
@@ -431,7 +424,7 @@ class TestReloadConfig:
         )
 
     def test_detect_returns_one_service_makes_one_call(self):
-        self._mock_client.post.return_value = MagicMock(status_code=200)
+        self._mock_client.post.return_value = make_response()
         with patch(
             "tools.reload_config.detect_changed_services",
             return_value={"automation/reload"},
@@ -441,8 +434,8 @@ class TestReloadConfig:
         assert self._mock_client.post.call_count == 1
 
     def test_one_service_fails_returns_false(self):
-        ok = MagicMock(status_code=200)
-        fail = MagicMock(status_code=500)
+        ok = make_response()
+        fail = make_response(status=500)
         self._mock_client.post.side_effect = [ok, fail]
         with patch(
             "tools.reload_config.detect_changed_services",
@@ -470,7 +463,7 @@ class TestReloadConfig:
         assert "✅ automations reloaded" in err
 
     def test_prints_failure_per_service(self, capsys):
-        self._mock_client.post.return_value = MagicMock(status_code=500)
+        self._mock_client.post.return_value = make_response(status=500)
         with patch(
             "tools.reload_config.detect_changed_services",
             return_value={"script/reload"},
@@ -482,7 +475,7 @@ class TestReloadConfig:
     def test_core_config_reloads_before_domain_services(self):
         """reload_core_config must run before any domain services in the same call."""
         call_order = []
-        ok_resp = MagicMock(status_code=200)
+        ok_resp = make_response()
 
         def _track_post(path, **kwargs):
             # Path is like "/api/services/automation/reload"
@@ -505,7 +498,7 @@ class TestReloadConfig:
         from tools.reload_config import _execute_reload_plan
 
         client = _make_client()
-        client.post.return_value = MagicMock(status_code=200)
+        client.post.return_value = make_response()
         results = _execute_reload_plan(
             client,
             {
@@ -543,8 +536,8 @@ class TestReloadConfig:
         assert out.startswith("RELOADED 2/2")
 
     def test_summary_mode_compact_failure(self, capsys):
-        ok = MagicMock(status_code=200)
-        fail_resp = MagicMock(status_code=500)
+        ok = make_response()
+        fail_resp = make_response(status=500)
         self._mock_client.post.side_effect = [ok, fail_resp]
         with patch(
             "tools.reload_config.detect_changed_services",
@@ -618,7 +611,7 @@ class TestM15CoreFailureSkipsDomain:
         from unittest.mock import patch
 
         client = _make_client()
-        client.post.return_value = MagicMock(status_code=500)
+        client.post.return_value = make_response(status=500)
 
         def _factory():
             return client
@@ -647,13 +640,11 @@ class TestL68DeterministicOrder:
 
     def test_verbose_output_order_is_deterministic(self, monkeypatch, capsys):
         """L68: output across multiple services must be in sorted order."""
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
         from tools.reload_config import reload_config
 
-        client = MagicMock()
-        client.post.return_value = MagicMock(status_code=200)
-        client.timeout = 30
+        client = _make_client()
 
         def _factory():
             return client
@@ -682,15 +673,14 @@ class TestL70ErrorDetail:
 
     def test_error_detail_propagates_through_reload_config(self, monkeypatch, capsys):
         """L70: a non-2xx reload response must surface response.text in the summary."""
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
         from tools.reload_config import reload_config
 
-        client = MagicMock()
-        client.timeout = 30
-
-        resp = MagicMock(status_code=500, text="Bad config syntax")
-        client.post.return_value = resp
+        client = _make_client()
+        client.post.return_value = make_response(
+            "Bad config syntax", status=500, content_type="text/plain"
+        )
 
         def _factory():
             return client
@@ -785,12 +775,12 @@ class TestRunGitDiff:
             assert _run_git_diff("config", git_timeout=10) == set()
 
     def test_git_nonzero_returns_none(self):
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
         from tools.reload_config import _run_git_diff
 
         with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=1, stdout="")
+            mock_run.return_value = make_completed_process(returncode=1)
             assert _run_git_diff("config", git_timeout=10) is None
 
 
@@ -798,21 +788,20 @@ class TestRunGitStatusChanges:
     """Direct unit tests for the status-change helper."""
 
     def test_untracked_yaml_picked_up(self):
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
         with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                returncode=0,
-                stdout="?? config/automations.yaml\0",
+            mock_run.return_value = make_completed_process(
+                stdout="?? config/automations.yaml\0"
             )
-            result = _status_changes_helper()("config", git_timeout=10)
+            result = _run_git_status_changes("config", git_timeout=10)
         assert result == {"automations.yaml"}
 
     def test_git_failure_returns_none(self):
         from unittest.mock import patch
 
         with patch("subprocess.run", side_effect=FileNotFoundError):
-            assert _status_changes_helper()("config", git_timeout=10) is None
+            assert _run_git_status_changes("config", git_timeout=10) is None
 
 
 class TestMissingTokenHelpHint:

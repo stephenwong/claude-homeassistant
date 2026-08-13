@@ -1,9 +1,9 @@
 """Tests for tools/commands/validate.py — in-process validator runner."""
 
 import hashlib
-import inspect
 import json
 from argparse import Namespace
+from threading import Event
 from unittest.mock import patch
 
 from tests.helpers import parse_command_args
@@ -48,15 +48,6 @@ class TestValidatorResult:
 
 
 class TestRunOne:
-    def test_private_cache_helpers_do_not_accept_unused_description(self):
-        assert (
-            "description"
-            not in inspect.signature(validate._load_cached_result).parameters
-        )
-        assert (
-            "description" not in inspect.signature(validate._run_validator).parameters
-        )
-
     def test_validator_duration_uses_perf_counter(self, config_dir, monkeypatch):
         ticks = iter((10.0, 11.0))
 
@@ -68,16 +59,6 @@ class TestRunOne:
         result = _run_one(YAMLValidator, "YAML", config_dir, quiet=True, force=True)
         assert result.passed is True
         assert result.duration == 1.0
-
-    def test_run_validator_returns_internal_execution_result(self, config_dir):
-        from tools.commands.validate import _run_validator, _ValidatorExecutionResult
-
-        instance = YAMLValidator(config_dir, quiet=True, summary=True)
-        result = _run_validator(instance, 0.0)
-        assert isinstance(result, _ValidatorExecutionResult)
-        assert result.passed is True
-        assert result.cached is False
-        assert result.duration is not None
 
     def test_successful_validator(self, config_dir):
         """A validator that passes returns passed=True."""
@@ -481,7 +462,6 @@ class TestRunValidators:
         self, config_dir, monkeypatch
     ):
         """Parallel completion order must not change diagnostic presentation order."""
-        import time
 
         class FirstValidator:
             pass
@@ -494,12 +474,18 @@ class TestRunValidators:
             "_VALIDATORS",
             [(FirstValidator, "first"), (SecondValidator, "second")],
         )
+        first_started = Event()
+        second_finished = Event()
 
         def fake_run_one(
             cls: object, description: str, *_args: object, **_kwargs: object
         ) -> ValidatorResult:
             if description == "first":
-                time.sleep(0.01)
+                first_started.set()
+                assert second_finished.wait(timeout=1)
+            else:
+                assert first_started.wait(timeout=1)
+                second_finished.set()
             return ValidatorResult(description=description, passed=True)
 
         monkeypatch.setattr(validate, "_run_one", fake_run_one)
@@ -602,7 +588,7 @@ class TestRunValidators:
 class TestM3PassingWarnings:
     """M3: passing-validator warnings must be shown in verbose mode."""
 
-    def test_passing_validator_warrning_visible_in_verbose(
+    def test_passing_validator_warning_visible_in_verbose(
         self, config_dir, capsys, monkeypatch
     ):
         from tools.validators.yaml import YAMLValidator

@@ -1,6 +1,8 @@
 """Shared test helpers for HA config test suite."""
 
 import io
+import json
+import subprocess
 import tarfile
 from argparse import ArgumentParser
 from datetime import datetime
@@ -8,6 +10,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
+import requests
 import yaml
 
 from tools.backup_common import BackupRecord
@@ -38,11 +41,66 @@ def write_yaml(config_dir: Path, data: Any, filename: str = "automations.yaml") 
     return path
 
 
+_MISSING = object()
+
+
+def make_response(
+    data: Any = _MISSING,
+    *,
+    status: int = 200,
+    headers: Any = None,
+    content_type: str | None = None,
+    ct: str | None = None,
+    text: str | None = None,
+    json_data: Any = _MISSING,
+) -> requests.Response:
+    """Build a real HTTP response for client and command tests."""
+    if ct is not None:
+        content_type = ct
+    if data is not _MISSING and json_data is not _MISSING:
+        raise ValueError("provide either data or json_data, not both")
+    if data is not _MISSING and (
+        content_type is None or "json" in content_type.lower()
+    ):
+        json_data = data
+    if json_data is not _MISSING:
+        body = json.dumps(json_data)
+        content_type = content_type or "application/json"
+    elif data is not _MISSING:
+        body = str(data)
+    else:
+        body = "" if text is None else text
+    response = requests.Response()
+    response.status_code = status
+    response._content = body.encode("utf-8")
+    response.headers.update(
+        headers or ({} if content_type is None else {"Content-Type": content_type})
+    )
+    response.json = MagicMock(side_effect=ValueError("invalid JSON"))
+    if json_data is not _MISSING:
+        response.json = MagicMock(return_value=json_data)
+    return response
+
+
+def make_completed_process(
+    args: Any = "git",
+    *,
+    returncode: int = 0,
+    stdout: str = "",
+    stderr: str = "",
+) -> subprocess.CompletedProcess[str]:
+    """Build a real subprocess result for command-boundary tests."""
+    return subprocess.CompletedProcess(args, returncode, stdout, stderr)
+
+
 def mock_json_client(
     result: Any = None, *, side_effect: Exception | None = None
 ) -> MagicMock:
     """Create an HA client mock for a JSON endpoint."""
-    client = MagicMock()
+    from tools.ha.client import HAClient
+
+    client = MagicMock(spec=HAClient)
+    client.close = MagicMock()
     if side_effect is None:
         client.get_json.return_value = result
     else:

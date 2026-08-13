@@ -6,8 +6,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-import yaml
 
+from tests.helpers import write_yaml
 from tools.validators.references import ReferenceValidator, main
 
 
@@ -41,79 +41,63 @@ class _ReverseSet(set):
 @pytest.fixture
 def config_dir(tmp_path):
     """Create config directory with mock registries."""
-    entity_registry_data = {
-        "version": 1,
-        "minor_version": 1,
-        "data": {
-            "entities": [
-                {
-                    "entity_id": "binary_sensor.test_motion_battery",
-                    "id": "88a52f17bf43cb276836f06ac5c07444",
-                    "platform": "test",
-                    "unique_id": "test_motion_battery",
-                    "device_id": "0c086f69ee6b3fa8411af7194876cbd7",
-                    "disabled_by": None,
-                },
-                {
-                    "entity_id": "sensor.disabled_sensor",
-                    "id": "11223344556677889900aabbccddeeff",
-                    "platform": "test",
-                    "unique_id": "disabled_sensor",
-                    "device_id": "disabled_device_id_123456789012",
-                    "disabled_by": "user",
-                },
-                {
-                    "entity_id": "sensor.normal_sensor",
-                    "id": "aabbccddeeff00112233445566778899",
-                    "platform": "test",
-                    "unique_id": "normal_sensor",
-                    "disabled_by": None,
-                },
-                {
-                    "entity_id": "sensor.complex",
-                    "id": "complexsensoridfortest1234567890",
-                    "platform": "test",
-                    "unique_id": "complex_sensor",
-                    "disabled_by": None,
-                },
-            ]
+    entities = [
+        {
+            "entity_id": "binary_sensor.test_motion_battery",
+            "id": "88a52f17bf43cb276836f06ac5c07444",
+            "platform": "test",
+            "unique_id": "test_motion_battery",
+            "device_id": "0c086f69ee6b3fa8411af7194876cbd7",
+            "disabled_by": None,
         },
-    }
-
-    device_registry_data = {
-        "version": 1,
-        "minor_version": 1,
-        "data": {
-            "devices": [
-                {
-                    "id": "0c086f69ee6b3fa8411af7194876cbd7",
-                    "name": "Test Motion Sensor",
-                    "manufacturer": "Test",
-                    "model": "Motion Sensor",
-                    "disabled_by": None,
-                },
-                {
-                    "id": "disabled_device_id_123456789012",
-                    "name": "Disabled Device",
-                    "manufacturer": "Test",
-                    "model": "Disabled",
-                    "disabled_by": "user",
-                },
-            ]
+        {
+            "entity_id": "sensor.disabled_sensor",
+            "id": "11223344556677889900aabbccddeeff",
+            "platform": "test",
+            "unique_id": "disabled_sensor",
+            "device_id": "disabled_device_id_123456789012",
+            "disabled_by": "user",
         },
-    }
+        {
+            "entity_id": "sensor.normal_sensor",
+            "id": "aabbccddeeff00112233445566778899",
+            "platform": "test",
+            "unique_id": "normal_sensor",
+            "disabled_by": None,
+        },
+        {
+            "entity_id": "sensor.complex",
+            "id": "complexsensoridfortest1234567890",
+            "platform": "test",
+            "unique_id": "complex_sensor",
+            "disabled_by": None,
+        },
+    ]
 
-    area_registry_data = {
-        "version": 1,
-        "minor_version": 1,
-        "data": {"areas": [{"id": "living_room", "name": "Living Room"}]},
-    }
+    devices = [
+        {
+            "id": "0c086f69ee6b3fa8411af7194876cbd7",
+            "name": "Test Motion Sensor",
+            "manufacturer": "Test",
+            "model": "Motion Sensor",
+            "disabled_by": None,
+        },
+        {
+            "id": "disabled_device_id_123456789012",
+            "name": "Disabled Device",
+            "manufacturer": "Test",
+            "model": "Disabled",
+            "disabled_by": "user",
+        },
+    ]
+
+    areas = [{"id": "living_room", "name": "Living Room"}]
 
     _write_registries(
         tmp_path,
-        entities=entity_registry_data["data"]["entities"],
-        devices=device_registry_data["data"]["devices"],
-        areas=area_registry_data["data"]["areas"],
+        entities=entities,
+        devices=devices,
+        areas=areas,
     )
 
     return tmp_path
@@ -269,8 +253,7 @@ class TestValidateEntityRegistryIds:
             }
         ]
         test_file = config_dir / "test_automation.yaml"
-        with open(test_file, "w") as f:
-            yaml.dump(automation_data, f)
+        write_yaml(config_dir, automation_data, "test_automation.yaml")
         assert validator.validate_file_references(test_file) is True
         assert len(validator.errors) == 0
 
@@ -288,8 +271,7 @@ class TestValidateEntityRegistryIds:
             }
         ]
         test_file = config_dir / "test_automation.yaml"
-        with open(test_file, "w") as f:
-            yaml.dump(automation_data, f)
+        write_yaml(config_dir, automation_data, "test_automation.yaml")
         assert validator.validate_file_references(test_file) is False
         assert any("Unknown entity registry ID" in e for e in validator.errors)
 
@@ -306,8 +288,7 @@ class TestValidateEntityRegistryIds:
             }
         ]
         test_file = config_dir / "test_automation.yaml"
-        with open(test_file, "w") as f:
-            yaml.dump(automation_data, f)
+        write_yaml(config_dir, automation_data, "test_automation.yaml")
         assert validator.validate_file_references(test_file) is True
         assert any("disabled entity" in w for w in validator.warnings)
 
@@ -328,8 +309,7 @@ class TestValidateEntityRegistryIds:
             }
         ]
         test_file = config_dir / "test_automation.yaml"
-        with open(test_file, "w") as f:
-            yaml.dump(automation_data, f)
+        write_yaml(config_dir, automation_data, "test_automation.yaml")
         assert validator.validate_file_references(test_file) is True
         assert len(validator.errors) == 0
 
@@ -473,8 +453,7 @@ class TestValidateFileWithMixedEntityTypes:
             }
         ]
         test_file = config_dir / "complex_test.yaml"
-        with open(test_file, "w") as f:
-            yaml.dump(automation_data, f)
+        write_yaml(config_dir, automation_data, "complex_test.yaml")
         assert validator.validate_file_references(test_file) is True
         assert len(validator.errors) == 0
 
@@ -484,60 +463,48 @@ def setup_config(tmp_path):
     """Create a full config directory with registries."""
     config_dir = tmp_path
 
-    entity_data = {
-        "data": {
-            "entities": [
-                {
-                    "entity_id": "sensor.temperature",
-                    "id": "aabbccddeeff00112233445566778899",
-                    "platform": "test",
-                    "unique_id": "temp1",
-                    "device_id": "device_001",
-                    "disabled_by": None,
-                },
-                {
-                    "entity_id": "light.kitchen",
-                    "id": "11223344556677889900aabbccddeeff",
-                    "platform": "hue",
-                    "unique_id": "light1",
-                    "device_id": "device_002",
-                    "disabled_by": None,
-                },
-                {
-                    "entity_id": "sensor.disabled_temp",
-                    "id": "ffeeddccbbaa99887766554433221100",
-                    "platform": "test",
-                    "unique_id": "temp2",
-                    "device_id": "device_001",
-                    "disabled_by": "user",
-                },
-            ]
-        }
-    }
+    entities = [
+        {
+            "entity_id": "sensor.temperature",
+            "id": "aabbccddeeff00112233445566778899",
+            "platform": "test",
+            "unique_id": "temp1",
+            "device_id": "device_001",
+            "disabled_by": None,
+        },
+        {
+            "entity_id": "light.kitchen",
+            "id": "11223344556677889900aabbccddeeff",
+            "platform": "hue",
+            "unique_id": "light1",
+            "device_id": "device_002",
+            "disabled_by": None,
+        },
+        {
+            "entity_id": "sensor.disabled_temp",
+            "id": "ffeeddccbbaa99887766554433221100",
+            "platform": "test",
+            "unique_id": "temp2",
+            "device_id": "device_001",
+            "disabled_by": "user",
+        },
+    ]
 
-    device_data = {
-        "data": {
-            "devices": [
-                {"id": "device_001", "name": "Temp Sensor", "disabled_by": None},
-                {"id": "device_002", "name": "Kitchen Light", "disabled_by": None},
-            ]
-        }
-    }
+    devices = [
+        {"id": "device_001", "name": "Temp Sensor", "disabled_by": None},
+        {"id": "device_002", "name": "Kitchen Light", "disabled_by": None},
+    ]
 
-    area_data = {
-        "data": {
-            "areas": [
-                {"id": "kitchen", "name": "Kitchen"},
-                {"id": "bedroom", "name": "Bedroom"},
-            ]
-        }
-    }
+    areas = [
+        {"id": "kitchen", "name": "Kitchen"},
+        {"id": "bedroom", "name": "Bedroom"},
+    ]
 
     _write_registries(
         config_dir,
-        entities=entity_data["data"]["entities"],
-        devices=device_data["data"]["devices"],
-        areas=area_data["data"]["areas"],
+        entities=entities,
+        devices=devices,
+        areas=areas,
     )
 
     return config_dir

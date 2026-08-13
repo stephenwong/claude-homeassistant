@@ -1,40 +1,39 @@
 """Tests for tools/commands/stale_sensors.py — stale-sensors subcommand wrapper."""
 
-import argparse
 from argparse import Namespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.helpers import make_parser, parse_command_args
 from tools.commands import stale_sensors as stale_cmd
+
+
+@pytest.fixture
+def stale_parser():
+    parser, subparsers = make_parser()
+    stale_cmd.add_parser(subparsers)
+    return parser
 
 
 class TestAddParser:
     def test_subparser_registered(self):
-        parser = argparse.ArgumentParser()
-        subparsers = parser.add_subparsers(dest="command")
-        stale_cmd.add_parser(subparsers)
-        args = parser.parse_args(["stale-sensors"])
+        args = parse_command_args("stale-sensors", stale_cmd.add_parser, [])
         assert args.command == "stale-sensors"
         assert callable(args.func)
 
-    def test_default_help_uses_shared_threshold(self, capsys):
+    def test_default_help_uses_shared_threshold(self, stale_parser, capsys):
         from tools.validators.stale_sensors import DEFAULT_THRESHOLD_HOURS
 
-        parser = argparse.ArgumentParser()
-        subparsers = parser.add_subparsers(dest="command")
-        stale_cmd.add_parser(subparsers)
         with pytest.raises(SystemExit):
-            parser.parse_args(["stale-sensors", "--help"])
+            stale_parser.parse_args(["stale-sensors", "--help"])
         assert f"default: {DEFAULT_THRESHOLD_HOURS}" in capsys.readouterr().out
 
     def test_accepts_all_flags(self):
-        parser = argparse.ArgumentParser()
-        subparsers = parser.add_subparsers(dest="command")
-        stale_cmd.add_parser(subparsers)
-        args = parser.parse_args(
+        args = parse_command_args(
+            "stale-sensors",
+            stale_cmd.add_parser,
             [
-                "stale-sensors",
                 "--config",
                 "my_config",
                 "--threshold",
@@ -47,7 +46,7 @@ class TestAddParser:
                 "sensor",
                 "--ignore-restored",
                 "--fail-on-stale",
-            ]
+            ],
         )
         assert args.config == "my_config"
         assert args.threshold == 12
@@ -59,27 +58,22 @@ class TestAddParser:
 
     def test_negative_threshold_rejected(self):
         """A negative threshold is rejected at argparse time."""
-        parser = argparse.ArgumentParser()
-        subparsers = parser.add_subparsers(dest="command")
-        stale_cmd.add_parser(subparsers)
         with pytest.raises(SystemExit):
-            parser.parse_args(["stale-sensors", "--threshold", "-1"])
+            parse_command_args(
+                "stale-sensors", stale_cmd.add_parser, ["--threshold", "-1"]
+            )
 
     def test_zero_threshold_rejected(self):
         """A zero threshold is rejected at argparse time."""
-        parser = argparse.ArgumentParser()
-        subparsers = parser.add_subparsers(dest="command")
-        stale_cmd.add_parser(subparsers)
         with pytest.raises(SystemExit):
-            parser.parse_args(["stale-sensors", "--threshold", "0"])
+            parse_command_args(
+                "stale-sensors", stale_cmd.add_parser, ["--threshold", "0"]
+            )
 
-    def test_exclude_platforms_help_documents_override(self, capsys):
+    def test_exclude_platforms_help_documents_override(self, stale_parser, capsys):
         """The platform help text documents that supplied values override defaults."""
-        parser = argparse.ArgumentParser()
-        subparsers = parser.add_subparsers(dest="command")
-        stale_cmd.add_parser(subparsers)
         with pytest.raises(SystemExit):
-            parser.parse_args(["stale-sensors", "--help"])
+            stale_parser.parse_args(["stale-sensors", "--help"])
         out = capsys.readouterr().out
         assert "OVERRIDES" in out
 
@@ -213,13 +207,19 @@ class TestRun:
         assert mock_val_class.call_args.kwargs["only_domains"] == {"sensor", "light"}
         assert mock_val_class.call_args.kwargs["exclude_domains"] == {"sensor"}
 
+    @pytest.mark.parametrize(
+        ("fail_on_stale", "validator_result", "expected_exit_code"),
+        [(False, True, 0), (True, False, 1)],
+        ids=["diagnostic-only", "failing-on-stale"],
+    )
     @patch("tools.commands.stale_sensors.StaleSensorValidator")
-    def test_fail_on_stale_behavior(self, mock_val_class):
+    def test_fail_on_stale_is_forwarded_and_controls_exit_code(
+        self, mock_val_class, fail_on_stale, validator_result, expected_exit_code
+    ):
         mock_val = MagicMock()
+        mock_val.validate_all.return_value = validator_result
         mock_val_class.return_value = mock_val
 
-        # Case 1: fail_on_stale is False -> validator returns True -> exit 0
-        mock_val.validate_all.return_value = True
         args = Namespace(
             config="config_path",
             threshold=24,
@@ -227,14 +227,10 @@ class TestRun:
             exclude_platforms=None,
             only_domains=None,
             ignore_restored=False,
-            fail_on_stale=False,
+            fail_on_stale=fail_on_stale,
         )
-        assert stale_cmd.run(args) == 0
-
-        # Case 2: fail_on_stale is True -> validator returns False -> exit 1
-        mock_val.validate_all.return_value = False
-        args.fail_on_stale = True
-        assert stale_cmd.run(args) == 1
+        assert stale_cmd.run(args) == expected_exit_code
+        assert mock_val_class.call_args.kwargs["fail_on_stale"] is fail_on_stale
 
 
 class TestParseCsvArg:

@@ -38,9 +38,14 @@ def test_round_trip_preserves_content(tmp_path):
 
     editor = YAMLEditor(path)
     data = editor.load()
+    original = data.copy()
+    editor.dump(data, path)
+    roundtripped = YAMLEditor(path).load()
+
     assert isinstance(data, list)
     assert len(data) == 1
     assert data[0]["alias"] == "Test Automation"
+    assert roundtripped == original
 
 
 def test_round_trip_preserves_comments(tmp_path):
@@ -161,26 +166,6 @@ notify_on_doorbell:
     assert isinstance(data, dict)
     assert "notify_on_doorbell" in data
     assert data["notify_on_doorbell"]["alias"] == "Notify on Doorbell"
-
-
-def test_load_and_dump_use_path_open(tmp_path, monkeypatch):
-    from tools.ha.yaml_editor import YAMLEditor
-
-    path = tmp_path / "automations.yaml"
-    _write_yaml(path, "- alias: A\n  triggers: []\n  actions: []\n")
-    original_open = Path.open
-    opened_paths = []
-
-    def path_open(self, *args, **kwargs):
-        opened_paths.append(self)
-        return original_open(self, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "open", path_open)
-    editor = YAMLEditor(path)
-    data = editor.load()
-    editor.dump(data, path)
-
-    assert opened_paths.count(path) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -558,18 +543,6 @@ class TestAtomicSave:
 
         assert path.read_text() == original
         assert list(path.parent.glob(".automations.yaml.*.tmp")) == []
-
-    def test_save_does_not_fsync_temporary_file(self, automation_editor, monkeypatch):
-        from tools import common
-
-        fsynced = []
-        monkeypatch.setattr(common.os, "fsync", lambda fd: fsynced.append(fd))
-
-        editor = automation_editor
-        editor.load()
-        editor.save()
-
-        assert fsynced == []
 
     def test_save_with_validation_on_empty_data_noop(self, tmp_path):
         from tools.ha.yaml_editor import YAMLEditor

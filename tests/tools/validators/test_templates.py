@@ -4,35 +4,42 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tests.helpers import assert_diagnostic, assert_no_diagnostic, write_yaml
+from tests.helpers import (
+    assert_diagnostic,
+    assert_no_diagnostic,
+    make_response,
+    write_yaml,
+)
 from tools.common import HARequestError
+from tools.ha.client import HAClient
 from tools.validators.templates import TemplateValidator
 
 _write_automation = write_yaml
 
 
 def _mock_render(success: bool = True, message: str = "") -> MagicMock:
-    client = MagicMock()
-    resp = MagicMock()
+    client = MagicMock(spec=HAClient)
     if success:
-        resp.status_code = 200
-        resp.text = "42"
+        resp = make_response(text="42")
     else:
-        resp.status_code = 400
-        resp.json.return_value = {"message": message}
-        resp.text = message
+        resp = make_response(message, status=400, content_type="text/plain")
+        resp.json = MagicMock(return_value={"message": message})
     client.post.return_value = resp
     return client
+
+
+def _run_with_client(config_dir, client):
+    """Run template validation with an already configured client double."""
+    with patch("tools.validators.templates.HAClient.from_env", return_value=client):
+        validator = TemplateValidator(str(config_dir))
+        result = validator.validate_all()
+    return validator, result
 
 
 def _run_template_validation(config_dir, data, *, success=True, message=""):
     """Write one automation and run template validation with a mocked client."""
     write_yaml(config_dir, data)
-    client = _mock_render(success=success, message=message)
-    with patch("tools.validators.templates.HAClient.from_env", return_value=client):
-        validator = TemplateValidator(str(config_dir))
-        result = validator.validate_all()
-    return validator, result
+    return _run_with_client(config_dir, _mock_render(success=success, message=message))
 
 
 class TestFileDeps:
@@ -236,7 +243,7 @@ class TestRenderErrors:
                 },
             ],
         )
-        client = MagicMock()
+        client = MagicMock(spec=HAClient)
         client.post.side_effect = HARequestError("connection refused")
         with patch("tools.validators.templates.HAClient.from_env", return_value=client):
             v = TemplateValidator(str(config_dir))
@@ -258,10 +265,8 @@ class TestRenderErrors:
                 },
             ],
         )
-        client = MagicMock()
-        resp = MagicMock()
-        resp.status_code = 400
-        resp.text = "plain text error"
+        client = MagicMock(spec=HAClient)
+        resp = make_response("plain text error", status=400, content_type="text/plain")
         resp.json.side_effect = ValueError("not json")
         client.post.return_value = resp
         with patch("tools.validators.templates.HAClient.from_env", return_value=client):
@@ -462,11 +467,8 @@ class TestEmptyRenderErrorBody:
                 },
             ],
         )
-        client = MagicMock()
-        resp = MagicMock()
-        resp.status_code = 400
-        resp.json.return_value = {"message": ""}
-        resp.text = ""
+        client = MagicMock(spec=HAClient)
+        resp = make_response({"message": ""}, status=400)
         client.post.return_value = resp
         with patch("tools.validators.templates.HAClient.from_env", return_value=client):
             v = TemplateValidator(str(config_dir))

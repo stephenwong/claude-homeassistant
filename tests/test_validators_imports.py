@@ -27,17 +27,20 @@ def test_common_reexports_base():
     assert c.HAYamlLoader is b.HAYamlLoader
 
 
-def test_yaml_validator_import():
-    v = YAMLValidator()
-    assert v.validator_name == "YAML syntax"
-    assert v.errors == []
-    assert v.warnings == []
-    assert v.info == []
-
-
-def test_duplicate_id_validator_import():
-    v = DuplicateIDValidator()
-    assert v.validator_name == "Duplicate automation IDs"
+@pytest.mark.parametrize(
+    ("cls", "expected_name"),
+    [
+        (YAMLValidator, "YAML syntax"),
+        (DuplicateIDValidator, "Duplicate automation IDs"),
+        (ReferenceValidator, "Entity/device references"),
+        (ServiceValidator, "Service references"),
+        (HAOfficialValidator, "Home Assistant configuration"),
+        (TemplateValidator, "Jinja2 templates"),
+    ],
+)
+def test_validator_imports_have_expected_shape(cls, expected_name):
+    v = cls()
+    assert v.validator_name == expected_name
     assert v.errors == []
     assert v.warnings == []
     assert v.info == []
@@ -46,32 +49,6 @@ def test_duplicate_id_validator_import():
 @pytest.mark.parametrize("cls", VALIDATOR_CLASSES)
 def test_validator_quiet_kwarg_accepted(cls):
     assert cls(quiet=True).quiet is True
-
-
-def test_reference_validator_import():
-    v = ReferenceValidator()
-    assert v.validator_name == "Entity/device references"
-
-
-def test_service_validator_import():
-    v = ServiceValidator()
-    assert v.validator_name == "Service references"
-    assert v.errors == []
-    assert v.warnings == []
-    assert v.info == []
-
-
-def test_ha_official_validator_import():
-    v = HAOfficialValidator()
-    assert v.validator_name == "Home Assistant configuration"
-
-
-def test_template_validator_import():
-    v = TemplateValidator()
-    assert v.validator_name == "Jinja2 templates"
-    assert v.errors == []
-    assert v.warnings == []
-    assert v.info == []
 
 
 class TestFileDeps:

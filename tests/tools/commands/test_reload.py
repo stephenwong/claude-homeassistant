@@ -3,6 +3,8 @@
 from argparse import Namespace
 from unittest.mock import patch
 
+import pytest
+
 from tests.helpers import make_parser, parse_command_args
 from tools.commands import reload as reload_cmd
 
@@ -30,13 +32,14 @@ class TestAddParser:
 
 
 class TestRun:
-    def test_success_returns_zero(self):
-        with patch("tools.commands.reload.reload_config", return_value=True):
-            assert reload_cmd.run(Namespace()) == 0
-
-    def test_failure_returns_one(self):
-        with patch("tools.commands.reload.reload_config", return_value=False):
-            assert reload_cmd.run(Namespace()) == 1
+    @pytest.mark.parametrize(
+        ("reload_result", "expected_exit_code"),
+        [(True, 0), (False, 1)],
+        ids=["success", "failure"],
+    )
+    def test_returns_reload_result_exit_code(self, reload_result, expected_exit_code):
+        with patch("tools.commands.reload.reload_config", return_value=reload_result):
+            assert reload_cmd.run(Namespace()) == expected_exit_code
 
     def test_delegates_to_reload_config(self):
         """run() should call reload_config() and propagate its return value."""

@@ -515,7 +515,7 @@ class TestMain:
             # Changelog for deleted backup should also be gone
             assert not (backup_dir / fname1.replace(".tar.gz", ".changelog")).exists()
 
-    def test_kept_backup_changelog_preserved(self, tmp_path, capsys):
+    def test_kept_backup_changelog_preserved(self, tmp_path):
         """Changelog for a kept backup must not be deleted."""
         backup_dir = tmp_path / "backups"
         backup_dir.mkdir()
@@ -528,7 +528,7 @@ class TestMain:
         with patch("tools.backup_common.BACKUP_DIR", backup_dir):
             from tools.prune_backups import main
 
-            main([])
+            assert main(["--apply", "--min-keep", "1"]) == 0
             # Kept backup's changelog survives
             assert (backup_dir / fname2.replace(".tar.gz", ".changelog")).exists()
 
@@ -681,16 +681,19 @@ class TestL65Sort:
 
         backup_dir = tmp_path / "backups"
         backup_dir.mkdir()
-        (backup_dir / "ha_config_20260201_120000.tar.gz").write_bytes(b"x")
-        (backup_dir / "ha_config_20260201_120001.tar.gz").write_bytes(b"x")
+        first = backup_dir / "ha_config_20260201_120000.tar.gz"
+        second = backup_dir / "ha_config_20260201_120001.tar.gz"
+        first.write_bytes(b"x")
+        second.write_bytes(b"x")
+        timestamp = datetime(2026, 2, 1, 12, tzinfo=UTC)
+        monkeypatch.setattr(
+            "tools.backup_common.parse_backup_filename",
+            lambda _filename: timestamp,
+        )
 
         monkeypatch.setattr("tools.backup_common.BACKUP_DIR", backup_dir)
         backups = get_backups()
-        # Both should be sorted deterministically
-        assert (
-            backups[0]["filename"] < backups[1]["filename"]
-            or backups[0]["filename"] > backups[1]["filename"]
-        )
+        assert [backup["filename"] for backup in backups] == [first.name, second.name]
 
 
 class TestL67RootPerms:

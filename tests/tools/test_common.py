@@ -494,20 +494,13 @@ class TestValidatorBase:
         assert "Test info" in captured.err
 
 
-class _LazyValidator(ValidatorBase):
-    """Concrete subclass for TestLoadYamlChecked."""
-
-    def _validate(self) -> bool:
-        return True
-
-
 class TestLoadYamlChecked:
     """Tests for ValidatorBase.load_yaml_checked."""
 
     def test_valid_file_returns_data_and_ok(self, tmp_path):
         f = tmp_path / "good.yaml"
         f.write_text("key: value\n", encoding="utf-8")
-        v = _LazyValidator(str(tmp_path))
+        v = _ConcreteValidator(str(tmp_path))
         data, ok = v.load_yaml_checked(f)
         assert ok is True
         assert data == {"key": "value"}
@@ -516,7 +509,7 @@ class TestLoadYamlChecked:
     def test_empty_file_returns_none_and_ok(self, tmp_path):
         f = tmp_path / "empty.yaml"
         f.write_text("", encoding="utf-8")
-        v = _LazyValidator(str(tmp_path))
+        v = _ConcreteValidator(str(tmp_path))
         data, ok = v.load_yaml_checked(f)
         assert ok is True
         assert data is None
@@ -525,7 +518,7 @@ class TestLoadYamlChecked:
     def test_malformed_yaml_records_error_and_returns_false(self, tmp_path):
         f = tmp_path / "bad.yaml"
         f.write_text("key: [\n", encoding="utf-8")
-        v = _LazyValidator(str(tmp_path))
+        v = _ConcreteValidator(str(tmp_path))
         data, ok = v.load_yaml_checked(f)
         assert ok is False
         assert data is None
@@ -533,7 +526,7 @@ class TestLoadYamlChecked:
 
     def test_nonexistent_file_records_error_and_returns_false(self, tmp_path):
         f = tmp_path / "nonexistent.yaml"
-        v = _LazyValidator(str(tmp_path))
+        v = _ConcreteValidator(str(tmp_path))
         data, ok = v.load_yaml_checked(f)
         assert ok is False
         assert data is None

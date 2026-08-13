@@ -1,13 +1,11 @@
 """Tests for entity resolution in tools/commands/trace.py."""
 
-from tests.tools.commands.test_trace import (
+from tests.helpers import make_response
+from tests.tools.trace_support import (
     _make_ws_command_side_effect,
     _mock_trace_entry,
     make_args,
 )
-from tools.common import HARequestError
-
-pytest_plugins = ("tests.tools.commands.test_trace",)
 
 
 class TestEntityResolution:
@@ -20,11 +18,13 @@ class TestEntityResolution:
         mock_hac, mock_ws = mock_clients
 
         # State API returns an ``id`` that differs from the slug.
-        mock_hac.get_json.return_value = {
-            "entity_id": "automation.foo_bar",
-            "state": "on",
-            "attributes": {"id": "baz_qux", "friendly_name": "Foo & Bar"},
-        }
+        mock_hac._session.get.return_value = make_response(
+            {
+                "entity_id": "automation.foo_bar",
+                "state": "on",
+                "attributes": {"id": "baz_qux", "friendly_name": "Foo & Bar"},
+            }
+        )
         mock_ws.command.side_effect = _make_ws_command_side_effect(
             traces=[_mock_trace_entry(item_id="baz_qux")],
         )
@@ -35,7 +35,11 @@ class TestEntityResolution:
         assert exit_code == 0
 
         # Resolution fetched state attributes.
-        mock_hac.get_json.assert_called_once_with("/api/states/automation.foo_bar")
+        mock_hac._session.get.assert_called_once_with(
+            "http://ha:8123/api/states/automation.foo_bar",
+            headers=mock_hac.headers,
+            timeout=10,
+        )
         # trace/list was called with the *resolved* item_id.
         mock_ws.command.assert_any_call(
             "trace/list", domain="automation", item_id="baz_qux"
@@ -58,11 +62,13 @@ class TestEntityResolution:
         mock_hac, mock_ws = mock_clients
 
         # No ``id`` in attributes (None or missing).
-        mock_hac.get_json.return_value = {
-            "entity_id": "automation.my_old_auto",
-            "state": "on",
-            "attributes": {"friendly_name": "My Old Auto"},
-        }
+        mock_hac._session.get.return_value = make_response(
+            {
+                "entity_id": "automation.my_old_auto",
+                "state": "on",
+                "attributes": {"friendly_name": "My Old Auto"},
+            }
+        )
         # trace/list has an entry where item_id HAPPENS TO match the slug.
         mock_ws.command.side_effect = _make_ws_command_side_effect(
             traces=[_mock_trace_entry(item_id="my_old_auto", run_id="run789")],
@@ -79,9 +85,11 @@ class TestEntityResolution:
 
     def test_single_entity_selects_newest_run(self, mock_clients, capsys):
         mock_hac, mock_ws = mock_clients
-        mock_hac.get_json.return_value = {
-            "attributes": {"id": "auto_id"},
-        }
+        mock_hac._session.get.return_value = make_response(
+            {
+                "attributes": {"id": "auto_id"},
+            }
+        )
         mock_ws.command.side_effect = _make_ws_command_side_effect(
             traces=[
                 _mock_trace_entry(
@@ -107,10 +115,12 @@ class TestEntityResolution:
         """Genuinely no traces for a known automation → clean stderr message."""
         mock_hac, mock_ws = mock_clients
 
-        mock_hac.get_json.return_value = {
-            "entity_id": "automation.never_triggered",
-            "attributes": {"id": "never_triggered_id"},
-        }
+        mock_hac._session.get.return_value = make_response(
+            {
+                "entity_id": "automation.never_triggered",
+                "attributes": {"id": "never_triggered_id"},
+            }
+        )
         # trace/list returns empty for this item_id.
         mock_ws.command.side_effect = _make_ws_command_side_effect(traces=[])
 
@@ -122,12 +132,12 @@ class TestEntityResolution:
         _, err = capsys.readouterr()
         assert "No traces found" in err
 
-    def test_entity_state_api_failure_shows_error(self, mock_clients, capsys):
+    def test_entity_state_api_failure_falls_back_to_slug(self, mock_clients, capsys):
         """If the REST state lookup fails, fall back to slug-strip; still works."""
         mock_hac, mock_ws = mock_clients
 
-        mock_hac.get_json.side_effect = HARequestError(
-            "GET /api/states/automation.nope returned HTTP 404"
+        mock_hac._session.get.return_value = make_response(
+            "not found", status=404, content_type="text/plain"
         )
         # No traces match the slug-stripped id either.
         mock_ws.command.side_effect = _make_ws_command_side_effect(traces=[])

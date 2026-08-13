@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from tests.helpers import parse_command_args
+from tests.helpers import make_response, parse_command_args
 from tools.commands import curl as curl_cmd
 from tools.commands.curl import (
     _CurlError,
@@ -60,44 +60,7 @@ def mock_client():
         yield client
 
 
-_MISSING = object()
-
-
-def response_mock(
-    data=_MISSING,
-    *,
-    status=200,
-    ok=None,
-    headers=None,
-    content_type=None,
-    ct=None,
-    text=None,
-    json_data=_MISSING,
-):
-    """Build a JSON or text response mock for curl tests."""
-    if ct is not None:
-        content_type = ct
-    if data is not _MISSING and json_data is not _MISSING:
-        raise ValueError("provide either data or json_data, not both")
-    if data is not _MISSING and (content_type is None or "json" in content_type):
-        json_data = data
-        content_type = content_type or "application/json"
-        text = json.dumps(data)
-    elif data is not _MISSING and text is None:
-        text = data
-    elif text is None:
-        text = ""
-
-    r = MagicMock()
-    r.ok = status < 400 if ok is None else ok
-    r.status_code = status
-    if headers is None:
-        headers = {} if content_type is None else {"content-type": content_type}
-    r.headers = headers
-    r.text = text
-    if json_data is not _MISSING:
-        r.json.return_value = json_data
-    return r
+response_mock = make_response
 
 
 json_resp = partial(response_mock, content_type="application/json")

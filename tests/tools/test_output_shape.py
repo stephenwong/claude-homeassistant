@@ -151,7 +151,7 @@ class TestMaxChars:
         data = [{"id": 1}]
         assert apply_output_shape(data, max_chars=500) == [{"id": 1}]
 
-    def test_non_list_passes_through(self):
+    def test_oversized_dict_is_truncated(self):
         data = {"big": "x" * 1000}
         # Oversized dict is now truncated (H14); a dict that fits passes through.
         result = apply_output_shape(data, max_chars=10)
@@ -159,18 +159,21 @@ class TestMaxChars:
         assert isinstance(result, dict)
         assert result.get("_truncated") is True
 
-    def test_max_chars_truncates_dict(self):
+    @pytest.mark.parametrize(
+        "data",
+        [
+            {"small": "x", "big1": "v" * 500, "big2": "w" * 500},
+            {"big1": "v" * 500},
+        ],
+        ids=["multiple-keys", "single-key"],
+    )
+    def test_max_chars_dict_is_bounded(self, data):
         import json
 
-        data = {"small": "x", "big1": "v" * 500, "big2": "w" * 500}
         out = apply_output_shape(data, max_chars=80)
         serialized = json.dumps(out, separators=(",", ":"), ensure_ascii=False)
         assert len(serialized) <= 80
         assert isinstance(out, dict)
-
-    def test_max_chars_dict_adds_marker(self):
-        data = {"big1": "v" * 500}
-        out = apply_output_shape(data, max_chars=60)
         assert out.get("_truncated") is True
 
     def test_cap_dict_marker_consistent(self):

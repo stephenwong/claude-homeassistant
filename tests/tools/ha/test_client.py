@@ -7,8 +7,13 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 import requests
 
+from tests.helpers import make_response
 from tools.common import HARequestError, MissingTokenError
 from tools.ha.client import HAClient, HAWSClient
+
+
+def _mock_session() -> MagicMock:
+    return MagicMock(spec=requests.sessions.Session)
 
 
 class TestInit:
@@ -137,18 +142,15 @@ class TestFromEnv:
 
 
 def test_get_json_accepts_2xx():
-    session = MagicMock()
-    resp = requests.Response()
-    resp.status_code = 201
-    resp._content = b'{"ok": true}'
-    resp.headers["Content-Type"] = "application/json"
+    session = _mock_session()
+    resp = make_response({"ok": True}, status=201)
     session.get.return_value = resp
     client = HAClient("http://h.local:8123", "tok", session=session)
     assert client.get_json("/api/x") == {"ok": True}
 
 
 def test_request_error_wording():
-    session = MagicMock()
+    session = _mock_session()
     session.get.side_effect = requests.RequestException("boom")
     client = HAClient("http://h.local:8123", "tok", session=session)
     with pytest.raises(HARequestError, match=r"GET /api/x failed"):
@@ -166,8 +168,8 @@ def test_request_error_wording():
     ],
 )
 def test_verb_returns_response(verb, url, json_body):
-    session = MagicMock()
-    response_mock = MagicMock(status_code=200)
+    session = _mock_session()
+    response_mock = make_response()
     setattr(session, verb, MagicMock(return_value=response_mock))
     c = HAClient("http://ha.local:8123", "tok", session=session)
     kwargs = {"json": json_body} if json_body is not None else {}
@@ -192,7 +194,7 @@ def test_verb_returns_response(verb, url, json_body):
     ],
 )
 def test_verb_raises_on_request_exception(verb, url, exception):
-    session = MagicMock()
+    session = _mock_session()
     setattr(session, verb, MagicMock(side_effect=exception))
     c = HAClient("http://ha.local:8123", "tok", session=session)
     with pytest.raises(HARequestError, match=f"{verb.upper()} .* failed"):
@@ -201,7 +203,7 @@ def test_verb_raises_on_request_exception(verb, url, exception):
 
 def test_request_merges_caller_headers_without_typeerror():
     """M4: passing headers= must merge, not collide with the client's defaults."""
-    session = MagicMock()
+    session = _mock_session()
     client = HAClient("http://ha.local", "tok", session=session)
     client.get("/api/states", headers={"X-Custom": "y"})
     args, kwargs = session.get.call_args
@@ -211,7 +213,7 @@ def test_request_merges_caller_headers_without_typeerror():
 
 def test_request_caller_timeout_overrides_default():
     """M4: passing timeout= must override the client default cleanly."""
-    session = MagicMock()
+    session = _mock_session()
     client = HAClient("http://ha.local", "tok", timeout=10, session=session)
     client.get("/api/states", timeout=30)
     _, kwargs = session.get.call_args
@@ -220,7 +222,7 @@ def test_request_caller_timeout_overrides_default():
 
 def test_client_context_manager_closes_session():
     """M6: `with HAClient(...) as c:` must close the session on exit."""
-    session = MagicMock()
+    session = _mock_session()
     client = HAClient("http://ha.local", "tok", session=session)
     with client as c:
         assert c is client
@@ -228,7 +230,7 @@ def test_client_context_manager_closes_session():
 
 
 def test_client_context_manager_closes_session_on_exception():
-    session = MagicMock()
+    session = _mock_session()
     client = HAClient("http://ha.local", "tok", session=session)
     with pytest.raises(RuntimeError), client:
         raise RuntimeError("boom")
@@ -237,7 +239,7 @@ def test_client_context_manager_closes_session_on_exception():
 
 def test_client_close_method_closes_session():
     """M6: close() method must close the underlying session."""
-    session = MagicMock()
+    session = _mock_session()
     client = HAClient("http://ha.local", "tok", session=session)
     client.close()
     session.close.assert_called_once()
@@ -246,7 +248,7 @@ def test_client_close_method_closes_session():
 def test_client_close_with_owned_session():
     """M6: when the client created its own session, close() must still close it."""
     with patch("tools.ha.client.requests.Session") as mock_session_cls:
-        mock_session = MagicMock()
+        mock_session = _mock_session()
         mock_session_cls.return_value = mock_session
         client = HAClient("http://ha.local", "tok")
         client.close()
@@ -261,25 +263,23 @@ class TestGetJson:
         assert "HARequestError" in doc
 
     def test_parses_json_response(self):
-        session = MagicMock()
-        resp = MagicMock(status_code=200)
-        resp.json.return_value = {"message": "API running."}
+        session = _mock_session()
+        resp = make_response({"message": "API running."})
         session.get.return_value = resp
         c = HAClient("http://ha.local:8123", "tok", session=session)
         assert c.get_json("/api/") == {"message": "API running."}
 
-    def test_non_200_raises_with_body_preview(self):
-        session = MagicMock()
-        resp = MagicMock(status_code=401, text="Unauthorized")
+    def test_non_2xx_raises_with_body_preview(self):
+        session = _mock_session()
+        resp = make_response("Unauthorized", status=401, content_type="text/plain")
         session.get.return_value = resp
         c = HAClient("http://ha.local:8123", "tok", session=session)
         with pytest.raises(HARequestError, match="HTTP 401"):
             c.get_json("/api/")
 
     def test_non_json_response_raises(self):
-        session = MagicMock()
-        resp = MagicMock(status_code=200, text="<html>not json</html>")
-        resp.json.side_effect = ValueError("bad json")
+        session = _mock_session()
+        resp = make_response("<html>not json</html>", content_type="text/html")
         session.get.return_value = resp
         c = HAClient("http://ha.local:8123", "tok", session=session)
         with pytest.raises(HARequestError, match="non-JSON"):
@@ -288,32 +288,32 @@ class TestGetJson:
 
 class TestCallService:
     def test_success_returns_true(self):
-        session = MagicMock()
-        session.post.return_value = MagicMock(status_code=200)
+        session = _mock_session()
+        session.post.return_value = make_response()
         c = HAClient("http://ha.local:8123", "tok", session=session)
         assert c.call_service("automation", "reload") is True
         args, _ = session.post.call_args
         assert args[0] == "http://ha.local:8123/api/services/automation/reload"
 
-    def test_non_200_returns_false(self):
-        session = MagicMock()
-        session.post.return_value = MagicMock(status_code=500)
+    def test_non_2xx_returns_false(self):
+        session = _mock_session()
+        session.post.return_value = make_response(status=500)
         c = HAClient("http://ha.local:8123", "tok", session=session)
         assert (
             c.call_service("light", "turn_on", data={"entity_id": "light.x"}) is False
         )
 
     def test_data_passed_as_json(self):
-        session = MagicMock()
-        session.post.return_value = MagicMock(status_code=200)
+        session = _mock_session()
+        session.post.return_value = make_response()
         c = HAClient("http://ha.local:8123", "tok", session=session)
         c.call_service("light", "turn_on", data={"entity_id": "light.kitchen"})
         _, kwargs = session.post.call_args
         assert kwargs["json"] == {"entity_id": "light.kitchen"}
 
     def test_no_data_defaults_to_empty_dict(self):
-        session = MagicMock()
-        session.post.return_value = MagicMock(status_code=200)
+        session = _mock_session()
+        session.post.return_value = make_response()
         c = HAClient("http://ha.local:8123", "tok", session=session)
         c.call_service("automation", "reload")
         _, kwargs = session.post.call_args

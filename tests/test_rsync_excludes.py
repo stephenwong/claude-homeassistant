@@ -116,40 +116,26 @@ def test_push_updates_config_files(local_dir, remote_dir):
     )
 
 
-def test_push_preserves_storage(local_dir, remote_dir):
-    """Push does not overwrite .storage contents on remote."""
+@pytest.mark.parametrize(
+    ("relative_path", "expected_content"),
+    [
+        (".storage/core/entity_registry", "entity_registry_v1"),
+        ("backups/backup.tar", None),
+        ("www/index.html", "<html>dashboard</html>"),
+        ("custom_components/my_comp.py", "custom_code"),
+    ],
+    ids=["storage", "backups", "www", "custom-components"],
+)
+def test_push_preserves_remote_runtime_paths(
+    local_dir, remote_dir, relative_path, expected_content
+):
+    """Push preserves protected remote runtime paths."""
     run_rsync(local_dir, remote_dir, PUSH_EXCLUDES)
 
-    assert (
-        remote_dir / ".storage" / "core" / "entity_registry"
-    ).read_text() == "entity_registry_v1", "Remote .storage should remain unchanged"
-
-
-def test_push_preserves_backups(local_dir, remote_dir):
-    """Push preserves backups on the remote."""
-    run_rsync(local_dir, remote_dir, PUSH_EXCLUDES)
-
-    assert (remote_dir / "backups" / "backup.tar").exists(), (
-        "Backups should be preserved"
-    )
-
-
-def test_push_preserves_www(local_dir, remote_dir):
-    """Push preserves the www directory on the remote."""
-    run_rsync(local_dir, remote_dir, PUSH_EXCLUDES)
-
-    assert (remote_dir / "www" / "index.html").exists(), (
-        "www directory should be preserved"
-    )
-
-
-def test_push_preserves_custom_components(local_dir, remote_dir):
-    """Push preserves custom_components on the remote."""
-    run_rsync(local_dir, remote_dir, PUSH_EXCLUDES)
-
-    assert (remote_dir / "custom_components" / "my_comp.py").exists(), (
-        "custom_components should be preserved"
-    )
+    preserved = remote_dir / relative_path
+    assert preserved.exists()
+    if expected_content is not None:
+        assert preserved.read_text() == expected_content
 
 
 def test_pull_excludes_auth_tokens(pull_dir, remote_dir):

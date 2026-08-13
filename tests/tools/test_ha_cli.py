@@ -72,7 +72,7 @@ class TestBuildParser:
         args = parser.parse_args(["validate"])
         assert args.quiet is False
 
-    def test_no_subcommand_prints_help_exits_2(self, capsys):
+    def test_parser_requires_subcommand(self, capsys):
         with pytest.raises(SystemExit) as exc:
             build_parser().parse_args([])
         # argparse exits with code 2 when a required subparser is missing

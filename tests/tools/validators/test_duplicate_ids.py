@@ -3,8 +3,8 @@
 import builtins
 
 import pytest
-import yaml
 
+from tests.helpers import write_yaml
 from tools.validators.duplicate_ids import DuplicateIDValidator
 
 
@@ -115,9 +115,7 @@ class TestNoDuplicates:
             },
             {"id": "doorbell", "alias": "Doorbell", "trigger": [], "action": []},
         ]
-        f = config_dir / "automations.yaml"
-        with open(f, "w") as fh:
-            yaml.dump(automations, fh)
+        write_yaml(config_dir, automations)
         assert validator.validate_all() is True
         assert len(validator.errors) == 0
 
@@ -126,9 +124,7 @@ class TestNoDuplicates:
             {"id": "same_id", "alias": "First", "trigger": [], "action": []},
             {"id": "same_id", "alias": "Second", "trigger": [], "action": []},
         ]
-        f = config_dir / "automations.yaml"
-        with open(f, "w") as fh:
-            yaml.dump(automations, fh)
+        write_yaml(config_dir, automations)
         assert validator.validate_all() is False
         assert any(
             "duplicate" in e.lower() and "same_id" in e for e in validator.errors
@@ -138,9 +134,7 @@ class TestNoDuplicates:
         automations = [
             {"alias": "No Id Automation", "trigger": [], "action": []},
         ]
-        f = config_dir / "automations.yaml"
-        with open(f, "w") as fh:
-            yaml.dump(automations, fh)
+        write_yaml(config_dir, automations)
         assert validator.validate_all() is True
         assert any(
             "missing" in w.lower() and "id" in w.lower() for w in validator.warnings
@@ -179,9 +173,7 @@ class TestNoDuplicates:
             "not_a_dict",
             {"id": "ok", "alias": "OK", "trigger": [], "action": []},
         ]
-        f = config_dir / "automations.yaml"
-        with open(f, "w") as fh:
-            yaml.dump(automations, fh)
+        write_yaml(config_dir, automations)
         assert validator.validate_all() is False
         assert any("must be a dictionary" in e for e in validator.errors)
 
@@ -191,9 +183,7 @@ class TestNoDuplicates:
             {"alias": "No ID", "trigger": [], "action": []},
             {"id": "dup", "alias": "Second", "trigger": [], "action": []},
         ]
-        f = config_dir / "automations.yaml"
-        with open(f, "w") as fh:
-            yaml.dump(automations, fh)
+        write_yaml(config_dir, automations)
         assert validator.validate_all() is False
         assert any("duplicate" in e.lower() and "dup" in e for e in validator.errors)
         assert any(
@@ -207,9 +197,7 @@ class TestNoDuplicates:
             {"id": "dup", "alias": "B", "trigger": [], "action": []},
             {"id": "dup", "alias": "C", "trigger": [], "action": []},
         ]
-        f = config_dir / "automations.yaml"
-        with open(f, "w") as fh:
-            yaml.dump(automations, fh)
+        write_yaml(config_dir, automations)
         assert validator.validate_all() is False
         dup_errors = [e for e in validator.errors if "duplicate" in e.lower()]
         assert len(dup_errors) == 1
@@ -226,9 +214,7 @@ class TestNoDuplicates:
             {"id": "dup", "alias": "Second", "trigger": [], "action": []},
             {"id": "unique", "alias": "Unique", "trigger": [], "action": []},
         ]
-        f = config_dir / "automations.yaml"
-        with open(f, "w") as fh:
-            yaml.dump(automations, fh)
+        write_yaml(config_dir, automations)
         assert validator.validate_all() is False
         dup_errors = [e for e in validator.errors if "duplicate" in e.lower()]
         assert len(dup_errors) == 1
@@ -240,9 +226,7 @@ class TestNoDuplicates:
         automations = [
             {"id": None, "alias": "Null ID", "trigger": [], "action": []},
         ]
-        f = config_dir / "automations.yaml"
-        with open(f, "w") as fh:
-            yaml.dump(automations, fh)
+        write_yaml(config_dir, automations)
         assert validator.validate_all() is True
         assert any(
             "missing" in w.lower() and "id" in w.lower() for w in validator.warnings
@@ -253,9 +237,7 @@ class TestNoDuplicates:
             {"id": 123, "alias": "Int ID", "trigger": [], "action": []},
             {"id": 123, "alias": "Dup Int", "trigger": [], "action": []},
         ]
-        f = config_dir / "automations.yaml"
-        with open(f, "w") as fh:
-            yaml.dump(automations, fh)
+        write_yaml(config_dir, automations)
         assert validator.validate_all() is False
         assert any("duplicate" in e.lower() and "123" in e for e in validator.errors)
 
