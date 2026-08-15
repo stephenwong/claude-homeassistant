@@ -115,6 +115,13 @@ class TestExtractFiles:
         assert r1 == r2
         assert mock_open.call_count == 1
 
+    def test_extract_files_mutation_isolation(self, tmp_path):
+        tar_path = make_tar(tmp_path, {"config/test.yaml": "content\n"})
+        r1 = extract_files(tar_path)
+        r1.pop("config/test.yaml")
+        r2 = extract_files(tar_path)
+        assert "config/test.yaml" in r2
+
 
 class TestUnifiedDiff:
     """W3.7: _unified_diff extracts canonical a/b-filename unified diffs."""

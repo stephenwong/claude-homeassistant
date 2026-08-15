@@ -8,11 +8,22 @@ from ruamel.yaml import YAML
 from tools.common import _atomic_replace
 
 
-def main() -> int:
-    path = Path(sys.argv[1])
+def main(argv: list[str] | None = None) -> int:
+    args = sys.argv[1:] if argv is None else argv
+    if not args:
+        print("Usage: format_yaml.py <file.yaml>", file=sys.stderr)
+        return 2
+
+    path = Path(args[0])
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError as e:
+        print(f"Error reading {path}: {e}", file=sys.stderr)
+        return 1
+
     yaml = YAML()
     yaml.preserve_quotes = True
-    data = yaml.load(path.read_text(encoding="utf-8"))
+    data = yaml.load(content)
     if data is None:
         return 0
 

@@ -283,7 +283,7 @@ class EntityDefinitionExtractor:
                     if isinstance(data, dict):
                         merged.update(data)
                 return merged
-        except (OSError, yaml.YAMLError) as e:
+        except (OSError, yaml.YAMLError, TypeError, ValueError) as e:
             self._record_extraction_warning(target, e)
             return None
         return None

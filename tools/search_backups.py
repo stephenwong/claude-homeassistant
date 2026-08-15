@@ -260,7 +260,7 @@ def main() -> int:
     match_count, unreadable_count = _render_results(
         results, files_only=args.files_only, context_lines=args.context
     )
-    return 1 if unreadable_count else (0 if match_count else 0)
+    return 1 if unreadable_count else 0
 
 
 if __name__ == "__main__":

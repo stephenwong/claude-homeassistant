@@ -19,7 +19,7 @@ from tools.common import (
     validate_ha_url,
 )
 
-_MAX_RESULT_MESSAGES = 100
+_MAX_RESULT_MESSAGES = 500
 
 
 class _ClientConstructor[ClientT](Protocol):

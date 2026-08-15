@@ -85,6 +85,26 @@ class TestTemplateValidation:
         assert result is False
         assert_diagnostic(validator, "errors", "syntax error")
 
+    def test_null_message_error_payload(self, config_dir):
+        from unittest.mock import MagicMock
+
+        from tools.validators.templates import TemplateValidator
+
+        validator = TemplateValidator(str(config_dir))
+        mock_client = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 400
+        mock_resp.text = "raw error text"
+        mock_resp.json.return_value = {"message": None}
+        mock_client.post.return_value = mock_resp
+
+        status, detail = validator._render(mock_client, "{{ 1 + 1 }}")
+        assert status == "error"
+        assert detail == "raw error text"
+        validator._record_render_error("config/automations.yaml", detail)
+        assert len(validator.warnings) == 1
+        assert "raw error text" in validator.warnings[0]
+
     def test_runtime_undefined_warns(self, config_dir):
         validator, result = _run_template_validation(
             config_dir,

@@ -222,7 +222,11 @@ class HAOfficialValidator(ValidatorBase):
             if not line:
                 continue
             line_lower = line.lower()
-            if re.match(r"^\W*warning\b", line, re.I):
+            if re.match(
+                r"^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(\.\d+)?\s+)?\W*warning\b",
+                line,
+                re.I,
+            ):
                 self.warnings.append(f"HA Warning: {line}")
                 continue
             if any(ind in line_lower for ind in _STDERR_ERROR_INDICATORS):

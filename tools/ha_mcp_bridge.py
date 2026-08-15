@@ -6,6 +6,7 @@ Supports both Streamable HTTP (MCP 2024-11-05) and classic SSE GET/POST transpor
 """
 
 import asyncio
+import codecs
 import os
 import sys
 from collections.abc import Callable, Coroutine, Iterable
@@ -116,33 +117,45 @@ async def run_bridge(
         if "text/event-stream" in content_type:
             event_type = "message"
             data_lines: list[str] = []
+            decoder = codecs.getincrementaldecoder("utf-8")("replace")
+            buffer = ""
+
+            def process_sse_line(line: str) -> None:
+                nonlocal event_type, data_lines
+                if not line:
+                    if data_lines:
+                        event = SSEEvent(event=event_type, data="\n".join(data_lines))
+                        data_lines = []
+                        event_type = "message"
+                        if event.event == "message":
+                            sys.stdout.write(event.data + "\n")
+                            sys.stdout.flush()
+                    return
+                if line.startswith(":"):
+                    return
+                if ":" in line:
+                    field, _, val = line.partition(":")
+                    val = val.lstrip(" ")
+                    if field == "event":
+                        event_type = val
+                    elif field == "data":
+                        data_lines.append(val)
+                else:
+                    if line == "data":
+                        data_lines.append("")
+
             async for chunk in response.content:
-                chunk_text = chunk.decode("utf-8", errors="replace")
-                for raw_line in chunk_text.splitlines(keepends=True):
-                    line = raw_line.rstrip("\r\n")
-                    if not line:
-                        if data_lines:
-                            event = SSEEvent(
-                                event=event_type, data="\n".join(data_lines)
-                            )
-                            data_lines = []
-                            event_type = "message"
-                            if event.event == "message":
-                                sys.stdout.write(event.data + "\n")
-                                sys.stdout.flush()
-                        continue
-                    if line.startswith(":"):
-                        continue
-                    if ":" in line:
-                        field, _, val = line.partition(":")
-                        val = val.lstrip(" ")
-                        if field == "event":
-                            event_type = val
-                        elif field == "data":
-                            data_lines.append(val)
-                    else:
-                        if line == "data":
-                            data_lines.append("")
+                buffer += decoder.decode(chunk)
+                while "\n" in buffer:
+                    raw_line, buffer = buffer.split("\n", 1)
+                    process_sse_line(raw_line.rstrip("\r"))
+
+            final_text = decoder.decode(b"", final=True)
+            if final_text:
+                buffer += final_text
+            if buffer:
+                process_sse_line(buffer.rstrip("\r\n"))
+
             if data_lines:
                 event = SSEEvent(event=event_type, data="\n".join(data_lines))
                 if event.event == "message":

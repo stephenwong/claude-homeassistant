@@ -60,6 +60,15 @@ class TestHAOfficialValidatorMain:
         assert validator.errors == []
         assert any("deprecated" in warning for warning in validator.warnings)
 
+    def test_timestamped_warning_on_stderr_is_classified_as_warning(self, validator):
+        stderr = (
+            "2026-08-15 12:00:00 WARNING (MainThread) "
+            "[homeassistant.config] setting is deprecated\n"
+        )
+        validator.parse_check_config_output("", stderr)
+        assert validator.errors == []
+        assert any("deprecated" in warning for warning in validator.warnings)
+
 
 @pytest.mark.parametrize(
     "message",

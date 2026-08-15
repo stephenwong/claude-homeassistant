@@ -408,7 +408,7 @@ class TestExtractEntityReferencesFiltering:
             ],
         }
         entity_refs = validator.extract_entity_references(data)
-        assert entity_refs == {"sensor.normal", "binary_sensor.door"}
+        assert entity_refs == {"sensor.normal", "binary_sensor.door", "sensor.template"}
 
     def test_skips_blueprint_inputs(self, validator):
         data = {
@@ -1223,7 +1223,11 @@ class TestExtractEntityReferencesNesting:
             ],
         }
 
-        assert validator.extract_entity_references(data) == {"light.a", "switch.d"}
+        assert validator.extract_entity_references(data) == {
+            "light.a",
+            "switch.d",
+            "sensor.temperature",
+        }
 
 
 class TestEntityRegistryIdMappingCache:
@@ -1366,3 +1370,23 @@ class TestValidateFileReferencesHelpers:
         assert result is False
         assert any("Unknown device 'device_unknown'" in e for e in validator.errors)
         assert any("disabled device 'device_known'" in w for w in validator.warnings)
+
+    def test_walk_references_extracts_template_in_entity_id_key(self, validator):
+        data = {
+            "action": "light.turn_on",
+            "entity_id": "{{ states('sensor.target_light') }}",
+        }
+        refs = validator.extract_entity_references(data)
+        assert "sensor.target_light" in refs
+
+    def test_walk_references_extracts_template_in_entity_id_list(self, validator):
+        data = {
+            "action": "light.turn_on",
+            "entity_id": [
+                "light.kitchen",
+                "{{ is_state('binary_sensor.motion', 'on') and 'light.living' }}",
+            ],
+        }
+        refs = validator.extract_entity_references(data)
+        assert "light.kitchen" in refs
+        assert "binary_sensor.motion" in refs

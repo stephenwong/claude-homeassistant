@@ -643,3 +643,20 @@ def test_zone_storage_data_list_keeps_zone_specific_diagnostic(extractor_factory
     assert any(
         "zone storage 'data' must be an object" in warning for warning in warnings
     )
+
+
+def test_resolve_include_handles_unicode_decode_error(tmp_path):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    inc_dir = config_dir / "packages"
+    inc_dir.mkdir()
+    bad_file = inc_dir / "bad.yaml"
+    bad_file.write_bytes(b"\xff\xfe\x00\x00invalid")
+
+    warnings: list[str] = []
+    extractor = EntityDefinitionExtractor(
+        config_dir, config_dir / ".storage", warnings, []
+    )
+    result = extractor._resolve_include("!include_dir_named packages")
+    assert result is None
+    assert any("Failed to extract entity definitions" in w for w in warnings)

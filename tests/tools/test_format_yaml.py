@@ -68,3 +68,18 @@ def test_replace_failure_preserves_original_and_cleans_temp(tmp_path, monkeypatc
 
     assert path.read_text() == before
     assert len(list(tmp_path.iterdir())) == 1
+
+
+def test_missing_arguments_returns_two(monkeypatch, capsys):
+    monkeypatch.setattr("sys.argv", ["format_yaml"])
+    assert format_yaml.main() == 2
+    captured = capsys.readouterr()
+    assert "Usage:" in captured.err
+
+
+def test_missing_file_returns_one(tmp_path, monkeypatch, capsys):
+    missing_path = tmp_path / "nonexistent.yaml"
+    monkeypatch.setattr("sys.argv", ["format_yaml", str(missing_path)])
+    assert format_yaml.main() == 1
+    captured = capsys.readouterr()
+    assert "Error reading" in captured.err

@@ -224,6 +224,64 @@ class TestRunBridge:
         assert '{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}' in captured.out
 
     @pytest.mark.anyio
+    async def test_run_bridge_split_utf8_chunks(self, capsys):
+        input_lines = [
+            '{"jsonrpc":"2.0","id":1,"method":"read"}\n',
+            "",
+        ]
+
+        async def mock_read_stdin() -> str:
+            if input_lines:
+                return input_lines.pop(0)
+            return ""
+
+        full_payload = 'event: message\ndata: {"text":"🌡️ 22°C"}\n\n'.encode()
+        # Split full_payload right inside a multi-byte sequence
+        split_idx = full_payload.index("🌡️".encode()[:2]) + 2
+        chunk1 = full_payload[:split_idx]
+        chunk2 = full_payload[split_idx:]
+
+        class MockChunkContent:
+            def __init__(self, chunks):
+                self._chunks = list(chunks)
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                if self._chunks:
+                    return self._chunks.pop(0)
+                raise StopAsyncIteration
+
+        mock_post_response = AsyncMock()
+        mock_post_response.status = 200
+        mock_post_response.headers = {
+            "content-type": "text/event-stream",
+        }
+        mock_post_response.content = MockChunkContent([chunk1, chunk2])
+
+        post_ctx = MagicMock()
+        post_ctx.__aenter__ = AsyncMock(return_value=mock_post_response)
+        post_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        mock_session = MagicMock()
+        mock_session.post.return_value = post_ctx
+
+        session_ctx = MagicMock()
+        session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+        session_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("aiohttp.ClientSession", return_value=session_ctx):
+            exit_code = await run_bridge(
+                "http://ha-host:9583/token", stdin_reader=mock_read_stdin
+            )
+            assert exit_code == 0
+
+        captured = capsys.readouterr()
+        assert '{"text":"🌡️ 22°C"}' in captured.out
+        assert "\ufffd" not in captured.out
+
+    @pytest.mark.anyio
     async def test_run_bridge_streamable_http_json_flow(self, capsys):
         input_lines = [
             '{"jsonrpc":"2.0","id":1,"method":"ping"}\n',

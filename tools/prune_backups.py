@@ -225,8 +225,7 @@ def _delete_backups(to_delete: list[BackupRecord]) -> int:
             continue
         try:
             changelog_path = changelog_path_for(backup)
-            if changelog_path.exists():
-                changelog_path.unlink()
+            changelog_path.unlink(missing_ok=True)
         except OSError as e:
             print(
                 f"⚠️ failed to delete changelog for {backup['filename']}: {e}",

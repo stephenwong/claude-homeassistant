@@ -337,6 +337,13 @@ class ReferenceValidator(ValidatorBase):
         for key, value in children:
             if key in keys:
                 refs.update(self._collect_string_values(value, skip=skip))
+                if template_callback is not None:
+                    if isinstance(value, str) and is_jinja_template(value):
+                        refs.update(template_callback(value))
+                    elif isinstance(value, list):
+                        for item in value:
+                            if isinstance(item, str) and is_jinja_template(item):
+                                refs.update(template_callback(item))
             elif key in skip_keys:
                 continue
             elif (

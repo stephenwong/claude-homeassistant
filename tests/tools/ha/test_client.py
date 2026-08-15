@@ -642,9 +642,10 @@ class TestHAWSCommand:
         assert result == "ok"
 
     def test_loop_exhaustion_raises(self):
-        """Sending 100+ non-result messages should exhaust the loop guard."""
-        # 101 messages: none are matching results
-        messages = [{"type": "event", "id": i} for i in range(101)]
+        """Sending _MAX_RESULT_MESSAGES+ non-result messages exhausts loop guard."""
+        from tools.ha.client import _MAX_RESULT_MESSAGES
+
+        messages = [{"type": "event", "id": i} for i in range(_MAX_RESULT_MESSAGES + 1)]
         ws = _make_mock_ws(messages)
         c = HAWSClient("http://ha:8123", "tok")
         with pytest.raises(HARequestError, match="timed out"):

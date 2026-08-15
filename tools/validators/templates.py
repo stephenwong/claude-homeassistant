@@ -75,13 +75,13 @@ class TemplateValidator(ValidatorBase):
         try:
             payload = resp.json()
             msg = (
-                payload.get("message", resp.text)
+                payload.get("message") or resp.text
                 if isinstance(payload, dict)
                 else resp.text
             )
         except ValueError:
             msg = resp.text
-        return ("error", msg)
+        return ("error", msg or resp.text)
 
     def _collect_templates(self) -> tuple[list[tuple[str, str]], bool]:
         """Collect unique-candidate templates while preserving YAML diagnostics."""

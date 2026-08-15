@@ -59,7 +59,7 @@ def should_include(name: str) -> bool:
 
 
 @functools.lru_cache(maxsize=2)
-def extract_files(backup_path: Path) -> dict[str, str]:
+def _extract_files_cached(backup_path: Path) -> dict[str, str]:
     """Extract interesting text files from a backup archive. Returns {name: content}."""
     files = {}
     try:
@@ -74,6 +74,18 @@ def extract_files(backup_path: Path) -> dict[str, str]:
     except (tarfile.TarError, OSError) as e:
         print(f"  Warning: Could not read {backup_path}: {e}", file=sys.stderr)
     return files
+
+
+def extract_files(backup_path: Path) -> dict[str, str]:
+    """Extract interesting text files from archive.
+
+    Returns a new {name: content} dict.
+    """
+    return dict(_extract_files_cached(backup_path))
+
+
+extract_files.cache_clear = _extract_files_cached.cache_clear  # type: ignore[attr-defined]
+extract_files.cache_info = _extract_files_cached.cache_info  # type: ignore[attr-defined]
 
 
 def _unified_diff(name: str, old: list[str], new: list[str]) -> list[str]:
