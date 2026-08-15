@@ -554,35 +554,21 @@ class TestErrorHandling:
 
 
 class TestCount:
-    def test_count_list(self, mock_client, capsys):
-        mock_client.get.return_value = json_resp([{}, {"a": 1}, {"b": 2}])
+    @pytest.mark.parametrize(
+        ("payload", "expected"),
+        [
+            ([{}, {"a": 1}, {"b": 2}], "3"),
+            ({"a": 1, "b": 2, "c": 3}, "3"),
+            (None, "0"),
+            (42, "0"),
+            (True, "0"),
+        ],
+    )
+    def test_count_json_payloads(self, mock_client, capsys, payload, expected):
+        mock_client.get.return_value = json_resp(payload)
         args = make_args(count=True)
         assert curl_cmd.run(args) == 0
-        assert capsys.readouterr().out.strip() == "3"
-
-    def test_count_dict(self, mock_client, capsys):
-        mock_client.get.return_value = json_resp({"a": 1, "b": 2, "c": 3})
-        args = make_args(count=True)
-        assert curl_cmd.run(args) == 0
-        assert capsys.readouterr().out.strip() == "3"
-
-    def test_count_scalar_null(self, mock_client, capsys):
-        mock_client.get.return_value = json_resp(None)
-        args = make_args(count=True)
-        assert curl_cmd.run(args) == 0
-        assert capsys.readouterr().out.strip() == "0"
-
-    def test_count_scalar_number(self, mock_client, capsys):
-        mock_client.get.return_value = json_resp(42)
-        args = make_args(count=True)
-        assert curl_cmd.run(args) == 0
-        assert capsys.readouterr().out.strip() == "0"
-
-    def test_count_scalar_boolean(self, mock_client, capsys):
-        mock_client.get.return_value = json_resp(True)
-        args = make_args(count=True)
-        assert curl_cmd.run(args) == 0
-        assert capsys.readouterr().out.strip() == "0"
+        assert capsys.readouterr().out.strip() == expected
 
     def test_count_non_json(self, mock_client, capsys):
         mock_client.get.return_value = text_resp("hello world", ct="text/plain")

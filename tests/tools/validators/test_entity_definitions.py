@@ -4,7 +4,11 @@ import json
 
 import pytest
 
-from tools.validators.entity_definitions import EntityDefinitionExtractor
+from tools.validators.entity_definitions import (
+    _INPUT_HELPER_DOMAINS,
+    _TEMPLATE_ENTITY_DOMAINS,
+    EntityDefinitionExtractor,
+)
 
 
 @pytest.fixture
@@ -451,8 +455,6 @@ class TestLoadYamlFile:
 
 def test_input_helper_domain_constants_match_ha_set():
     """Pin the canonical HA input-helper set so a HA-release update is loud."""
-    from tools.validators.entity_definitions import _INPUT_HELPER_DOMAINS
-
     assert set(_INPUT_HELPER_DOMAINS) == {
         "input_boolean",
         "input_number",
@@ -468,8 +470,6 @@ def test_input_helper_domain_constants_match_ha_set():
 
 def test_template_entity_domain_constants_match_extracted_set():
     """Pin the canonical HA template-entity set so a HA-release update is loud."""
-    from tools.validators.entity_definitions import _TEMPLATE_ENTITY_DOMAINS
-
     assert "sensor" in _TEMPLATE_ENTITY_DOMAINS
     assert "binary_sensor" in _TEMPLATE_ENTITY_DOMAINS
     assert "weather" in _TEMPLATE_ENTITY_DOMAINS

@@ -176,8 +176,6 @@ def run(args: argparse.Namespace) -> int:
 
         return 1  # pragma: no cover  # unreachable; satisfies type checker
 
-    except FileNotFoundError as e:
-        return fail_stderr(f"could not read {target_file}: {e}")
     except OSError as e:
         return fail_stderr(f"could not read {target_file}: {e}")
     except YAMLError as e:

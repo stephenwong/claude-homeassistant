@@ -11,8 +11,12 @@ from pathlib import Path
 from typing import Any, NamedTuple, TypedDict
 
 from tools.common import add_summary_args, resolve_summary
-from tools.validators._storage import load_storage_registry
-from tools.validators._templates import is_jinja_template
+from tools.validators._storage import (
+    is_entity_disabled,
+    is_entity_hidden,
+    load_storage_registry,
+)
+from tools.validators._templates import is_dynamic_or_tag, is_jinja_template
 from tools.validators.base import ValidatorBase, format_diagnostics
 from tools.validators.entity_definitions import EntityDefinitionExtractor
 
@@ -252,7 +256,7 @@ class ReferenceValidator(ValidatorBase):
         skip UUIDs and special keywords ("all", "none"), but device/area
         IDs legitimately use UUID format and don't have keyword aliases.
         """
-        return value.startswith("!") or self.is_template(value)
+        return is_dynamic_or_tag(value)
 
     def should_skip_entity_validation(self, value: str) -> bool:
         """Check if entity reference should be skipped during validation."""
@@ -391,12 +395,12 @@ class ReferenceValidator(ValidatorBase):
     @staticmethod
     def _is_disabled(entity_data: dict) -> bool:
         """True when the entity/device is disabled (``disabled_by`` is set)."""
-        return entity_data.get("disabled_by") is not None
+        return is_entity_disabled(entity_data)
 
     @staticmethod
     def _is_hidden(entity_data: dict) -> bool:
         """True when the entity is hidden (``hidden_by`` is set)."""
-        return entity_data.get("hidden_by") is not None
+        return is_entity_hidden(entity_data)
 
     def _check_entity_refs(
         self,

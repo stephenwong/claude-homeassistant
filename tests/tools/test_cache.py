@@ -2,6 +2,7 @@
 
 import json
 import math
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -9,6 +10,7 @@ import pytest
 from tools.cache import (
     CACHE_SCHEMA_VERSION,
     _blob_hash,
+    _compute_hash_status,
     cache_path,
     compute_hash,
     load_blob,
@@ -129,11 +131,7 @@ class TestL79UnreadableFile:
         (tmp_path / "a.yaml").write_text("readable")
         (tmp_path / "b.yaml").write_text("also readable")
 
-        import pathlib
-
-        from tools.cache import compute_hash
-
-        orig_read_bytes = pathlib.Path.read_bytes
+        orig_read_bytes = Path.read_bytes
         n_calls = 0
 
         def _mock_read_bytes(self):
@@ -143,7 +141,7 @@ class TestL79UnreadableFile:
                 raise OSError("simulated read failure")
             return orig_read_bytes(self)
 
-        monkeypatch.setattr(pathlib.Path, "read_bytes", _mock_read_bytes)
+        monkeypatch.setattr(Path, "read_bytes", _mock_read_bytes)
         result = compute_hash(tmp_path, ["*.yaml"])
         assert isinstance(result, str)
         assert len(result) == 64
@@ -151,19 +149,15 @@ class TestL79UnreadableFile:
         assert "WARN" in err
 
     def test_hash_status_marks_unreadable_match_incomplete(self, tmp_path, monkeypatch):
-        from tools.cache import _compute_hash_status
-
         (tmp_path / "broken.yaml").write_text("content")
-        import pathlib
-
-        original = pathlib.Path.read_bytes
+        original = Path.read_bytes
 
         def fail_for_broken(path):
             if path.name == "broken.yaml":
                 raise OSError("nope")
             return original(path)
 
-        monkeypatch.setattr(pathlib.Path, "read_bytes", fail_for_broken)
+        monkeypatch.setattr(Path, "read_bytes", fail_for_broken)
         _digest, complete = _compute_hash_status(tmp_path, ["*.yaml"])
         assert complete is False
 

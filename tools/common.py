@@ -256,9 +256,6 @@ def _atomic_replace(
     temp_path: Path | None = None,
     temp_prefix: str = "tmp",
     temp_suffix: str = "",
-    preserve_mode_before_write: bool = False,
-    suppress_cleanup_errors: bool = False,
-    cleanup_missing_ok: bool = False,
 ) -> None:
     """Write a sibling temporary file, optionally validate it, then replace *path*.
 
@@ -267,10 +264,8 @@ def _atomic_replace(
     shared temporary-file, permission, replacement, and cleanup lifecycle.
     """
     tmp_path = temp_path
-    mode = None
+    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else None
     try:
-        if preserve_mode_before_write and path.exists():
-            mode = stat.S_IMODE(path.stat().st_mode)
         if tmp_path is None:
             with tempfile.NamedTemporaryFile(
                 dir=path.parent,
@@ -280,22 +275,15 @@ def _atomic_replace(
             ) as tmp:
                 tmp_path = Path(tmp.name)
         write_temp(tmp_path)
-        if not preserve_mode_before_write and path.exists():
-            mode = stat.S_IMODE(path.stat().st_mode)
         if mode is not None:
             os.chmod(tmp_path, mode)
         if validate is not None:
             validate(tmp_path)
         os.replace(tmp_path, path)
     finally:
-        if tmp_path is not None and tmp_path.exists():
-            if suppress_cleanup_errors:
-                with contextlib.suppress(OSError):
-                    tmp_path.unlink()
-            elif cleanup_missing_ok:
+        if tmp_path is not None:
+            with contextlib.suppress(OSError):
                 tmp_path.unlink(missing_ok=True)
-            else:
-                tmp_path.unlink()
 
 
 def atomic_write_text(path: Path, content: str) -> bool:
@@ -321,8 +309,6 @@ def atomic_write_text(path: Path, content: str) -> bool:
             path,
             write_temp,
             temp_path=tmp,
-            preserve_mode_before_write=True,
-            suppress_cleanup_errors=True,
         )
         return True
     except OSError as e:

@@ -16,15 +16,36 @@ import yaml
 from tools.backup_common import BackupRecord
 
 
-def make_tar(tmp_path, files, name="test.tar.gz"):
-    """Create a gzipped tar archive containing UTF-8 text files."""
+def make_tar(
+    tmp_path: Path,
+    files: dict[str, Any],
+    name: str = "test.tar.gz",
+    *,
+    symlinks: dict[str, str] | None = None,
+) -> Path:
+    """Create a gzipped tar archive with text, binary, dirs, or symlinks."""
     tar_path = tmp_path / name
     with tarfile.open(tar_path, "w:gz") as tar:
         for filename, content in files.items():
-            data = content.encode("utf-8")
-            info = tarfile.TarInfo(name=filename)
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
+            if content is None:
+                info = tarfile.TarInfo(name=filename)
+                info.type = tarfile.DIRTYPE
+                tar.addfile(info)
+            elif isinstance(content, bytes):
+                info = tarfile.TarInfo(name=filename)
+                info.size = len(content)
+                tar.addfile(info, io.BytesIO(content))
+            else:
+                data = content.encode("utf-8")
+                info = tarfile.TarInfo(name=filename)
+                info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+        if symlinks:
+            for linkname, target in symlinks.items():
+                info = tarfile.TarInfo(name=linkname)
+                info.type = tarfile.SYMTYPE
+                info.linkname = target
+                tar.addfile(info)
     return tar_path
 
 
@@ -33,12 +54,65 @@ def make_backup_record(path: Path, filename: str, timestamp: datetime) -> Backup
     return {"path": path, "filename": filename, "timestamp": timestamp}
 
 
+def create_test_backup(
+    backup_dir: Path,
+    name: str,
+    files: dict[str, Any],
+    timestamp: datetime | None = None,
+    *,
+    symlinks: dict[str, str] | None = None,
+) -> tuple[Path, BackupRecord]:
+    """Create a backup tar archive and corresponding BackupRecord."""
+    tar_path = make_tar(backup_dir, files, name=name, symlinks=symlinks)
+    ts = timestamp or datetime.fromtimestamp(tar_path.stat().st_mtime)
+    record = make_backup_record(tar_path, name, ts)
+    return tar_path, record
+
+
 def write_yaml(config_dir: Path, data: Any, filename: str = "automations.yaml") -> Path:
     """Write a YAML fixture and return its path."""
     path = config_dir / filename
     with path.open("w") as file:
         yaml.dump(data, file)
     return path
+
+
+def write_storage_registry(
+    config_dir: Path,
+    filename: str,
+    list_key: str,
+    entries: list[dict[str, Any]],
+) -> Path:
+    """Write an HA .storage JSON registry fixture and return its path."""
+    storage_dir = config_dir / ".storage"
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    path = storage_dir / filename
+    payload = {
+        "version": 1,
+        "minor_version": 1,
+        "key": filename,
+        "data": {list_key: entries},
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def write_storage_registries(
+    config_dir: Path,
+    *,
+    entities: list[dict[str, Any]] | None = None,
+    devices: list[dict[str, Any]] | None = None,
+    areas: list[dict[str, Any]] | None = None,
+    entity_entries: list[dict[str, Any]] | None = None,
+) -> None:
+    """Write standard HA .storage registries (entity, device, area) to config_dir."""
+    ent_list = entity_entries if entity_entries is not None else entities
+    if ent_list is not None:
+        write_storage_registry(config_dir, "core.entity_registry", "entities", ent_list)
+    if devices is not None:
+        write_storage_registry(config_dir, "core.device_registry", "devices", devices)
+    if areas is not None:
+        write_storage_registry(config_dir, "core.area_registry", "areas", areas)
 
 
 _MISSING = object()
@@ -94,24 +168,46 @@ def make_completed_process(
 
 
 def mock_json_client(
-    result: Any = None, *, side_effect: Exception | None = None
+    result: Any = None,
+    *,
+    side_effect: Exception | None = None,
+    post_response: Any = None,
 ) -> MagicMock:
-    """Create an HA client mock for a JSON endpoint."""
+    """Create an HA client mock for a JSON or POST endpoint."""
     from tools.ha.client import HAClient
 
     client = MagicMock(spec=HAClient)
     client.close = MagicMock()
+    client.__enter__.return_value = client
+    client.__exit__.return_value = None
+    client.timeout = 30
     if side_effect is None:
         client.get_json.return_value = result
     else:
         client.get_json.side_effect = side_effect
+    client.post.return_value = (
+        post_response if post_response is not None else make_response()
+    )
     return client
+
+
+def mock_offline_client(error_msg: str = "offline") -> MagicMock:
+    """Create an HA client mock that fails requests with HARequestError."""
+    from tools.ha.client import HARequestError
+
+    return mock_json_client(side_effect=HARequestError(error_msg))
+
+
+def _has_diagnostic(validator: Any, severity: str, text: str) -> bool:
+    """Check if validator has a diagnostic in severity list matching text."""
+    diagnostics = getattr(validator, severity, [])
+    return any(text.lower() in str(d).lower() for d in diagnostics)
 
 
 def assert_diagnostic(validator: Any, severity: str, text: str) -> None:
     """Assert that a validator emitted a diagnostic containing ``text``."""
-    diagnostics = getattr(validator, severity)
-    assert any(text.lower() in diagnostic.lower() for diagnostic in diagnostics), (
+    diagnostics = getattr(validator, severity, [])
+    assert _has_diagnostic(validator, severity, text), (
         f"No {severity} diagnostic contained {text!r}: {diagnostics!r}"
     )
 
@@ -120,11 +216,15 @@ def assert_no_diagnostic(
     validator: Any, severity: str, text: str | None = None
 ) -> None:
     """Assert that a validator emitted no diagnostics, optionally matching text."""
-    diagnostics = getattr(validator, severity)
+    diagnostics = getattr(validator, severity, [])
     if text is None:
-        assert not diagnostics
+        assert not diagnostics, (
+            f"Expected no {severity} diagnostics, got: {diagnostics!r}"
+        )
     else:
-        assert not any(text.lower() in diagnostic.lower() for diagnostic in diagnostics)
+        assert not _has_diagnostic(validator, severity, text), (
+            f"Expected no {severity} diagnostic with {text!r}, got: {diagnostics!r}"
+        )
 
 
 def make_parser() -> tuple[ArgumentParser, Any]:
@@ -148,3 +248,16 @@ def parse_command_args(command: str, add_parser: Any, argv: list[str]) -> Any:
     parser, subparsers = make_parser()
     add_parser(subparsers)
     return parser.parse_args([command, *argv])
+
+
+def make_command_args(
+    command: str,
+    add_parser: Any,
+    argv: list[str] | None = None,
+    **overrides: Any,
+) -> Any:
+    """Parse a command's arguments with optional argv and keyword overrides."""
+    args = parse_command_args(command, add_parser, argv or [])
+    for name, value in overrides.items():
+        setattr(args, name, value)
+    return args

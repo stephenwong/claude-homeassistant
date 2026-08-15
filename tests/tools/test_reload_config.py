@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from tests.helpers import make_completed_process, make_response
+from tests.helpers import make_completed_process, make_response, mock_json_client
 from tools.common import HARequestError
 from tools.ha.client import HAClient
 from tools.reload_config import (
@@ -37,13 +37,7 @@ def _nul(s: str) -> str:
 
 def _make_client():
     """Return a mock HAClient with post stubbed to return success by default."""
-    client = MagicMock(spec=HAClient)
-    client.close = MagicMock()
-    client.__enter__.return_value = client
-    client.__exit__.return_value = None
-    client.post.return_value = make_response()
-    client.timeout = 30
-    return client
+    return mock_json_client()
 
 
 class TestDetectChangedServices:

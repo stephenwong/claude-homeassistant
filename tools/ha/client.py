@@ -6,7 +6,7 @@ lived in `tools/reload_config.py` and `tools/ha_api_diagnostic.py`.
 
 import asyncio
 import sys
-from typing import Any, Protocol, cast
+from typing import Any, Self
 
 import aiohttp
 import requests
@@ -20,12 +20,6 @@ from tools.common import (
 )
 
 _MAX_RESULT_MESSAGES = 500
-
-
-class _ClientConstructor[ClientT](Protocol):
-    """Callable constructor accepted by the shared environment factory."""
-
-    def __call__(self, url: str, token: str, *, timeout: int) -> ClientT: ...
 
 
 def _validate_connection(url: str, token: str) -> str:
@@ -50,13 +44,28 @@ def _env_config() -> tuple[str, str, int]:
     return get_ha_config(warning_stream=sys.stderr)
 
 
-def _client_from_env[ClientT](client_cls: _ClientConstructor[ClientT]) -> ClientT:
-    """Construct a client class from the shared environment configuration."""
-    url, token, timeout = _env_config()
-    return client_cls(url, token, timeout=timeout)
+class _BaseHAClient:
+    """Base class for HA API clients providing common connection properties."""
+
+    def __init__(
+        self,
+        url: str,
+        token: str,
+        *,
+        timeout: int = DEFAULT_HA_TIMEOUT,
+    ) -> None:
+        self.url = _validate_connection(url, token)
+        self.token = token
+        self.timeout = timeout
+
+    @classmethod
+    def from_env(cls) -> Self:
+        """Construct a client from HA_URL/HA_TOKEN/HA_REQUEST_TIMEOUT."""
+        url, token, timeout = _env_config()
+        return cls(url, token, timeout=timeout)
 
 
-class HAClient:
+class HAClient(_BaseHAClient):
     """Thin wrapper around the Home Assistant REST API."""
 
     def __init__(
@@ -75,9 +84,7 @@ class HAClient:
             timeout: Per-request timeout in seconds.
             session: Optional pre-configured requests.Session for testing.
         """
-        self.url = _validate_connection(url, token)
-        self.token = token
-        self.timeout = timeout
+        super().__init__(url, token, timeout=timeout)
         self._session = session or requests.Session()
 
     @property
@@ -87,16 +94,6 @@ class HAClient:
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json",
         }
-
-    @classmethod
-    def from_env(cls) -> HAClient:
-        """Construct a client from HA_URL/HA_TOKEN/HA_REQUEST_TIMEOUT.
-
-        Loads ``.env`` exactly once via the shared environment configuration
-        helper so callers don't need to remember to do it. The underlying
-        loader is idempotent and only sets variables absent from the environment.
-        """
-        return _client_from_env(cast(_ClientConstructor[HAClient], cls))
 
     def close(self) -> None:
         """Close the underlying requests.Session, releasing pooled connections."""
@@ -172,7 +169,7 @@ class HAClient:
         return 200 <= response.status_code < 300
 
 
-class HAWSClient:
+class HAWSClient(_BaseHAClient):
     """Thin WebSocket client for HA commands not available via REST.
 
     HA removed /api/error_log and /api/automation/trace from the REST API.
@@ -187,15 +184,8 @@ class HAWSClient:
         timeout: int = DEFAULT_HA_TIMEOUT,
         session_factory=None,
     ):
-        self.url = _validate_connection(url, token)
-        self.token = token
-        self.timeout = timeout
+        super().__init__(url, token, timeout=timeout)
         self._session_factory = session_factory
-
-    @classmethod
-    def from_env(cls) -> HAWSClient:
-        """Construct a client from HA_URL/HA_TOKEN/HA_REQUEST_TIMEOUT."""
-        return _client_from_env(cast(_ClientConstructor[HAWSClient], cls))
 
     @property
     def _ws_url(self) -> str:

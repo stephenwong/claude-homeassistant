@@ -3,7 +3,8 @@
 import pytest
 import yaml
 
-from tools.validators.yaml import YAMLValidator
+from tests.helpers import assert_diagnostic, assert_no_diagnostic
+from tools.validators.yaml import YAMLValidator, main
 
 
 @pytest.fixture
@@ -22,7 +23,7 @@ class TestValidateYamlSyntax:
         f = config_dir / "test.yaml"
         f.write_text("key: value\n  bad indent: oops\n")
         assert validator.validate_yaml_syntax(f) is False
-        assert any("YAML syntax error" in e for e in validator.errors)
+        assert_diagnostic(validator, "errors", "YAML syntax error")
 
     def test_non_utf8_encoding(self, config_dir, validator):
         f = config_dir / "test.yaml"
@@ -36,7 +37,7 @@ class TestEmptyHomeAssistantSection:
         (config_dir / "configuration.yaml").write_text("homeassistant:\n")
         v = YAMLValidator(str(config_dir))
         v.validate_all()
-        assert not any("homeassistant" in w.lower() for w in v.warnings)
+        assert_no_diagnostic(v, "warnings", "homeassistant")
 
 
 class TestValidateConfigurationStructure:
@@ -63,24 +64,22 @@ class TestValidateConfigurationStructure:
             validator.validate_configuration_structure(f, yaml.safe_load(content))
             is False
         )
-        assert any("must be a dictionary" in e for e in validator.errors)
+        assert_diagnostic(validator, "errors", "must be a dictionary")
 
     def test_configuration_missing_homeassistant(self, config_dir, validator):
         f = config_dir / "configuration.yaml"
         content = "logger:\n  default: info\n"
         f.write_text(content)
         validator.validate_configuration_structure(f, yaml.safe_load(content))
-        assert any("homeassistant" in w for w in validator.warnings)
+        assert_diagnostic(validator, "warnings", "homeassistant")
 
     def test_configuration_deprecated_keys(self, config_dir, validator):
         f = config_dir / "configuration.yaml"
         content = "homeassistant:\n  name: Test\ndiscovery:\nintroduction:\n"
         f.write_text(content)
         validator.validate_configuration_structure(f, yaml.safe_load(content))
-        assert any("discovery" in w and "deprecated" in w for w in validator.warnings)
-        assert any(
-            "introduction" in w and "deprecated" in w for w in validator.warnings
-        )
+        assert_diagnostic(validator, "warnings", "discovery")
+        assert_diagnostic(validator, "warnings", "introduction")
 
     def test_configuration_homeassistant_null_no_warning(self, config_dir, validator):
         """L36: homeassistant: null (None) must NOT trigger a warning."""
@@ -88,7 +87,7 @@ class TestValidateConfigurationStructure:
         content = "homeassistant: null\n"
         f.write_text(content)
         validator.validate_configuration_structure(f, yaml.safe_load(content))
-        assert not any("homeassistant" in w for w in validator.warnings)
+        assert_no_diagnostic(validator, "warnings", "homeassistant")
 
 
 class TestValidateAutomationsStructure:
@@ -121,7 +120,7 @@ class TestValidateAutomationsStructure:
             validator.validate_automations_structure(f, yaml.safe_load(content))
             is False
         )
-        assert any("must be a list" in e for e in validator.errors)
+        assert_diagnostic(validator, "errors", "must be a list")
 
 
 class TestValidateScriptsStructure:
@@ -146,7 +145,7 @@ class TestValidateScriptsStructure:
         content = "- item1\n- item2\n"
         f.write_text(content)
         assert validator.validate_scripts_structure(f, yaml.safe_load(content)) is False
-        assert any("must be a dictionary" in e for e in validator.errors)
+        assert_diagnostic(validator, "errors", "must be a dictionary")
 
 
 class TestValidateAll:
@@ -168,11 +167,11 @@ class TestValidateAll:
     def test_nonexistent_config_dir(self):
         v = YAMLValidator("/nonexistent/path")
         assert v.validate_all() is False
-        assert any("does not exist" in e for e in v.errors)
+        assert_diagnostic(v, "errors", "does not exist")
 
     def test_empty_config_dir(self, config_dir, validator):
         assert validator.validate_all() is True
-        assert any("No YAML files" in w for w in validator.warnings)
+        assert_diagnostic(validator, "warnings", "No YAML files")
 
     def test_skips_secrets_yaml(self, config_dir, validator):
         (config_dir / "secrets.yaml").write_text("api_key: secret123\n")
@@ -195,7 +194,7 @@ class TestValidateAll:
         (config_dir / "good.yaml").write_text("key: value\n")
         (config_dir / "bad.yaml").write_text("key: value\n  bad: indent\n")
         assert validator.validate_all() is False
-        assert any("YAML syntax error" in e for e in validator.errors)
+        assert_diagnostic(validator, "errors", "YAML syntax error")
 
     def test_fails_on_encoding_error(self, config_dir, validator):
         (config_dir / "bad.yaml").write_bytes(b"\xff\xfe\x00\x01")
@@ -209,18 +208,18 @@ class TestValidateAll:
         (config_dir / "automations.yaml").write_text("not_a_list: true\n")
         (config_dir / "configuration.yaml").write_text("homeassistant:\n")
         assert validator.validate_all() is False
-        assert any("Automations must be a list" in e for e in validator.errors)
+        assert_diagnostic(validator, "errors", "Automations must be a list")
 
     def test_scripts_not_dict_via_validate_all(self, config_dir, validator):
         (config_dir / "scripts.yaml").write_text("- item\n")
         (config_dir / "configuration.yaml").write_text("homeassistant:\n")
         assert validator.validate_all() is False
-        assert any("Scripts must be a dictionary" in e for e in validator.errors)
+        assert_diagnostic(validator, "errors", "Scripts must be a dictionary")
 
     def test_configuration_not_dict_via_validate_all(self, config_dir, validator):
         (config_dir / "configuration.yaml").write_text("- item\n")
         assert validator.validate_all() is False
-        assert any("Configuration must be a dictionary" in e for e in validator.errors)
+        assert_diagnostic(validator, "errors", "Configuration must be a dictionary")
 
     def test_mixed_invalid_files_collect_all_structure_diagnostics(
         self, config_dir, validator
@@ -231,24 +230,19 @@ class TestValidateAll:
         (config_dir / "scripts.yaml").write_text("- item\n")
 
         assert validator.validate_all() is False
-        assert any("Configuration must be a dictionary" in e for e in validator.errors)
-        assert any("Automations must be a list" in e for e in validator.errors)
-        assert any("Scripts must be a dictionary" in e for e in validator.errors)
+        assert_diagnostic(validator, "errors", "Configuration must be a dictionary")
+        assert_diagnostic(validator, "errors", "Automations must be a list")
+        assert_diagnostic(validator, "errors", "Scripts must be a dictionary")
 
 
 class TestYAMLValidatorMain:
     """Cover lines 149-164: main() function."""
 
     def test_main_valid(self, config_dir, monkeypatch):
-
-        from tools.validators.yaml import main
-
         (config_dir / "configuration.yaml").write_text("homeassistant:\n  name: Test\n")
         monkeypatch.setattr("sys.argv", ["yaml_validator", str(config_dir)])
         assert main() == 0
 
     def test_main_invalid(self, monkeypatch):
-        from tools.validators.yaml import main
-
         monkeypatch.setattr("sys.argv", ["yaml_validator", "/nonexistent"])
         assert main() == 1

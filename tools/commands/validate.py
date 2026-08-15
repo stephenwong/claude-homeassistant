@@ -319,15 +319,22 @@ def _format_result_line(r: ValidatorResult, summary: bool, quiet: bool) -> str |
     return f"  \u274c {r.description}: FAILED ({r.duration:.2f}s)"
 
 
+def _print_indented_lines(
+    text: str, indent: str = "  ", file: Any = sys.stderr
+) -> None:
+    """Print non-empty lines from text indented by the given prefix."""
+    for line in text.strip().splitlines():
+        if line:
+            print(f"{indent}{line}", file=file)
+
+
 def _print_failure_detail(results: list[ValidatorResult], summary: bool) -> None:
     """Print detailed output for failed validators (to stderr)."""
     for r in results:
         if r.passed:
             continue
         if summary:
-            for line in r.stderr.strip().splitlines():
-                if line:
-                    print(f"  {line}", file=sys.stderr)
+            _print_indented_lines(r.stderr, indent="  ", file=sys.stderr)
         else:
             print(f"\n\U0001f4cb {r.description}", file=sys.stderr)
             print("-" * 50, file=sys.stderr)
@@ -335,8 +342,7 @@ def _print_failure_detail(results: list[ValidatorResult], summary: bool) -> None
             print(f"Duration: {r.duration:.2f}s", file=sys.stderr)
             if r.stderr.strip():
                 print("\nErrors:", file=sys.stderr)
-                for sline in r.stderr.strip().splitlines():
-                    print(f"  {sline}", file=sys.stderr)
+                _print_indented_lines(r.stderr, indent="  ", file=sys.stderr)
             print(file=sys.stderr)
 
 
@@ -403,9 +409,7 @@ def run(args: argparse.Namespace) -> int:
             target = sys.stdout if summary else sys.stderr
             print(line, file=target)
         if r.passed and not summary and not quiet and r.stderr.strip():
-            for sline in r.stderr.strip().splitlines():
-                if sline:
-                    print(f"      {sline}", file=sys.stderr)
+            _print_indented_lines(r.stderr, indent="      ", file=sys.stderr)
         if not r.passed:
             all_passed = False
 

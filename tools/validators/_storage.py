@@ -91,3 +91,13 @@ def load_storage_registry(
             raise ValueError(f"{storage_path}: duplicate registry key '{key}'")
         result[key] = item
     return result
+
+
+def is_entity_disabled(entry: dict[str, JSONValue] | JSONObject) -> bool:
+    """Return True if the entity registry entry is marked as disabled."""
+    return entry.get("disabled_by") is not None
+
+
+def is_entity_hidden(entry: dict[str, JSONValue] | JSONObject) -> bool:
+    """Return True if the entity registry entry is marked as hidden."""
+    return entry.get("hidden_by") is not None

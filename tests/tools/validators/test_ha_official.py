@@ -7,9 +7,12 @@ import pytest
 
 from tests.helpers import make_completed_process
 from tools.validators.ha_official import (
+    _BENIGN_PACKAGE_INSTALL_MARKERS,
+    _IGNORABLE_STDOUT_SUBSTRINGS,
     HAOfficialValidator,
     _is_benign_package_line,
     _is_explicit_error,
+    main,
 )
 
 
@@ -28,8 +31,6 @@ class TestHAOfficialValidatorMain:
     """Cover lines 169-186: main() function."""
 
     def test_main_returns_zero_for_valid_config(self, tmp_path, monkeypatch):
-        from tools.validators.ha_official import main
-
         (tmp_path / "configuration.yaml").write_text("homeassistant:\n  name: Test\n")
         monkeypatch.setattr("sys.argv", ["ha_official_validator", str(tmp_path)])
 
@@ -42,8 +43,6 @@ class TestHAOfficialValidatorMain:
             assert main() == 0
 
     def test_main_returns_one_for_missing_config(self, tmp_path, monkeypatch):
-        from tools.validators.ha_official import main
-
         monkeypatch.setattr("sys.argv", ["ha_official_validator", "/nonexistent"])
         assert main() == 1
 
@@ -471,11 +470,6 @@ class TestBenignPackageMarkers:
     """Pin the two hoisted constant tuples — they serve different policies."""
 
     def test_install_markers_are_strict_subset_of_ignorable(self):
-        from tools.validators.ha_official import (
-            _BENIGN_PACKAGE_INSTALL_MARKERS,
-            _IGNORABLE_STDOUT_SUBSTRINGS,
-        )
-
         ignorable_lower = {s.lower() for s in _IGNORABLE_STDOUT_SUBSTRINGS}
         for m in _BENIGN_PACKAGE_INSTALL_MARKERS:
             assert m.lower() in ignorable_lower, (
@@ -483,8 +477,6 @@ class TestBenignPackageMarkers:
             )
 
     def test_install_markers_count_matches_ha_known_set(self):
-        from tools.validators.ha_official import _BENIGN_PACKAGE_INSTALL_MARKERS
-
         assert len(_BENIGN_PACKAGE_INSTALL_MARKERS) == 4
 
 

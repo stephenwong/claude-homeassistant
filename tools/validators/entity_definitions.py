@@ -425,6 +425,24 @@ class EntityDefinitionExtractor:
 
         return entities
 
+    def _resolve_config_or_sidecar(
+        self,
+        config_data: dict | None,
+        config_key: str,
+        file_name: str,
+    ) -> Any:
+        """Resolve a config section from !include, inline value, or sidecar file."""
+        if isinstance(config_data, dict) and config_key in config_data:
+            include_value = config_data.get(config_key)
+            if isinstance(include_value, str) and include_value.startswith("!include"):
+                return self._resolve_include(include_value)
+            return include_value
+
+        sidecar = self.config_dir / file_name
+        if sidecar.exists():
+            return self._load_yaml_file(sidecar)
+        return None
+
     def _extract_named_entities(
         self,
         config_data: dict | None,
@@ -435,40 +453,23 @@ class EntityDefinitionExtractor:
         file_name: str,
         allow_id_fallback: bool = False,
     ) -> set[str]:
-        """Extract entities named via *name_field* from a YAML list.
+        """Extract entities defined in list-of-dicts configuration files.
 
         Centralises the resolve-include → file-fallback loop shared by
         automation/scene extraction. When *allow_id_fallback* is True
         (automation-only), an item with empty *name_field* but a non-empty
         ``id`` falls back to slugifying the id.
         """
-        items: list[Any] | None = None
-        if isinstance(config_data, dict):
-            include_value = config_data.get(config_key)
-            is_explicit_include = isinstance(
-                include_value, str
-            ) and include_value.startswith("!include")
-            resolved = self._resolve_include(include_value)
-            if is_explicit_include:
-                items = (
-                    []
-                    if resolved is None
-                    else (resolved if isinstance(resolved, list) else [resolved])
-                )
-            elif isinstance(include_value, list):
-                items = include_value
-            elif isinstance(include_value, dict):
-                items = [include_value]
-
-        if items is None:
-            file_path = self.config_dir / file_name
-            if file_path.exists():
-                data = self._load_yaml_file(file_path)
-                if isinstance(data, list):
-                    items = data
+        raw = self._resolve_config_or_sidecar(config_data, config_key, file_name)
+        if isinstance(raw, list):
+            items = raw
+        elif isinstance(raw, dict):
+            items = [raw]
+        else:
+            items = []
 
         entities: set[str] = set()
-        for item in items or []:
+        for item in items:
             if not isinstance(item, dict):
                 continue
             name = item.get(name_field, "")
@@ -502,35 +503,12 @@ class EntityDefinitionExtractor:
         file_name: str,
     ) -> set[str]:
         """Extract entities whose configuration is keyed by object_id."""
-        data: dict[Any, Any] | None = None
-        if isinstance(config_data, dict):
-            include_value = config_data.get(config_key)
-            is_explicit_include = isinstance(
-                include_value, str
-            ) and include_value.startswith("!include")
-            resolved = self._resolve_include(include_value)
-            if is_explicit_include:
-                data = resolved if isinstance(resolved, dict) else {}
-            elif isinstance(include_value, dict):
-                data = include_value
-
-            if data is not None:
-                return {
-                    f"{domain}.{object_id}"
-                    for object_id in data
-                    if isinstance(object_id, str)
-                    and self._is_valid_object_id(object_id)
-                }
-
-        sidecar_file = self.config_dir / file_name
-        if not sidecar_file.exists():
-            return set()
-        data = self._load_yaml_file(sidecar_file)
-        if not isinstance(data, dict):
+        raw = self._resolve_config_or_sidecar(config_data, config_key, file_name)
+        if not isinstance(raw, dict):
             return set()
         return {
             f"{domain}.{object_id}"
-            for object_id in data
+            for object_id in raw
             if isinstance(object_id, str) and self._is_valid_object_id(object_id)
         }
 

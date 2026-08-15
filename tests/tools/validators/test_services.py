@@ -13,6 +13,7 @@ from tools.validators.services import (
     ServiceValidator,
     _device_action_service,
     _normalize_service_catalog,
+    main,
 )
 
 _write_automation = write_yaml
@@ -494,8 +495,6 @@ class TestL45NetworkGate:
 
 class TestMain:
     def test_main_dispatches_clean(self, config_dir, monkeypatch):
-        from tools.validators.services import main
-
         _write_automation(
             config_dir,
             [
@@ -517,8 +516,6 @@ class TestMain:
             assert main() == 0
 
     def test_main_invalid(self, monkeypatch):
-        from tools.validators.services import main
-
         monkeypatch.setattr("sys.argv", ["services", "/nonexistent"])
         assert main() == 1
 

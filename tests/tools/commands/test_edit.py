@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from tests.helpers import make_parser, parse_command_args
+from tests.helpers import make_command_args, make_parser, parse_command_args
 from tools.commands import stale_sensors as stale_cmd
 from tools.commands.edit import add_parser, run
 
@@ -17,10 +17,7 @@ def _boom(*arguments, **keywords):
 
 def make_args(**overrides):
     """Build args from edit's production parser, with test-specific overrides."""
-    args = parse_command_args("edit", add_parser, ["automations"])
-    for name, value in overrides.items():
-        setattr(args, name, value)
-    return args
+    return make_command_args("edit", add_parser, ["automations"], **overrides)
 
 
 class TestAddParser:

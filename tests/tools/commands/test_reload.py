@@ -38,16 +38,11 @@ class TestRun:
         ids=["success", "failure"],
     )
     def test_returns_reload_result_exit_code(self, reload_result, expected_exit_code):
-        with patch("tools.commands.reload.reload_config", return_value=reload_result):
-            assert reload_cmd.run(Namespace()) == expected_exit_code
-
-    def test_delegates_to_reload_config(self):
-        """run() should call reload_config() and propagate its return value."""
         with patch(
-            "tools.commands.reload.reload_config", return_value=True
+            "tools.commands.reload.reload_config", return_value=reload_result
         ) as mock_reload:
-            reload_cmd.run(Namespace())
-        mock_reload.assert_called_once()
+            assert reload_cmd.run(Namespace()) == expected_exit_code
+            mock_reload.assert_called_once()
 
     def test_summary_flag_treated_as_true(self):
         with patch(

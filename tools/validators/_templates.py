@@ -22,6 +22,11 @@ def is_jinja_template(value: str) -> bool:
     return template_delimiter_state(value)[0]
 
 
+def is_dynamic_or_tag(value: str) -> bool:
+    """True if value contains a Jinja2 template or HA tag (e.g. !secret, !include)."""
+    return value.startswith("!") or is_jinja_template(value)
+
+
 def template_delimiter_state(value: str) -> tuple[bool, bool]:
     """Return the existing detection and balance results for *value*.
 

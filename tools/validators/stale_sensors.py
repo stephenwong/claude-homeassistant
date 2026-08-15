@@ -14,7 +14,11 @@ from typing import Any
 
 from tools.common import HARequestError, get_env_int, load_env_file
 from tools.ha.client import HAClient
-from tools.validators._storage import load_storage_registry
+from tools.validators._storage import (
+    is_entity_disabled,
+    is_entity_hidden,
+    load_storage_registry,
+)
 from tools.validators.base import ValidatorBase
 
 _EPOCH_MS_THRESHOLD = 1e11
@@ -192,9 +196,9 @@ class StaleSensorValidator(ValidatorBase):
 
         reg_entry = registry.get(entity_id) if registry else None
         if reg_entry:
-            if reg_entry.get("disabled_by") is not None:
+            if is_entity_disabled(reg_entry):
                 return None
-            if reg_entry.get("hidden_by") is not None:
+            if is_entity_hidden(reg_entry):
                 return None
 
             platform = reg_entry.get("platform")

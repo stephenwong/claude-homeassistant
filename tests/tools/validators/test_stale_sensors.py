@@ -2,14 +2,14 @@
 
 import json
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from tests.helpers import assert_diagnostic, assert_no_diagnostic, mock_json_client
 from tools.common import HARequestError
-from tools.validators.stale_sensors import StaleSensorValidator
+from tools.validators.stale_sensors import StaleSensorValidator, main
 
 
 @pytest.fixture(autouse=True)
@@ -295,8 +295,6 @@ def test_unavailable_state_flagged_immediately(config_dir):
 def test_parse_timestamp_handles_positive_offset_aest():
     """A +10:00 (AEST) offset is parsed and normalised to UTC
     correctly so elapsed-hours math is right."""
-    from datetime import timedelta
-
     v = StaleSensorValidator()
     parsed = v.parse_timestamp("2026-07-17T08:00:00+10:00")
     assert parsed is not None
@@ -881,8 +879,6 @@ def test_malformed_registry_json(config_dir):
 
 def test_main_dispatch_with_ci_short_circuit(monkeypatch):
     """main() returns 0 when CI=true short-circuits stale sensor validation."""
-    from tools.validators.stale_sensors import main
-
     monkeypatch.setenv("CI", "true")
     monkeypatch.setattr("sys.argv", ["stale_sensors", "config"])
     assert main() == 0

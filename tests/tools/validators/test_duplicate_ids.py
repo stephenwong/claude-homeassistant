@@ -1,11 +1,12 @@
 """Unit tests for duplicate_id_validator.py — duplicate automation ID detection."""
 
 import builtins
+from unittest.mock import patch
 
 import pytest
 
 from tests.helpers import write_yaml
-from tools.validators.duplicate_ids import DuplicateIDValidator
+from tools.validators.duplicate_ids import DuplicateIDValidator, main
 
 
 @pytest.fixture
@@ -268,8 +269,6 @@ class TestConfigurationYamlOpenedOnce:
                 open_count += 1
             return real_open(path, *args, **kwargs)
 
-        from unittest.mock import patch
-
         with patch("builtins.open", side_effect=spy):
             v = DuplicateIDValidator(str(config_dir))
             v.validate_all()
@@ -279,8 +278,6 @@ class TestConfigurationYamlOpenedOnce:
 
 class TestMain:
     def test_main_dispatches_clean(self, config_dir, monkeypatch):
-        from tools.validators.duplicate_ids import main
-
         yaml_content = (
             "- id: a\n  alias: A\n  trigger:\n"
             "    platform: state\n  action:\n    service: test\n"
@@ -290,7 +287,5 @@ class TestMain:
         assert main() == 0
 
     def test_main_invalid(self, monkeypatch):
-        from tools.validators.duplicate_ids import main
-
         monkeypatch.setattr("sys.argv", ["duplicate_ids", "/nonexistent"])
         assert main() == 1

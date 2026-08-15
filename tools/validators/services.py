@@ -10,7 +10,7 @@ import re
 from typing import Any
 
 from tools.ha.client import HAClient  # noqa: F401 — kept for test patch targets
-from tools.validators._templates import is_jinja_template
+from tools.validators._templates import is_dynamic_or_tag
 from tools.validators.base import ValidatorBase
 
 _SERVICE_RE = re.compile(r"^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$")
@@ -48,7 +48,7 @@ def _device_action_service(data: Any) -> str | None:
         return None
 
     synthetic = f"{data['domain']}.{data['type']}"
-    if synthetic.startswith("!") or is_jinja_template(synthetic):
+    if is_dynamic_or_tag(synthetic):
         return None
     return synthetic
 
@@ -80,7 +80,7 @@ class ServiceValidator(ValidatorBase):
 
     @staticmethod
     def _looks_dynamic(value: str) -> bool:
-        return value.startswith("!") or is_jinja_template(value)
+        return is_dynamic_or_tag(value)
 
     @classmethod
     def _extract_services(

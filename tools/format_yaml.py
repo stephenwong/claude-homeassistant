@@ -31,7 +31,7 @@ def main(argv: list[str] | None = None) -> int:
         with temp_path.open("w", encoding="utf-8") as temp:
             yaml.dump(data, temp)
 
-    _atomic_replace(path, write_temp, cleanup_missing_ok=True)
+    _atomic_replace(path, write_temp)
     return 0
 
 

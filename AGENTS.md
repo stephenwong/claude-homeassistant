@@ -238,7 +238,7 @@ Co-authored-by: opencode <noreply@opencode.ai>
 Antigravity:
 ```
 Model used: gemini-3.7-flash (high)
-Co-authored-by: Antigravity <antigravity@google.com>
+Co-authored-by: Antigravity <noreply@antigravity.google>
 ```
 
 ## Backups

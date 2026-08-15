@@ -73,7 +73,7 @@ def _trace_timestamp_key(value: object) -> float:
     if not isinstance(value, str):
         return float("-inf")
     try:
-        timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        timestamp = datetime.fromisoformat(value)
     except ValueError:
         return float("-inf")
     if timestamp.tzinfo is None:

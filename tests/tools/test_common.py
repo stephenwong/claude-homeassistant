@@ -378,7 +378,9 @@ class TestValidatorBase:
         assert "test.txt" not in names
 
     def test_check_automations_structure_valid(self):
-        v = _ConcreteValidator(str(self.config_dir))
+        from tools.validators.yaml import YAMLValidator
+
+        v = YAMLValidator(str(self.config_dir))
         automations = [
             {
                 "alias": "Test",
@@ -390,14 +392,18 @@ class TestValidatorBase:
         assert len(v.errors) == 0
 
     def test_check_automations_structure_blueprint(self):
-        v = _ConcreteValidator(str(self.config_dir))
+        from tools.validators.yaml import YAMLValidator
+
+        v = YAMLValidator(str(self.config_dir))
         automations = [
             {"alias": "Blueprint", "use_blueprint": {"path": "test.yaml"}},
         ]
         assert v.check_automations_structure(automations, "test") is True
 
     def test_check_automations_structure_invalid_blueprint_mapping(self):
-        v = _ConcreteValidator(str(self.config_dir))
+        from tools.validators.yaml import YAMLValidator
+
+        v = YAMLValidator(str(self.config_dir))
         automations = [
             {"alias": "Blueprint", "use_blueprint": "test.yaml"},
         ]
@@ -406,19 +412,25 @@ class TestValidatorBase:
         assert v.errors == ["test: Automation 0 'use_blueprint' must be a dictionary"]
 
     def test_check_automations_structure_not_dict(self):
-        v = _ConcreteValidator(str(self.config_dir))
+        from tools.validators.yaml import YAMLValidator
+
+        v = YAMLValidator(str(self.config_dir))
         automations = ["not a dict"]
         assert v.check_automations_structure(automations, "test") is False
         assert any("must be a dictionary" in e for e in v.errors)
 
     def test_check_automations_structure_missing_trigger(self):
-        v = _ConcreteValidator(str(self.config_dir))
+        from tools.validators.yaml import YAMLValidator
+
+        v = YAMLValidator(str(self.config_dir))
         automations = [{"alias": "Test", "action": {"service": "test"}}]
         assert v.check_automations_structure(automations, "test") is False
         assert any("trigger" in e for e in v.errors)
 
     def test_check_automations_structure_missing_action(self):
-        v = _ConcreteValidator(str(self.config_dir))
+        from tools.validators.yaml import YAMLValidator
+
+        v = YAMLValidator(str(self.config_dir))
         automations = [
             {"alias": "Test", "trigger": {"platform": "state"}},
         ]
@@ -426,7 +438,9 @@ class TestValidatorBase:
         assert any("action" in e for e in v.errors)
 
     def test_check_automations_structure_missing_alias_warning(self):
-        v = _ConcreteValidator(str(self.config_dir))
+        from tools.validators.yaml import YAMLValidator
+
+        v = YAMLValidator(str(self.config_dir))
         automations = [
             {"trigger": {"platform": "state"}, "action": {"service": "test"}},
         ]
@@ -434,17 +448,23 @@ class TestValidatorBase:
         assert any("alias" in w for w in v.warnings)
 
     def test_check_scripts_structure_valid(self):
-        v = _ConcreteValidator(str(self.config_dir))
+        from tools.validators.yaml import YAMLValidator
+
+        v = YAMLValidator(str(self.config_dir))
         scripts = {"my_script": {"sequence": [{"service": "test"}]}}
         assert v.check_scripts_structure(scripts, "test") is True
 
     def test_check_scripts_structure_blueprint(self):
-        v = _ConcreteValidator(str(self.config_dir))
+        from tools.validators.yaml import YAMLValidator
+
+        v = YAMLValidator(str(self.config_dir))
         scripts = {"my_script": {"use_blueprint": {"path": "test.yaml"}}}
         assert v.check_scripts_structure(scripts, "test") is True
 
     def test_check_scripts_structure_invalid_blueprint_mapping(self):
-        v = _ConcreteValidator(str(self.config_dir))
+        from tools.validators.yaml import YAMLValidator
+
+        v = YAMLValidator(str(self.config_dir))
         scripts = {"my_script": {"use_blueprint": "test.yaml"}}
 
         assert v.check_scripts_structure(scripts, "test") is False
@@ -453,13 +473,17 @@ class TestValidatorBase:
         ]
 
     def test_check_scripts_structure_not_dict(self):
-        v = _ConcreteValidator(str(self.config_dir))
+        from tools.validators.yaml import YAMLValidator
+
+        v = YAMLValidator(str(self.config_dir))
         scripts = {"my_script": "not a dict"}
         assert v.check_scripts_structure(scripts, "test") is False
         assert any("must be a dictionary" in e for e in v.errors)
 
     def test_check_scripts_structure_missing_sequence(self):
-        v = _ConcreteValidator(str(self.config_dir))
+        from tools.validators.yaml import YAMLValidator
+
+        v = YAMLValidator(str(self.config_dir))
         scripts = {"my_script": {"alias": "Test"}}
         assert v.check_scripts_structure(scripts, "test") is False
         assert any("sequence" in e or "use_blueprint" in e for e in v.errors)
