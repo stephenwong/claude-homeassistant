@@ -364,6 +364,62 @@ class TestRunBridge:
         assert "returned status 500" in captured.err
         assert "Post transport failed" in captured.err
 
+    @pytest.mark.anyio
+    async def test_run_bridge_cancels_pending_stop_waiter(self):
+        import asyncio
+
+        input_lines = [
+            '{"jsonrpc":"2.0","id":1,"method":"ping"}\n',
+            '{"jsonrpc":"2.0","id":2,"method":"ping"}\n',
+            "",
+        ]
+
+        async def mock_read_stdin() -> str:
+            if input_lines:
+                return input_lines.pop(0)
+            return ""
+
+        mock_post_response = AsyncMock()
+        mock_post_response.status = 200
+        mock_post_response.headers = {"content-type": "application/json"}
+        mock_post_response.text = AsyncMock(
+            return_value='{"jsonrpc":"2.0","id":1,"result":{}}'
+        )
+
+        post_ctx = MagicMock()
+        post_ctx.__aenter__ = AsyncMock(return_value=mock_post_response)
+        post_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        mock_session = MagicMock()
+        mock_session.post.return_value = post_ctx
+
+        session_ctx = MagicMock()
+        session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+        session_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        tasks_created: list[asyncio.Task] = []
+        orig_create_task = asyncio.create_task
+
+        def tracking_create_task(coro, **kwargs):
+            task = orig_create_task(coro, **kwargs)
+            tasks_created.append(task)
+            return task
+
+        with (
+            patch("aiohttp.ClientSession", return_value=session_ctx),
+            patch("asyncio.create_task", side_effect=tracking_create_task),
+        ):
+            exit_code = await run_bridge(
+                "http://ha-host:9583/token", stdin_reader=mock_read_stdin
+            )
+            assert exit_code == 0
+
+        # After bridge terminates, all created tasks should be done
+        # (finished or cancelled).
+        assert len(tasks_created) > 0
+        for task in tasks_created:
+            assert task.done()
+
 
 class TestMain:
     def test_main_no_url(self, monkeypatch, capsys):

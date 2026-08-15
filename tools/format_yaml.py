@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 from ruamel.yaml import YAML
+from ruamel.yaml.error import YAMLError
 
 from tools.common import _atomic_replace
 
@@ -23,7 +24,12 @@ def main(argv: list[str] | None = None) -> int:
 
     yaml = YAML()
     yaml.preserve_quotes = True
-    data = yaml.load(content)
+    try:
+        data = yaml.load(content)
+    except YAMLError as e:
+        print(f"Error parsing {path}: {e}", file=sys.stderr)
+        return 1
+
     if data is None:
         return 0
 

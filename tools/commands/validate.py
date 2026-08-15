@@ -124,9 +124,11 @@ def _run_validator(instance: Any, start: float) -> _ValidatorExecutionResult:
         stderr = _build_diagnostic_stderr(instance)
     except SystemExit as e:
         passed = e.code in (0, None)
+        diag = _build_diagnostic_stderr(instance)
         stderr = (
-            _build_diagnostic_stderr(instance)
-            or f"Validator raised SystemExit({e.code!r})"
+            diag
+            if diag
+            else ("" if passed else f"Validator raised SystemExit({e.code!r})")
         )
     except Exception as e:
         return _ValidatorExecutionResult(

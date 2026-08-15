@@ -146,7 +146,11 @@ async def run_bridge(
             read_task: asyncio.Task[str] = asyncio.create_task(reader_fn())
             stop_waiter = asyncio.create_task(stop_event.wait())
             tasks: list[asyncio.Task[Any]] = [read_task, stop_waiter]
-            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            _done, pending = await asyncio.wait(
+                tasks, return_when=asyncio.FIRST_COMPLETED
+            )
+            for pending_task in pending:
+                pending_task.cancel()
 
             if stop_event.is_set() and not read_task.done():
                 read_task.cancel()

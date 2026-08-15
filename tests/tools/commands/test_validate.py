@@ -96,12 +96,13 @@ class TestRunOne:
         assert "boom" in result.stderr
 
     def test_system_exit_zero_treated_as_success(self):
-        """A validator that raises SystemExit(0) passes."""
+        """A validator that raises SystemExit(0) passes with empty stderr."""
         from tools.validators.yaml import YAMLValidator
 
         with patch.object(YAMLValidator, "validate_all", side_effect=SystemExit(0)):
             result = _run_one(YAMLValidator, "YAML", "config", quiet=True, force=True)
         assert result.passed is True
+        assert result.stderr == ""
 
     def test_system_exit_nonzero_treated_as_failure(self):
         from tools.validators.yaml import YAMLValidator
@@ -109,6 +110,7 @@ class TestRunOne:
         with patch.object(YAMLValidator, "validate_all", side_effect=SystemExit(1)):
             result = _run_one(YAMLValidator, "YAML", "config", quiet=True, force=True)
         assert result.passed is False
+        assert "Validator raised SystemExit(1)" in result.stderr
 
     def test_incomplete_hash_does_not_read_or_write_cache(
         self, config_dir, monkeypatch

@@ -83,3 +83,15 @@ def test_missing_file_returns_one(tmp_path, monkeypatch, capsys):
     assert format_yaml.main() == 1
     captured = capsys.readouterr()
     assert "Error reading" in captured.err
+
+
+def test_malformed_yaml_syntax_returns_one_with_clean_stderr(
+    tmp_path, monkeypatch, capsys
+):
+    path = tmp_path / "bad.yaml"
+    path.write_text("root: [unclosed\n")
+    monkeypatch.setattr("sys.argv", ["format_yaml", str(path)])
+
+    assert format_yaml.main() == 1
+    captured = capsys.readouterr()
+    assert "Error parsing" in captured.err
