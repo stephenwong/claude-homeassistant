@@ -148,6 +148,16 @@ class TestParseSSELines:
         assert len(events) == 1
         assert events[0] == SSEEvent(event="message", data="test")
 
+    def test_parse_sse_preserves_indentation(self):
+        lines = [
+            "event: message",
+            "data:   indented line",
+            "",
+        ]
+        events = list(parse_sse_lines(lines))
+        assert len(events) == 1
+        assert events[0] == SSEEvent(event="message", data="  indented line")
+
 
 class TestRunBridge:
     @pytest.mark.anyio
@@ -340,6 +350,7 @@ class TestRunBridge:
                 res = AsyncMock()
                 res.status = 500
                 res.headers = {}
+                res.text = AsyncMock(return_value="")
                 return res
             raise Exception("Post transport failed")
 
@@ -419,6 +430,68 @@ class TestRunBridge:
         assert len(tasks_created) > 0
         for task in tasks_created:
             assert task.done()
+
+    @pytest.mark.anyio
+    async def test_run_bridge_handles_http_error_response(self, capsys):
+        """HTTP error responses with JSON-RPC payload are still forwarded to stdout."""
+        input_lines = [
+            '{"jsonrpc":"2.0","id":1,"method":"bad"}\n',
+            "",
+        ]
+
+        async def mock_read_stdin() -> str:
+            if input_lines:
+                return input_lines.pop(0)
+            return ""
+
+        mock_post_response = AsyncMock()
+        mock_post_response.status = 400
+        mock_post_response.headers = {"content-type": "application/json"}
+        mock_post_response.text = AsyncMock(
+            return_value=(
+                '{"jsonrpc":"2.0","error":{"code":-32600,'
+                '"message":"Invalid Request"},"id":1}'
+            )
+        )
+
+        post_ctx = MagicMock()
+        post_ctx.__aenter__ = AsyncMock(return_value=mock_post_response)
+        post_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        mock_session = MagicMock()
+        mock_session.post.return_value = post_ctx
+
+        session_ctx = MagicMock()
+        session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+        session_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("aiohttp.ClientSession", return_value=session_ctx):
+            exit_code = await run_bridge(
+                "http://ha-host:9583/token", stdin_reader=mock_read_stdin
+            )
+            assert exit_code == 0
+
+        captured = capsys.readouterr()
+        assert "Warning: POST" in captured.err
+        assert '"error"' in captured.out
+
+    @pytest.mark.anyio
+    async def test_run_bridge_exits_when_reader_raises_exception(self):
+        """Bridge exits cleanly when reader raises an unhandled exception."""
+
+        async def failing_read_stdin() -> str:
+            raise RuntimeError("stdin stream corrupted")
+
+        mock_session = MagicMock()
+        session_ctx = MagicMock()
+        session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+        session_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("aiohttp.ClientSession", return_value=session_ctx):
+            exit_code = await run_bridge(
+                "http://ha-host:9583/token", stdin_reader=failing_read_stdin
+            )
+            assert exit_code == 0
 
 
 class TestMain:

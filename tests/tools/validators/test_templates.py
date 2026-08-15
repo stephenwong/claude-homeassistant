@@ -31,7 +31,10 @@ def _mock_render(success: bool = True, message: str = "") -> MagicMock:
 
 def _run_with_client(config_dir, client):
     """Run template validation with an already configured client double."""
-    with patch("tools.validators.templates.HAClient.from_env", return_value=client):
+    with (
+        patch("tools.validators.templates.HAClient.from_env", return_value=client),
+        patch("tools.ha.client.HAClient.from_env", return_value=client),
+    ):
         validator = TemplateValidator(str(config_dir))
         result = validator.validate_all()
     return validator, result
@@ -47,6 +50,19 @@ class TestFileDeps:
     def test_file_deps_empty(self):
         v = TemplateValidator()
         assert v.file_deps() == []
+
+
+def test_trailing_unclosed_template_delimiter_detected():
+    assert template_delimiter_state("{{") == (True, False)
+    assert template_delimiter_state("message: {{") == (True, False)
+    assert is_jinja_template("{{") is True
+
+
+def test_client_session_closed_after_validation(config_dir):
+    client = _mock_render(success=True)
+    write_yaml(config_dir, [{"id": "t", "alias": "T", "action": "{{ 1 }}"}])
+    _run_with_client(config_dir, client)
+    client.close.assert_called_once()
 
 
 class TestTemplateValidation:
@@ -555,7 +571,7 @@ class TestIsJinjaTemplate:
         ("value", "expected"),
         [
             ("{{ bad", (True, False)),
-            ("{{", (False, False)),
+            ("{{", (True, False)),
             ("{{ foo %}", (True, False)),
             ("}} {{", (False, True)),
             ("{{ a }} }} {{ b }}", (True, False)),

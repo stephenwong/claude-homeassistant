@@ -83,6 +83,13 @@ def test_file_deps_empty():
 
 
 class TestExcludeDomains:
+    def test_init_accepts_sequence_domains(self):
+        v = StaleSensorValidator(
+            only_domains=["sensor", "binary_sensor"],
+            exclude_domains=["weather"],
+        )
+        assert v.only_domains == {"sensor", "binary_sensor"}
+
     def test_default_excluded_platform_policy_is_not_shared(self, tmp_path):
         expected = {
             "template",

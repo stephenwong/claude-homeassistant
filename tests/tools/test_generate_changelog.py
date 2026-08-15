@@ -75,8 +75,19 @@ class TestExtractFiles:
     def test_handles_invalid_tar(self, tmp_path):
         bad_file = tmp_path / "bad.tar.gz"
         bad_file.write_text("not a tar file")
-        files = extract_files(bad_file)
-        assert files == {}
+        with pytest.raises(OSError):
+            extract_files(bad_file)
+
+    def test_corrupt_tar_aborts_changelog_generation(self, tmp_path):
+        bad_file = tmp_path / "bad.tar.gz"
+        bad_file.write_text("not a tar file")
+        bad_backup = make_backup_record(bad_file, bad_file.name, datetime(2026, 2, 2))
+        good_file = make_tar(tmp_path, {"config/automations.yaml": "alias: test\n"})
+        good_backup = make_backup_record(
+            good_file, good_file.name, datetime(2026, 2, 1)
+        )
+        with pytest.raises(OSError):
+            generate_changelog(bad_backup, good_backup)
 
     def test_skips_non_file_members(self, tmp_path):
         tar_path = tmp_path / "test.tar.gz"

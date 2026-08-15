@@ -58,6 +58,16 @@ class TestDetectChangedServices:
             result = detect_changed_services()
         assert result == {"script/reload"}
 
+    def test_nested_yaml_files_return_full_reload(self):
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = _diff_only(
+                _nul(
+                    "config/automations.yaml\nconfig/blueprints/automation/motion.yaml\n"
+                )
+            )
+            result = detect_changed_services()
+        assert result == {"automation/reload", FULL_RELOAD_SERVICE}
+
     def test_scenes_yaml_returns_scene_reload(self):
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = _diff_only(_nul("config/scenes.yaml\n"))
@@ -89,11 +99,11 @@ class TestDetectChangedServices:
             "/api/services/homeassistant/reload_all", json={}
         )
 
-    def test_subdir_file_not_included(self):
+    def test_subdir_file_triggers_full_reload(self):
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = _diff_only(_nul("config/blueprints/foo.yaml\n"))
             result = detect_changed_services()
-        assert result == set()
+        assert result == {FULL_RELOAD_SERVICE}
 
     def test_multiple_files_returns_multiple_services(self):
         with patch("subprocess.run") as mock_run:
@@ -756,7 +766,7 @@ class TestRunGitDiff:
             result = _run_git_diff("config", git_timeout=10)
         assert result == {"automations.yaml", "scripts.yaml"}
 
-    def test_subdir_file_filtered_out(self):
+    def test_subdir_file_included(self):
         from unittest.mock import MagicMock, patch
 
         from tools.reload_config import _run_git_diff
@@ -766,7 +776,7 @@ class TestRunGitDiff:
                 returncode=0,
                 stdout="config/blueprints/foo.yaml\0",
             )
-            assert _run_git_diff("config", git_timeout=10) == set()
+            assert _run_git_diff("config", git_timeout=10) == {"blueprints/foo.yaml"}
 
     def test_git_nonzero_returns_none(self):
         from unittest.mock import patch

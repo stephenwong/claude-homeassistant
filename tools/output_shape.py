@@ -45,9 +45,8 @@ def apply_output_shape(
         data = _first(data, first)
     if pick and pick.strip():
         fields = [f.strip() for f in pick.split(",") if f.strip()]
-        if not fields:
-            return data
-        data = _pick_fields(data, fields)
+        if fields:
+            data = _pick_fields(data, fields)
     if max_chars is not None and max_chars > 0:
         data = _truncate_by_chars(data, max_chars)
     return data

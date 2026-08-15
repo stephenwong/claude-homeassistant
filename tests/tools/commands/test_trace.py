@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import requests
 
-from tests.helpers import make_parser, parse_command_args
+from tests.helpers import make_parser, make_response, parse_command_args
 from tests.tools.trace_support import (
     make_args,
 )
@@ -391,6 +391,30 @@ class TestRun:
             "item_id": "morning_routine",
             "run_id": "abc123",
         }
+
+    def test_single_entity_numeric_id_matches_trace(
+        self, mock_clients, mock_client, capsys
+    ):
+        """Entity with integer id in attributes matches string item_id in trace/list."""
+        mock_rest, _ = mock_clients
+        mock_rest._session.get.return_value = make_response(
+            {"attributes": {"id": 1723456789}}
+        )
+        mock_client.command.side_effect = [
+            [
+                {
+                    "item_id": "1723456789",
+                    "run_id": "r1",
+                    "timestamp": {"start": "2026-07-02T11:00:00Z"},
+                }
+            ],
+            {"trace": {}, "item_id": "1723456789"},
+        ]
+        args = make_args(entity_id="automation.numeric_auto")
+        assert trace_cmd.run(args) == 0
+        out = capsys.readouterr().out
+        parsed = json.loads(out)
+        assert parsed["item_id"] == "1723456789"
 
     def test_single_entity_rest_lookup_closes_after_success(
         self, mock_clients, mock_client, capsys

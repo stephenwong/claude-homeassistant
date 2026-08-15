@@ -32,6 +32,13 @@ class TestNoOp:
         data = {"x": 1}
         assert apply_output_shape(data, first=None, pick=None, max_chars=None) is data
 
+    def test_empty_pick_delimiters_with_max_chars_truncates(self):
+        data = [{"a": "x" * 100}, {"b": "y" * 100}]
+        result = apply_output_shape(data, pick=" , ", max_chars=50)
+        assert len(json.dumps(result)) <= 50
+        assert result[0].get("_truncated") is True
+        assert result[0]["shown"] == 0
+
 
 class TestJsonValueContract:
     @pytest.mark.parametrize(

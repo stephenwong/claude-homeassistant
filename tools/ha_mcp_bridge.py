@@ -47,7 +47,7 @@ def parse_sse_lines(lines: Iterable[str]) -> Iterable[SSEEvent]:
 
         if ":" in line:
             field, _, val = line.partition(":")
-            val = val.lstrip(" ")
+            val = val.removeprefix(" ")
             if field == "event":
                 event_type = val
             elif field == "data":
@@ -142,52 +142,53 @@ async def run_bridge(
                 sys.stdout.flush()
 
     async def bridge_loop(session: aiohttp.ClientSession) -> None:
-        while not stop_event.is_set():
-            read_task: asyncio.Task[str] = asyncio.create_task(reader_fn())
-            stop_waiter = asyncio.create_task(stop_event.wait())
-            tasks: list[asyncio.Task[Any]] = [read_task, stop_waiter]
-            _done, pending = await asyncio.wait(
-                tasks, return_when=asyncio.FIRST_COMPLETED
-            )
-            for pending_task in pending:
-                pending_task.cancel()
+        try:
+            while not stop_event.is_set():
+                read_task: asyncio.Task[str] = asyncio.create_task(reader_fn())
+                stop_waiter = asyncio.create_task(stop_event.wait())
+                tasks: list[asyncio.Task[Any]] = [read_task, stop_waiter]
+                _done, pending = await asyncio.wait(
+                    tasks, return_when=asyncio.FIRST_COMPLETED
+                )
+                for pending_task in pending:
+                    pending_task.cancel()
 
-            if stop_event.is_set() and not read_task.done():
-                read_task.cancel()
-                break
+                if stop_event.is_set() and not read_task.done():
+                    read_task.cancel()
+                    break
 
-            line = read_task.result()
-            if not line:
-                # EOF reached on stdin
-                stop_event.set()
-                break
+                line = read_task.result()
+                if not line:
+                    # EOF reached on stdin
+                    break
 
-            line_str = line.strip()
-            if not line_str:
-                continue
+                line_str = line.strip()
+                if not line_str:
+                    continue
 
-            headers = {
-                "Content-Type": "application/json",
-                "Accept": "application/json, text/event-stream",
-            }
-            if session_id:
-                headers["mcp-session-id"] = session_id[0]
+                headers = {
+                    "Content-Type": "application/json",
+                    "Accept": "application/json, text/event-stream",
+                }
+                if session_id:
+                    headers["mcp-session-id"] = session_id[0]
 
-            try:
-                async with session.post(
-                    mcp_url, data=line_str, headers=headers
-                ) as post_res:
-                    if post_res.status >= 400:
-                        sys.stderr.write(
-                            f"Warning: POST to {mcp_url} returned status "
-                            f"{post_res.status}\n"
-                        )
-                    else:
+                try:
+                    async with session.post(
+                        mcp_url, data=line_str, headers=headers
+                    ) as post_res:
+                        if post_res.status >= 400:
+                            sys.stderr.write(
+                                f"Warning: POST to {mcp_url} returned status "
+                                f"{post_res.status}\n"
+                            )
                         await handle_post_response(post_res)
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                sys.stderr.write(f"Error sending message to MCP server: {e}\n")
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    sys.stderr.write(f"Error sending message to MCP server: {e}\n")
+        finally:
+            stop_event.set()
 
     try:
         timeout = aiohttp.ClientTimeout(total=None, connect=10.0)

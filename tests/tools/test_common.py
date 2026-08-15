@@ -631,6 +631,12 @@ class TestArgparseTypes:
         with pytest.raises((argparse.ArgumentTypeError, ValueError)):
             positive_float("abc")
 
+    def test_positive_float_rejects_nan(self):
+        from tools.common import positive_float
+
+        with pytest.raises((argparse.ArgumentTypeError, ValueError)):
+            positive_float("nan")
+
 
 class TestM5LoadEnvFile:
     """M5: load_env_file must not clobber existing env vars."""

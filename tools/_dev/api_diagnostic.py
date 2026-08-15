@@ -204,7 +204,9 @@ def test_entity_registry_read(ha_url, token, request_timeout: int = DEFAULT_HA_T
         return []
 
 
-def test_states_endpoint(ha_url, token, request_timeout: int = 10):
+def test_states_endpoint(
+    ha_url, token, request_timeout: int = DEFAULT_HA_TIMEOUT
+):
     """Test the /api/states endpoint to see entity data."""
     print("\n📊 Testing States Endpoint for Entity Info...")
     response = _request_with_failure_handling(

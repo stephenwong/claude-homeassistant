@@ -113,7 +113,12 @@ def search_backup(
                         matches,
                     )
             except UnicodeDecodeError:
-                unreadable = True
+                if (
+                    yaml_only
+                    or display_name.endswith(".yaml")
+                    or display_name.endswith(".yml")
+                ):
+                    unreadable = True
 
     except (tarfile.TarError, OSError) as e:
         print(f"  Warning: Could not read {backup['filename']}: {e}", file=sys.stderr)

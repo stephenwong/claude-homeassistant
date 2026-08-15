@@ -103,9 +103,10 @@ def _fetch_single_trace(ws_client: HAWSClient, entity_id: str) -> dict:
         with HAClient.from_env() as rest_client:
             state = rest_client.get_json(f"/api/states/{entity_id}")
         attributes = state.get("attributes") if isinstance(state, dict) else {}
+        raw_id = attributes.get("id") if isinstance(attributes, dict) else None
         item_id = (
-            attributes.get("id") if isinstance(attributes, dict) else None
-        ) or entity_short
+            str(raw_id) if raw_id is not None and str(raw_id).strip() else entity_short
+        )
     except HARequestError:
         item_id = entity_short
 
@@ -113,7 +114,7 @@ def _fetch_single_trace(ws_client: HAWSClient, entity_id: str) -> dict:
         ws_client.command("trace/list", domain="automation", item_id=item_id)
     )
     traces = [trace for trace in traces if isinstance(trace, dict)]
-    matching = [trace for trace in traces if trace.get("item_id") == item_id]
+    matching = [trace for trace in traces if str(trace.get("item_id")) == item_id]
     if not matching:
         raise _TraceNotFoundError(entity_id)
     matching.sort(

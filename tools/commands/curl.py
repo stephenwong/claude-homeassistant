@@ -193,7 +193,7 @@ def _validate_args(args: argparse.Namespace, summary: bool) -> _CurlRequest:
     if args.entity:
         if not _ENTITY_RE.match(args.entity):
             raise _CurlError(f"Invalid entity_id: {args.entity!r}")
-        if endpoint and endpoint != "/api/states":
+        if endpoint and endpoint.rstrip("/") != "/api/states":
             raise _CurlError(
                 "--entity requires endpoint /api/states (or omit endpoint)"
             )
@@ -306,7 +306,7 @@ def _handle_guardrail(
     """Handle the compact-mode bare ``/api/states`` guardrail."""
     if (
         request.method == "GET"
-        and request.endpoint == "/api/states"
+        and request.endpoint.rstrip("/") == "/api/states"
         and not _has_guardrail_bypass_flags(args)
         and not args.pretty
         and summary

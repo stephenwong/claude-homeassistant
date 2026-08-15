@@ -260,11 +260,12 @@ class HAWSClient(_BaseHAClient):
             if msg.get("type") == "result" and msg.get("id") == msg_id:
                 if not msg.get("success", False):
                     error = msg.get("error", {})
-                    message = (
-                        error.get("message")
-                        if isinstance(error, dict)
-                        else "unknown error"
-                    )
+                    if isinstance(error, dict):
+                        message = (
+                            error.get("message") or error.get("code") or str(error)
+                        )
+                    else:
+                        message = str(error) if error else "unknown error"
                     raise HARequestError(
                         f"{command_type} failed: {message or 'unknown error'}"
                     )

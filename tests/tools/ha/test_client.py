@@ -497,6 +497,21 @@ class TestHAWSSendAndReceive:
         with pytest.raises(HARequestError, match="Unknown command"):
             asyncio.run(c._send_and_receive(ws, "bad/command"))
 
+    def test_command_failed_with_string_error_message(self):
+        ws = _make_mock_ws(
+            [
+                {
+                    "type": "result",
+                    "id": 1,
+                    "success": False,
+                    "error": "Access denied",
+                },
+            ]
+        )
+        c = HAWSClient("http://ha:8123", "tok")
+        with pytest.raises(HARequestError, match="Access denied"):
+            asyncio.run(c._send_and_receive(ws, "bad/command"))
+
     def test_malformed_result_message_raises_request_error(self):
         ws = _make_mock_ws([None])
         c = HAWSClient("http://ha:8123", "tok")

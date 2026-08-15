@@ -37,6 +37,15 @@ SERVICE_LABELS = {
 }
 
 
+def _relative_config_path(path: str, config_dir: str) -> str | None:
+    """Return a relative path inside *config_dir*, otherwise ``None``."""
+    try:
+        relative = Path(path).relative_to(Path(config_dir))
+    except ValueError:
+        return None
+    return str(relative)
+
+
 def _top_level_config_basename(path: str, config_dir: str) -> str | None:
     """Return a direct child basename of *config_dir*, otherwise ``None``."""
     try:
@@ -68,7 +77,7 @@ def _run_git_command(
 
 
 def _run_git_diff(config_dir: str, git_timeout: int) -> set[str] | None:
-    """Run ``git diff HEAD --name-only -z`` and return changed basenames.
+    """Run ``git diff HEAD --name-only -z`` and return changed config paths.
 
     Returns ``None`` if git is unavailable or fails.
     """
@@ -83,14 +92,14 @@ def _run_git_diff(config_dir: str, git_timeout: int) -> set[str] | None:
     for p_str in result.stdout.split("\0"):
         p_str = p_str.strip()
         if p_str:
-            basename = _top_level_config_basename(p_str, config_dir)
-            if basename is not None:
-                changed.add(basename)
+            rel_path = _relative_config_path(p_str, config_dir)
+            if rel_path is not None:
+                changed.add(rel_path)
     return changed
 
 
 def _run_git_status_changes(config_dir: str, git_timeout: int) -> set[str] | None:
-    """Run ``git status -z`` and return all changed basenames.
+    """Run ``git status -z`` and return all changed config paths.
 
     Return ``None`` when Git status cannot be read so callers can reload all.
     """
@@ -111,17 +120,15 @@ def _run_git_status_changes(config_dir: str, git_timeout: int) -> set[str] | Non
         if len(token) > 3 and token[2] == " ":
             status = token[:2]
             path = token[3:]
-            basename = _top_level_config_basename(path, config_dir)
-            if basename is not None:
-                changed.add(basename)
+            rel_path = _relative_config_path(path, config_dir)
+            if rel_path is not None:
+                changed.add(rel_path)
             if status[0] in ("R", "C"):
                 if i + 1 < len(tokens):
                     renamed_path = tokens[i + 1]
-                    renamed_basename = _top_level_config_basename(
-                        renamed_path, config_dir
-                    )
-                    if renamed_basename is not None:
-                        changed.add(renamed_basename)
+                    renamed_rel = _relative_config_path(renamed_path, config_dir)
+                    if renamed_rel is not None:
+                        changed.add(renamed_rel)
                 i += 2
                 continue
         i += 1
@@ -129,11 +136,14 @@ def _run_git_status_changes(config_dir: str, git_timeout: int) -> set[str] | Non
 
 
 def _classify_changed_files(filenames: set[str]) -> set[str]:
-    """Map changed YAML file basenames to HA reload services."""
+    """Map changed YAML file paths to HA reload services."""
     services: set[str] = set()
     for fname in filenames:
         if fname.endswith((".yaml", ".yml")):
-            services.add(FILE_TO_SERVICE.get(fname, FULL_RELOAD_SERVICE))
+            if fname in FILE_TO_SERVICE:
+                services.add(FILE_TO_SERVICE[fname])
+            else:
+                services.add(FULL_RELOAD_SERVICE)
     return services
 
 

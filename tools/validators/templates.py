@@ -138,9 +138,12 @@ class TemplateValidator(ValidatorBase):
             return all_ok
 
         client = self._try_live("Live template check", lambda c: c)
-
-        for path, tmpl in sorted(set(found)):
-            all_ok = self._validate_template(client, path, tmpl) and all_ok
+        try:
+            for path, tmpl in sorted(set(found)):
+                all_ok = self._validate_template(client, path, tmpl) and all_ok
+        finally:
+            if client is not None:
+                client.close()
 
         return all_ok
 

@@ -39,7 +39,7 @@ def template_delimiter_state(value: str) -> tuple[bool, bool]:
         for opening, closing in TEMPLATE_DELIMITERS:
             for match in re.finditer(re.escape(opening), value):
                 if (
-                    match.end() < len(value)
+                    match.end() <= len(value)
                     and value.find(closing, 0, match.start()) == -1
                 ):
                     detected = True

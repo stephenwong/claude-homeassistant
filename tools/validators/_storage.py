@@ -1,6 +1,7 @@
 """Shared helpers for reading HA ``.storage/`` registry JSON files."""
 
 import json
+import time
 from pathlib import Path
 
 type JSONValue = (
@@ -23,10 +24,20 @@ def _load_storage_data(storage_path: Path) -> JSONObject | list[JSONValue]:
     """Load the validated root envelope and return its ``data`` value.
 
     Storage files use different ``data`` shapes, so callers own validation
-    below the common top-level envelope.
+    below the common top-level envelope. Retries once on transient
+    JSONDecodeError caused by concurrent atomic writes.
     """
-    with open(storage_path, encoding="utf-8") as f:
-        data = json.load(f, object_pairs_hook=_reject_duplicate_keys)
+    data: JSONObject | list[JSONValue] | None = None
+    for attempt in range(2):
+        try:
+            with open(storage_path, encoding="utf-8") as f:
+                data = json.load(f, object_pairs_hook=_reject_duplicate_keys)
+            break
+        except json.JSONDecodeError:
+            if attempt == 0:
+                time.sleep(0.1)
+                continue
+            raise
     if not isinstance(data, dict):
         raise ValueError(f"{storage_path}: JSON root must be an object")
     if "data" not in data:

@@ -2,6 +2,7 @@
 
 import argparse
 import contextlib
+import math
 import os
 import re
 import stat
@@ -136,9 +137,9 @@ def non_negative_int(value: str) -> int:
 
 
 def positive_float(value: str) -> float:
-    """Argparse type: reject values <= 0."""
+    """Argparse type: reject values <= 0 and NaN."""
     f = float(value)
-    if f <= 0:
+    if math.isnan(f) or f <= 0:
         raise argparse.ArgumentTypeError("value must be > 0")
     return f
 

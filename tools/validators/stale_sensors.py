@@ -73,9 +73,9 @@ class StaleSensorValidator(ValidatorBase):
         super().__init__(config_dir, quiet=quiet, summary=summary)
         self.threshold_hours = threshold_hours
         base_domains = (
-            only_domains if only_domains is not None else set(DEFAULT_ONLY_DOMAINS)
+            set(only_domains) if only_domains is not None else set(DEFAULT_ONLY_DOMAINS)
         )
-        self.only_domains = base_domains - (exclude_domains or set())
+        self.only_domains = base_domains - set(exclude_domains or set())
         self.fail_on_stale = fail_on_stale
         self.stale_entities: list[str] = []
 

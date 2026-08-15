@@ -249,8 +249,8 @@ class TestParseCsvArg:
     def test_strips_whitespace(self):
         assert stale_cmd._parse_csv_arg("  a , b ,c") == {"a", "b", "c"}
 
-    def test_preserves_explicit_empty_entries(self):
-        assert stale_cmd._parse_csv_arg("a,,b,") == {"a", "b", ""}
+    def test_filters_explicit_empty_entries(self):
+        assert stale_cmd._parse_csv_arg("a,,b,") == {"a", "b"}
 
-    def test_explicit_empty_tokens_do_not_select_default(self):
-        assert stale_cmd._parse_csv_arg(",,") == {""}
+    def test_empty_tokens_only_returns_none(self):
+        assert stale_cmd._parse_csv_arg(",,") is None

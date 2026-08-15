@@ -51,6 +51,28 @@ class TestSearchBackup:
         assert len(matches) == 1
         assert matches[0]["file"] == "config/test.yaml"
 
+    def test_handles_binary_file_with_all_flag(self, tmp_path):
+        """Binary files do not mark archive unreadable when yaml_only=False."""
+        tar_path = tmp_path / "binary.tar.gz"
+        with tarfile.open(tar_path, "w:gz") as tar:
+            bin_data = b"\xff\xfe binary byte\n"
+            ti = tarfile.TarInfo("data.bin")
+            ti.size = len(bin_data)
+            tar.addfile(ti, io.BytesIO(bin_data))
+
+            txt_data = b"matching pattern line\n"
+            ti2 = tarfile.TarInfo("notes.txt")
+            ti2.size = len(txt_data)
+            tar.addfile(ti2, io.BytesIO(txt_data))
+
+        backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
+        matches, unreadable = search_backup(
+            backup, re.compile("pattern"), yaml_only=False
+        )
+        assert unreadable is False
+        assert len(matches) == 1
+        assert matches[0]["file"] == "notes.txt"
+
     # Zero-context searches
 
     def test_zero_context_accepted(self, tmp_path):

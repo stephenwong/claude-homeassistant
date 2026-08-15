@@ -35,10 +35,7 @@ class _DupKeyLoader(HAYamlLoader):
                     f"duplicate key: {key!r}",
                     key_node.start_mark,
                 )
-            try:
-                seen.add(key)
-            except TypeError:
-                continue
+            seen.add(key)
         return super().construct_mapping(node, deep=deep)
 
 

@@ -39,6 +39,27 @@ class TestLoadStorageRegistry:
         )
         assert set(result.keys()) == {"aaa", "bbb"}
 
+    def test_retries_transient_json_decode_error(self, registry_file, monkeypatch):
+        """Retries once on transient JSONDecodeError."""
+        import json
+
+        orig_load = json.load
+        calls = 0
+
+        def flaky_load(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise json.JSONDecodeError("Expecting value", "doc", 0)
+            return orig_load(*args, **kwargs)
+
+        monkeypatch.setattr(json, "load", flaky_load)
+        result = load_storage_registry(
+            registry_file, list_key="entities", key_field="entity_id"
+        )
+        assert calls == 2
+        assert "sensor.one" in result
+
     def test_returns_empty_when_list_empty(self, tmp_path):
         path = tmp_path / "core.entity_registry"
         path.write_text(json.dumps({"data": {"entities": []}}))

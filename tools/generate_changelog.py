@@ -72,7 +72,7 @@ def _extract_files_cached(backup_path: Path) -> dict[str, str]:
             except UnicodeDecodeError:
                 continue
     except (tarfile.TarError, OSError) as e:
-        print(f"  Warning: Could not read {backup_path}: {e}", file=sys.stderr)
+        raise OSError(f"Could not read {backup_path}: {e}") from e
     return files
 
 

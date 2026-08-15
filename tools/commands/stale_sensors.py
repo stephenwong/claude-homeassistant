@@ -67,7 +67,8 @@ def _parse_csv_arg(value: str | None) -> set[str] | None:
     """Parse a supplied comma-separated string, or return None when omitted."""
     if not value:
         return None
-    return {item.strip().lower() for item in value.split(",")}
+    items = {item.strip().lower() for item in value.split(",") if item.strip()}
+    return items or None
 
 
 def run(args: argparse.Namespace) -> int:

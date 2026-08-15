@@ -1258,6 +1258,16 @@ class TestGuardrail:
         result = json.loads(capsys.readouterr().out)
         assert result == {"ok": True}
 
+    def test_trailing_slash_api_states_triggers_guardrail(self, mock_client, capsys):
+        """Bare endpoint with trailing slash (/api/states/) triggers guardrail."""
+        data = [{"entity_id": "sensor.a"}, {"entity_id": "sensor.b"}]
+        mock_client.get.return_value = json_resp(data)
+        args = make_args(endpoint="/api/states/", summary=True, no_summary=False)
+        assert curl_cmd.run(args) == 0
+        out, err = capsys.readouterr()
+        assert "use --first" in err
+        assert out.strip() == "2"
+
     def test_sub_path_no_guardrail(self, mock_client, capsys):
         """Sub-paths like /api/states/sensor.x should not be guarded."""
         data = {"entity_id": "sensor.test", "state": "on"}
