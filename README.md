@@ -76,7 +76,7 @@ The toolkit communicates with Home Assistant through four distinct channels, eac
 |---------------|----------|--------|---------|-----------------|
 | **rsync** over SSH | SSH/SFTP | `HA_HOST` | `make pull`, `make push` | Bulk transfer of the config directory tree. Rsync is incremental (only changed files); it pulls `.storage/` registries and YAML/integration config, while push applies `.rsync-excludes-push` and excludes `.storage/`. |
 | **REST API** | HTTP (port 8123) | `HA_URL` + `HA_TOKEN` | `HAClient`, `ha_cli curl`, `make reload`, ServiceValidator, TemplateValidator | Standard HA programmatic interface. Service calls, state queries, config reloads, and template rendering. Validators query `/api/services` and `/api/template` at validation time to catch issues before they reach the server. |
-| **MCP Server** | HTTP (port 9583) | `HA_MCP_URL` or `.ha-mcp-url` for OpenCode | AI assistants (opencode, Claude Code) | High-level natural-language HA control designed for AI agents. 88+ tools for entity listing, config inspection, automation management, history queries, and service calls — without needing raw API requests. Used by the automation and debugging workflows; the backup workflow uses Make/CLI commands. |
+| **MCP Server** | HTTP (port 9583) | `HA_MCP_URL` in `.env` or `.ha-mcp-url` | AI assistants (OpenCode, Antigravity `agy`, Claude Code) | High-level natural-language HA control designed for AI agents. 88+ tools for entity listing, config inspection, automation management, history queries, and service calls — without needing raw API requests. Used by the automation and debugging workflows; the backup workflow uses Make/CLI commands. |
 | **SSH shell** | SSH | `HA_HOST` | `ha core logs`, addon restart, Lovelace edits | Server-side commands that the REST API can't do. Log viewing (`ha core logs --follow`), addon management (`ha apps restart` for Frigate/Z2M), and direct `.storage/` file edits for Lovelace (which returns 404 from the REST API in storage mode). |
 
 > **One host, four channels.** `HA_HOST` powers both rsync and SSH shell via the same [Advanced SSH & Web Terminal](https://github.com/hassio-addons/addon-ssh) add-on. `HA_URL` and `HA_MCP_URL` are separate HTTP endpoints on the same HA instance.
@@ -450,28 +450,28 @@ from tools.validators.yaml import YAMLValidator
 from tools.validators.stale_sensors import StaleSensorValidator
 ```
 
-`HAClient` is constructed via `HAClient.from_env()` (reads `.env` for `HA_TOKEN`/`HA_URL`). OpenCode reads the MCP URL from the ignored `.ha-mcp-url` file referenced by `opencode.json`.
+`HAClient` is constructed via `HAClient.from_env()` (reads `.env` for `HA_TOKEN`/`HA_URL`). AI agent harnesses resolve the MCP URL from `.ha-mcp-url` (referenced directly by `opencode.json` and proxied to Antigravity via `tools/ha_mcp_bridge.py`).
 `HAWSClient` translates transport failures into `HARequestError`; deliberate API errors and unexpected programming errors propagate for diagnosis.
 
 ## 🤖 AI Assistant Integration
 
-This toolkit is designed to work with AI coding assistants. Three components enable this:
+This toolkit is designed to work seamlessly with AI coding assistants (OpenCode, Antigravity `agy`, Cursor, Claude Code). Three components enable this:
 
 ### 🔌 MCP Server (ha-mcp)
 
 The [ha-mcp](https://github.com/homeassistant-ai/ha-mcp) add-on provides 88+ MCP tools for natural-language HA control — entity listing, service calls, history, config inspection, automation creation, and more.
 
 **Setup:**
-1. Install the "Home Assistant MCP Server" add-on
-2. Start it and copy the MCP URL from add-on logs (format: `http://<ip>:9583/private_<token>`)
-3. Set `HA_MCP_URL` in `.env` for repository tools, or put the URL in `.ha-mcp-url` for OpenCode
-4. Configure other AI tools' MCP settings to point to this URL
-
-Compatible with any AI coding assistant that supports MCP (opencode, Claude Code, etc.).
+1. Install the "Home Assistant MCP Server" add-on in Home Assistant
+2. Start it and copy the private MCP URL from add-on logs (format: `http://<ip>:9583/private_<token>`)
+3. Place the URL in `.ha-mcp-url` (or set `HA_MCP_URL` in `.env`)
+4. **Both OpenCode and Antigravity (`agy` / IDE) connect automatically:**
+   - **OpenCode**: Reads `.ha-mcp-url` directly via `opencode.json`.
+   - **Antigravity**: Runs `tools/ha_mcp_bridge.py` via `.agents/mcp_config.json`, which dynamically reads `.ha-mcp-url` (or `.env`).
 
 ### 📋 Instruction Files
 
-`AGENTS.md` provides comprehensive project context to AI assistants (opencode, Cursor, Aider, etc.) — entity naming conventions, critical gotchas, hardware details, integration info, and troubleshooting tips.
+`AGENTS.md` provides comprehensive project context to AI assistants (OpenCode, Antigravity `agy`, Cursor, Aider, etc.) — entity naming conventions, critical gotchas, hardware details, integration info, and troubleshooting tips.
 
 ### 🧩 Skills
 

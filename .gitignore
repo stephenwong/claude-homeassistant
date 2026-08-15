@@ -70,6 +70,7 @@ node_modules/
 # Agent tooling (local/personal multi-tool wiring; sources already tracked)
 .agents/*
 !.agents/skills/
+!.agents/mcp_config.json
 .gemini/
 .antigravitycli/
 package.json

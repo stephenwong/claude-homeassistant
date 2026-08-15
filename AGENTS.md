@@ -2,7 +2,7 @@
 
 This repository manages Home Assistant configuration files with automated validation, testing, and deployment.
 
-> **Note:** `AGENTS.md` is the harness-agnostic source of truth, read by opencode, Cursor, Aider, and other tools.
+> **Note:** `AGENTS.md` is the harness-agnostic source of truth, read by opencode, Antigravity (`agy`), Cursor, Aider, and other tools.
 
 ## User Preferences
 
@@ -22,6 +22,7 @@ This repository manages Home Assistant configuration files with automated valida
 - `tools/commands/` — Subcommands: curl, edit, reload, stale-sensors, trace, validate
 - `tools/ha/client.py` — `HAClient` (importable REST API client)
 - `tools/ha/yaml_editor.py` — `YAMLEditor` (importable round-trip YAML)
+- `tools/ha_mcp_bridge.py` — Dynamic stdio-to-SSE bridge for `ha-mcp` (Antigravity)
 - `tools/validators/` — Validators: `base.py`, `duplicate_ids.py`, `entity_definitions.py`, `ha_official.py`, `references.py`, `services.py`, `stale_sensors.py`, `templates.py`, `yaml.py`
 - `tools/cache.py`, `tools/common.py` — Caching; shared utilities (`common.py` re-exports from `validators/base.py`, defines `positive_int`/`non_negative_int` argparse types)
 - `tools/output_shape.py` — Shared JSON output-shaping (`apply_output_shape()` for --first/--pick/--max-chars)
@@ -31,7 +32,7 @@ This repository manages Home Assistant configuration files with automated valida
 
 ## Environment Setup
 
-Configure `.env` (copy from `.env.example`) for repository tools: `HA_TOKEN`, `HA_URL`, `HA_HOST`, `HA_MCP_URL`. OpenCode's MCP configuration reads the URL separately from the ignored `.ha-mcp-url` file.
+Configure `.env` (copy from `.env.example`) for repository tools: `HA_TOKEN`, `HA_URL`, `HA_HOST`, `HA_MCP_URL`. AI agent harnesses (OpenCode and Antigravity) resolve the MCP URL from the ignored `.ha-mcp-url` file (fallback: `HA_MCP_URL` in `.env`).
 
 ## Commands
 
@@ -172,7 +173,12 @@ from tools.validators.entity_definitions import EntityDefinitionExtractor
 
 88+ MCP tools for natural-language HA control. `home-assistant-best-practices` skill triggers on automation/script/dashboard work.
 
-**Setup:** Install addon from `https://github.com/homeassistant-ai/ha-mcp`, copy MCP URL from logs (`http://<ip>:9583/private_<token>`), set `HA_MCP_URL` in `.env`.
+**Setup:** Install addon from `https://github.com/homeassistant-ai/ha-mcp`, copy MCP URL from logs (`http://<ip>:9583/private_<token>`), and place it in the local `.ha-mcp-url` file (or set `HA_MCP_URL` in `.env`).
+
+**Dual Harness Integration:**
+- **OpenCode**: Reads the URL from `.ha-mcp-url` via `opencode.json` (`"url": "{file:.ha-mcp-url}"`).
+- **Antigravity (`agy` / IDE)**: Connects via `.agents/mcp_config.json` running `tools.ha_mcp_bridge`, which dynamically resolves `.ha-mcp-url` (or `.env`) at runtime and proxies stdio JSON-RPC to HA's SSE stream.
+- **Single source of truth:** Editing `.ha-mcp-url` (or `.env`) updates both OpenCode and Antigravity immediately without manual reconfiguration.
 
 **Tool selection:** see the decision matrix above. MCP wins for discovery/state-reads/traces; `ha_cli` wins for edits/validation/deploy/raw-REST.
 
@@ -208,7 +214,7 @@ from tools.validators.entity_definitions import EntityDefinitionExtractor
 - **Registry concurrency:** Stale-sensor registry loading retries after 100ms when atomic `.storage/` writes cause a transient `JSONDecodeError`; scope any similar retry to the loader that needs it.
 - **Validator exception contracts:** Direct validators should handle expected filesystem, JSON/schema, and malformed-input failures with diagnostics; the aggregate `ha_cli validate` runner converts unexpected validator exceptions into failed results so sibling validators complete.
 - **Atomic YAML formatting:** `make format-yaml` delegates to `tools/format_yaml.py`, which writes a sibling temporary file and replaces the source only after serialization succeeds; it preserves the source mode.
-- **MCP setup file:** Setup scripts mirror a validated `HA_MCP_URL` into the ignored `.ha-mcp-url` consumed by `opencode.json`, and remove that file when the URL is cleared or left as a placeholder.
+- **MCP single source of truth:** `.ha-mcp-url` (or `.env` `HA_MCP_URL`) is consumed directly by `opencode.json` and proxied to Antigravity via `tools/ha_mcp_bridge.py`.
 - **Threshold-selection tests:** When testing timestamp min/max selection against a threshold, place candidate values on opposite sides of the threshold so the assertion distinguishes the selected value.
 
 ### Git Commit Trailers
@@ -223,9 +229,16 @@ reasoning variant/effort, and agent harness from the current session. Use those
 detected values in the trailers; do not copy stale values from this file. Put
 the reasoning variant after the model name. For example:
 
+OpenCode:
 ```
-Model used: <detected-active-model> (<detected-reasoning-variant>)
-Co-authored-by: <detected-agent-harness> <detected-harness-email>
+Model used: gpt-5.6-luna (max)
+Co-authored-by: opencode <noreply@opencode.ai>
+```
+
+Antigravity:
+```
+Model used: gemini-3.7-flash (high)
+Co-authored-by: Antigravity <antigravity@google.com>
 ```
 
 ## Backups

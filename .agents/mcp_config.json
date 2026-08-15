@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ha-mcp": {
+      "command": "uv",
+      "args": ["run", "python", "-m", "tools.ha_mcp_bridge"]
+    }
+  }
+}
