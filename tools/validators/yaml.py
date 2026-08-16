@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """YAML syntax validator for Home Assistant configuration files."""
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -131,33 +132,49 @@ class YAMLValidator(ValidatorBase):
         self.errors.append(f"{item_label} 'use_blueprint' must be a dictionary")
         return False
 
-    def validate_automations_structure(self, file_path: Path, data: Any) -> bool:
-        """Validate automations.yaml structure."""
-        if file_path.name != "automations.yaml":
+    def _validate_structure_payload(
+        self,
+        file_path: Path,
+        data: Any,
+        target_name: str,
+        expected_type: type,
+        type_label: str,
+        checker: Callable[[Any, str], bool],
+    ) -> bool:
+        """Validate structure payload type and dispatch to checker function."""
+        if file_path.name != target_name:
             return True
 
         if data is None:
             return True  # Empty file is valid
 
-        if not isinstance(data, list):
-            self.errors.append(f"{file_path}: Automations must be a list")
+        if not isinstance(data, expected_type):
+            self.errors.append(f"{file_path}: {type_label}")
             return False
 
-        return self.check_automations_structure(data, str(file_path))
+        return checker(data, str(file_path))
+
+    def validate_automations_structure(self, file_path: Path, data: Any) -> bool:
+        """Validate automations.yaml structure."""
+        return self._validate_structure_payload(
+            file_path,
+            data,
+            target_name="automations.yaml",
+            expected_type=list,
+            type_label="Automations must be a list",
+            checker=self.check_automations_structure,
+        )
 
     def validate_scripts_structure(self, file_path: Path, data: Any) -> bool:
         """Validate scripts.yaml structure."""
-        if file_path.name != "scripts.yaml":
-            return True
-
-        if data is None:
-            return True  # Empty file is valid
-
-        if not isinstance(data, dict):
-            self.errors.append(f"{file_path}: Scripts must be a dictionary")
-            return False
-
-        return self.check_scripts_structure(data, str(file_path))
+        return self._validate_structure_payload(
+            file_path,
+            data,
+            target_name="scripts.yaml",
+            expected_type=dict,
+            type_label="Scripts must be a dictionary",
+            checker=self.check_scripts_structure,
+        )
 
     def _validate(self) -> bool:
         """Validate all YAML files in the config directory."""

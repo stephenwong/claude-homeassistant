@@ -129,28 +129,25 @@ def _truncate_list(data: list[JSONValue], max_chars: int) -> list[JSONValue]:
     for i, ln in enumerate(item_lens):
         prefix.append(prefix[-1] + (1 if i > 0 else 0) + ln)
 
-    # Precompute marker sizes for each possible n.
-    marker_lens = {}
-    for n in range(0, original_len + 1):
+    def _marker_len(n: int) -> int:
         item_marker: dict[str, JSONValue] = {
             "_truncated": True,
             "shown": n,
             "total": original_len,
         }
-        marker_str = _compact_dumps(item_marker)
-        marker_lens[n] = (1 if n > 0 else 0) + len(marker_str)
+        return (1 if n > 0 else 0) + len(_compact_dumps(item_marker))
 
     # Binary-search: largest n in [0, original_len] such that total fits.
     lo, hi, best = 0, original_len, 0
     while lo <= hi:
         mid = (lo + hi) // 2
-        if prefix[mid] + marker_lens[mid] <= max_chars:
+        if prefix[mid] + _marker_len(mid) <= max_chars:
             best = mid
             lo = mid + 1
         else:
             hi = mid - 1
 
-    if best == 0 and prefix[0] + marker_lens[0] > max_chars:
+    if best == 0 and prefix[0] + _marker_len(0) > max_chars:
         return [{"_truncated": True, "shown": 0, "total": original_len}]
 
     marker: dict[str, JSONValue] = {
@@ -201,9 +198,10 @@ def truncate_dict_by_key_size(
     if target_key is None:
         target = data
     else:
-        target = data.get(target_key)
-        if not isinstance(target, dict) or len(target) <= preserve_min:
+        raw_target = data.get(target_key)
+        if not isinstance(raw_target, dict):
             return data
+        target = raw_target
     if len(target) <= preserve_min:
         return data
 

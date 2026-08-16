@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from tools.ha.yaml_editor import ValidationError, YAMLEditor
+
 
 def _write_yaml(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
@@ -16,7 +18,6 @@ def _write_yaml(path: Path, content: str) -> None:
 
 def test_round_trip_preserves_content(tmp_path):
     """A YAML file loaded and dumped back should be semantically identical."""
-    from tools.ha.yaml_editor import YAMLEditor
 
     yaml_content = """\
 - id: abc123
@@ -50,7 +51,6 @@ def test_round_trip_preserves_content(tmp_path):
 
 def test_round_trip_preserves_comments(tmp_path):
     """Comments survive a round-trip load + dump."""
-    from tools.ha.yaml_editor import YAMLEditor
 
     yaml_content = """\
 # A header comment about this file
@@ -78,7 +78,6 @@ def test_round_trip_preserves_comments(tmp_path):
 
 def test_round_trip_preserves_order(tmp_path):
     """The order of keys and list items is preserved."""
-    from tools.ha.yaml_editor import YAMLEditor
 
     yaml_content = """\
 - id: bbb
@@ -116,7 +115,6 @@ def test_round_trip_preserves_order(tmp_path):
 
 def test_load_empty_file(tmp_path):
     """An empty file loads as None."""
-    from tools.ha.yaml_editor import YAMLEditor
 
     path = tmp_path / "empty.yaml"
     _write_yaml(path, "")
@@ -128,7 +126,6 @@ def test_load_empty_file(tmp_path):
 
 def test_load_nonexistent_file(tmp_path):
     """Loading a nonexistent file raises FileNotFoundError."""
-    from tools.ha.yaml_editor import YAMLEditor
 
     path = tmp_path / "nonexistent.yaml"
     editor = YAMLEditor(path)
@@ -138,7 +135,6 @@ def test_load_nonexistent_file(tmp_path):
 
 def test_dump_creates_file(tmp_path):
     """Dump writes the file if it doesn't exist."""
-    from tools.ha.yaml_editor import YAMLEditor
 
     path = tmp_path / "new.yaml"
     editor = YAMLEditor(path)
@@ -148,7 +144,6 @@ def test_dump_creates_file(tmp_path):
 
 def test_load_scripts_dict(tmp_path):
     """Scripts.yaml is a dict, not a list. The editor handles both."""
-    from tools.ha.yaml_editor import YAMLEditor
 
     yaml_content = """\
 notify_on_doorbell:
@@ -212,7 +207,6 @@ AUTOMATIONS_FIXTURE = """\
 
 @pytest.fixture
 def automation_editor(tmp_path):
-    from tools.ha.yaml_editor import YAMLEditor
 
     path = tmp_path / "automations.yaml"
     _write_yaml(path, AUTOMATIONS_FIXTURE)
@@ -231,7 +225,6 @@ class TestFindAutomation:
         assert idx is None
 
     def test_find_on_empty_list(self, tmp_path):
-        from tools.ha.yaml_editor import YAMLEditor
 
         path = tmp_path / "automations.yaml"
         _write_yaml(path, "[]")
@@ -243,7 +236,6 @@ class TestFindAutomation:
 
 class TestAddAutomation:
     def test_append_new_automation(self, automation_editor):
-        from tools.ha.yaml_editor import YAMLEditor
 
         path = automation_editor.path
         editor = automation_editor
@@ -263,7 +255,6 @@ class TestAddAutomation:
         assert reloaded[-1]["alias"] == "New Automation"
 
     def test_add_to_empty_file(self, tmp_path):
-        from tools.ha.yaml_editor import YAMLEditor
 
         path = tmp_path / "automations.yaml"
         _write_yaml(path, "[]")
@@ -295,7 +286,6 @@ class TestAddAutomation:
 
 class TestUpdateAutomation:
     def test_update_by_alias(self, automation_editor):
-        from tools.ha.yaml_editor import YAMLEditor
 
         path = automation_editor.path
         editor = automation_editor
@@ -308,7 +298,6 @@ class TestUpdateAutomation:
         assert reloaded[1]["alias"] == "Evening Scene"
 
     def test_update_adds_new_key(self, automation_editor):
-        from tools.ha.yaml_editor import YAMLEditor
 
         path = automation_editor.path
         editor = automation_editor
@@ -326,7 +315,6 @@ class TestUpdateAutomation:
 
 class TestRemoveAutomation:
     def test_remove_by_alias(self, automation_editor):
-        from tools.ha.yaml_editor import YAMLEditor
 
         path = automation_editor.path
         editor = automation_editor
@@ -346,7 +334,6 @@ class TestRemoveAutomation:
             editor.remove_automation("Not Found")
 
     def test_remove_last_automation(self, tmp_path):
-        from tools.ha.yaml_editor import YAMLEditor
 
         path = tmp_path / "automations.yaml"
         _write_yaml(
@@ -371,7 +358,6 @@ class TestRemoveAutomation:
 
 class TestSaveInPlace:
     def test_save_writes_back_to_same_file(self, automation_editor):
-        from tools.ha.yaml_editor import YAMLEditor
 
         path = automation_editor.path
         editor = automation_editor
@@ -414,7 +400,6 @@ class FakeValidator:
 
 class TestAtomicSave:
     def test_validator_passed_saves_atomically(self, automation_editor):
-        from tools.ha.yaml_editor import YAMLEditor
 
         path = automation_editor.path
         editor = automation_editor
@@ -441,7 +426,6 @@ class TestAtomicSave:
         assert len(reloaded) == 4
 
     def test_validator_fails_preserves_original(self, automation_editor):
-        from tools.ha.yaml_editor import ValidationError
 
         path = automation_editor.path
         editor = automation_editor
@@ -469,7 +453,6 @@ class TestAtomicSave:
         assert path.read_text(encoding="utf-8") == original_content
 
     def test_save_without_validator_overwrites_directly(self, automation_editor):
-        from tools.ha.yaml_editor import YAMLEditor
 
         path = automation_editor.path
         editor = automation_editor
@@ -502,8 +485,6 @@ class TestAtomicSave:
         """save() with no validator must not corrupt the original if dump raises
         mid-write."""
         import pytest
-
-        from tools.ha.yaml_editor import YAMLEditor
 
         path = automation_editor.path
         original = path.read_text(encoding="utf-8")
@@ -545,7 +526,6 @@ class TestAtomicSave:
         assert list(path.parent.glob(".automations.yaml.*.tmp")) == []
 
     def test_save_with_validation_on_empty_data_noop(self, tmp_path):
-        from tools.ha.yaml_editor import YAMLEditor
 
         path = tmp_path / "new.yaml"
         editor = YAMLEditor(path)
@@ -578,7 +558,6 @@ evening_scene:
 
 @pytest.fixture
 def scripts_editor(tmp_path):
-    from tools.ha.yaml_editor import YAMLEditor
 
     path = tmp_path / "scripts.yaml"
     _write_yaml(path, SCRIPTS_FIXTURE)
@@ -587,7 +566,6 @@ def scripts_editor(tmp_path):
 
 class TestDictHelpers:
     def test_add_script(self, scripts_editor):
-        from tools.ha.yaml_editor import YAMLEditor
 
         path = scripts_editor.path
         editor = scripts_editor
@@ -604,7 +582,6 @@ class TestDictHelpers:
             editor.add_script("morning_routine", {"sequence": []})
 
     def test_add_script_on_list_data_raises_type_error(self, tmp_path):
-        from tools.ha.yaml_editor import YAMLEditor
 
         path = tmp_path / "automations.yaml"
         _write_yaml(path, AUTOMATIONS_FIXTURE)
@@ -613,7 +590,6 @@ class TestDictHelpers:
             editor.add_script("x", {"sequence": []})
 
     def test_update_script(self, scripts_editor):
-        from tools.ha.yaml_editor import YAMLEditor
 
         path = scripts_editor.path
         editor = scripts_editor
@@ -628,7 +604,6 @@ class TestDictHelpers:
             editor.update_script("ghost", {"x": 1})
 
     def test_remove_script(self, scripts_editor):
-        from tools.ha.yaml_editor import YAMLEditor
 
         path = scripts_editor.path
         editor = scripts_editor
@@ -649,7 +624,6 @@ class TestMappingUpdates:
     def test_mapping_updates_apply_same_merge_contract(
         self, automation_editor, scripts_editor, kind
     ):
-        from tools.ha.yaml_editor import YAMLEditor
 
         if kind == "automation":
             path = automation_editor.path
@@ -691,7 +665,6 @@ class TestMappingUpdates:
 
 class TestTypeGuard:
     def test_add_automation_on_scripts_raises_type_error(self, tmp_path):
-        from tools.ha.yaml_editor import YAMLEditor
 
         path = tmp_path / "scripts.yaml"
         _write_yaml(path, SCRIPTS_FIXTURE)
@@ -700,7 +673,6 @@ class TestTypeGuard:
             editor.add_automation({"alias": "X"})
 
     def test_update_automation_on_scripts_raises_type_error(self, tmp_path):
-        from tools.ha.yaml_editor import YAMLEditor
 
         path = tmp_path / "scripts.yaml"
         _write_yaml(path, SCRIPTS_FIXTURE)
@@ -709,7 +681,6 @@ class TestTypeGuard:
             editor.update_automation("x", {})
 
     def test_remove_automation_on_scripts_raises_type_error(self, tmp_path):
-        from tools.ha.yaml_editor import YAMLEditor
 
         path = tmp_path / "scripts.yaml"
         _write_yaml(path, SCRIPTS_FIXTURE)
@@ -721,7 +692,6 @@ class TestTypeGuard:
         "operation", ["add_script", "update_script", "remove_script"]
     )
     def test_dict_operations_on_list_raise_type_error(self, tmp_path, operation):
-        from tools.ha.yaml_editor import YAMLEditor
 
         path = tmp_path / "automations.yaml"
         _write_yaml(path, AUTOMATIONS_FIXTURE)
@@ -742,7 +712,6 @@ class TestTypeGuard:
 
 def test_dump_to_round_trip(tmp_path):
     """L15: dump_to(target) writes valid YAML re-readable by load()."""
-    from tools.ha.yaml_editor import YAMLEditor
 
     src = tmp_path / "a.yaml"
     dst = tmp_path / "b.yaml"
@@ -757,7 +726,6 @@ def test_dump_to_round_trip(tmp_path):
 
 
 def test_dump_accepts_string_path(tmp_path):
-    from tools.ha.yaml_editor import YAMLEditor
 
     src = tmp_path / "source.yaml"
     dst = tmp_path / "target.yaml"
@@ -771,7 +739,6 @@ def test_dump_accepts_string_path(tmp_path):
 
 def test_save_propagates_validator_exception(tmp_path):
     """L15: if the validator raises, save() must propagate."""
-    from tools.ha.yaml_editor import YAMLEditor
 
     path = tmp_path / "automations.yaml"
     _write_yaml(path, "- alias: A\n")
@@ -787,7 +754,6 @@ def test_save_propagates_validator_exception(tmp_path):
 
 def test_unicode_alias_round_trip(tmp_path):
     """L15: non-ASCII aliases must survive load -> save -> load."""
-    from tools.ha.yaml_editor import YAMLEditor
 
     path = tmp_path / "automations.yaml"
     _write_yaml(path, "- alias: ☕ Coffee ☕\n  triggers: []\n  actions: []\n")
@@ -800,7 +766,6 @@ def test_unicode_alias_round_trip(tmp_path):
 
 
 def test_lazy_empty_file_is_loaded_once(tmp_path, monkeypatch):
-    from tools.ha.yaml_editor import YAMLEditor
 
     path = tmp_path / "empty.yaml"
     path.write_text("", encoding="utf-8")
@@ -820,7 +785,6 @@ def test_lazy_empty_file_is_loaded_once(tmp_path, monkeypatch):
 
 
 def test_lazy_missing_file_stays_save_noop_until_add(tmp_path, monkeypatch):
-    from tools.ha.yaml_editor import YAMLEditor
 
     path = tmp_path / "automations.yaml"
     editor = YAMLEditor(path)

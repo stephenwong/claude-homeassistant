@@ -1,12 +1,15 @@
 """Tests for tools/commands/stale_sensors.py — stale-sensors subcommand wrapper."""
 
-from argparse import Namespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tests.helpers import make_parser, parse_command_args
+from tests.helpers import make_command_args, make_parser, parse_command_args
 from tools.commands import stale_sensors as stale_cmd
+
+
+def make_args(**overrides):
+    return make_command_args("stale-sensors", stale_cmd.add_parser, [], **overrides)
 
 
 @pytest.fixture
@@ -86,7 +89,7 @@ class TestRun:
         mock_val.warnings = []
         mock_val_class.return_value = mock_val
 
-        args = Namespace(
+        args = make_args(
             config="config_path",
             threshold=12,
             exclude_domains="light,switch",
@@ -120,7 +123,7 @@ class TestRun:
 
         mock_val.validate_all.return_value = True
         mock_val.warnings = []
-        args = Namespace(
+        args = make_args(
             config="config_path",
             threshold=24,
             exclude_domains=None,
@@ -145,7 +148,7 @@ class TestRun:
         mock_val.info = ["sensor info"]
         mock_val_class.return_value = mock_val
 
-        args = Namespace(
+        args = make_args(
             config="config_path",
             threshold=24,
             exclude_domains=None,
@@ -170,7 +173,7 @@ class TestRun:
         mock_val.warnings = []
         mock_val_class.return_value = mock_val
 
-        args = Namespace(
+        args = make_args(
             config="config_path",
             threshold=24,
             exclude_domains=None,
@@ -193,7 +196,7 @@ class TestRun:
         mock_val.warnings = []
         mock_val_class.return_value = mock_val
 
-        args = Namespace(
+        args = make_args(
             config="config_path",
             threshold=24,
             exclude_domains="sensor",
@@ -220,7 +223,7 @@ class TestRun:
         mock_val.validate_all.return_value = validator_result
         mock_val_class.return_value = mock_val
 
-        args = Namespace(
+        args = make_args(
             config="config_path",
             threshold=24,
             exclude_domains=None,

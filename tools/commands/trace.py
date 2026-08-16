@@ -2,6 +2,7 @@
 
 import argparse
 import sys
+from collections import Counter
 from datetime import UTC, datetime
 from typing import cast
 
@@ -155,11 +156,11 @@ def _summarize_trace_list(traces: list[dict]) -> list[dict]:
     )
 
     seen: dict[str, dict] = {}
-    run_counts: dict[str, int] = {}
+    run_counts: Counter[str] = Counter()
     for entry in compact:
         raw_item_id = entry.get("item_id")
         item_id = raw_item_id if isinstance(raw_item_id, str) else ""
-        run_counts[item_id] = run_counts.get(item_id, 0) + 1
+        run_counts[item_id] += 1
         if item_id not in seen:
             seen[item_id] = entry
 
@@ -283,6 +284,17 @@ def _project_changed_variables(changed_variables: dict) -> dict:
     }
 
 
+def _prune_step_entry(entry: dict) -> dict:
+    """Project changed_variables inside a single trace step entry."""
+    cv = entry.get("changed_variables")
+    if isinstance(cv, dict):
+        return {
+            **entry,
+            "changed_variables": _project_changed_variables(cv),
+        }
+    return entry
+
+
 def _prune_trace_entries(trace: dict) -> dict:
     """Drop ``.attributes`` from all entity-state dicts within changed_variables.
 
@@ -299,19 +311,10 @@ def _prune_trace_entries(trace: dict) -> dict:
         if not isinstance(entries, list):
             pruned[step_key] = entries
             continue
-        new_entries = []
-        for entry in entries:
-            if not isinstance(entry, dict):
-                new_entries.append(entry)
-                continue
-            cv = entry.get("changed_variables")
-            if isinstance(cv, dict):
-                entry = {
-                    **entry,
-                    "changed_variables": _project_changed_variables(cv),
-                }
-            new_entries.append(entry)
-        pruned[step_key] = new_entries
+        pruned[step_key] = [
+            _prune_step_entry(entry) if isinstance(entry, dict) else entry
+            for entry in entries
+        ]
     return pruned
 
 

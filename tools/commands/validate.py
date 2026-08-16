@@ -123,12 +123,9 @@ def _run_validator(instance: Any, description: str, start: float) -> ValidatorRe
             else ("" if passed else f"Validator raised SystemExit({e.code!r})")
         )
     except Exception as e:
-        return ValidatorResult(
-            description=description,
-            passed=False,
-            stderr=f"Failed to run validator: {e}",
-            duration=time.perf_counter() - start,
-        )
+        passed = False
+        stderr = f"Failed to run validator: {e}"
+
     return ValidatorResult(
         description=description,
         passed=passed,
@@ -279,6 +276,23 @@ def _print_intro(force: bool, quiet: bool, summary: bool) -> None:
     print(file=sys.stderr)
 
 
+def _format_summary_line(r: ValidatorResult) -> str:
+    """Format one validator result in compact summary mode."""
+    if r.passed:
+        if r.cached:
+            return f"PASS {r.description} C"
+        return f"PASS {r.description} ({r.duration:.2f}s)"
+    return f"FAIL {r.description} ({r.duration:.2f}s)"
+
+
+def _format_verbose_line(r: ValidatorResult) -> str:
+    """Format one validator result in verbose mode."""
+    if r.passed:
+        suffix = " (cached)" if r.cached else f" ({r.duration:.2f}s)"
+        return f"  \u2705 {r.description}: PASSED{suffix}"
+    return f"  \u274c {r.description}: FAILED ({r.duration:.2f}s)"
+
+
 def _format_result_line(r: ValidatorResult, summary: bool, quiet: bool) -> str | None:
     """Format one validator PASS/FAIL line.
 
@@ -286,16 +300,7 @@ def _format_result_line(r: ValidatorResult, summary: bool, quiet: bool) -> str |
     """
     if quiet and r.passed:
         return None
-    if r.passed:
-        if summary:
-            if r.cached:
-                return f"PASS {r.description} C"
-            return f"PASS {r.description} ({r.duration:.2f}s)"
-        suffix = " (cached)" if r.cached else f" ({r.duration:.2f}s)"
-        return f"  \u2705 {r.description}: PASSED{suffix}"
-    if summary:
-        return f"FAIL {r.description} ({r.duration:.2f}s)"
-    return f"  \u274c {r.description}: FAILED ({r.duration:.2f}s)"
+    return _format_summary_line(r) if summary else _format_verbose_line(r)
 
 
 def _print_indented_lines(

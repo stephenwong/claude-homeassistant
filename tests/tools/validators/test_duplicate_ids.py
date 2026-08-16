@@ -96,6 +96,12 @@ class TestM10bScriptsDuplicateKeys:
         assert v.validate_all() is False
         assert_diagnostic(v, "errors", "unhashable key")
 
+    def test_invalid_utf8_scripts_is_reported(self, config_dir):
+        (config_dir / "scripts.yaml").write_bytes(b"script: \xff\n")
+        validator = DuplicateIDValidator(str(config_dir))
+        assert validator.validate_all() is False
+        assert_diagnostic(validator, "errors", "failed to parse")
+
 
 class TestDuplicateIDValidator:
     def test_valid_automations(self, config_dir, validator):
@@ -223,12 +229,6 @@ class TestDuplicateIDValidator:
 
 
 class TestConfigurationYamlOpenedOnce:
-    def test_invalid_utf8_scripts_is_reported(self, config_dir):
-        (config_dir / "scripts.yaml").write_bytes(b"script: \xff\n")
-        validator = DuplicateIDValidator(str(config_dir))
-        assert validator.validate_all() is False
-        assert_diagnostic(validator, "errors", "failed to parse")
-
     def test_configuration_yaml_not_accessed_unnecessarily(self, config_dir):
         """Validator should not parse configuration.yaml at all — it only reads
         automations.yaml. This is an efficiency regression test."""

@@ -60,6 +60,14 @@ def parse_sse_lines(lines: Iterable[str]) -> Iterable[SSEEvent]:
         yield SSEEvent(event=event_type, data="\n".join(data_lines))
 
 
+def _validate_mcp_url(url: str, source_label: str) -> str | None:
+    """Validate a candidate MCP URL; print an error and return None if invalid."""
+    if url.startswith(("http://", "https://")):
+        return url
+    sys.stderr.write(f"Error: Invalid MCP URL in {source_label}: {url}\n")
+    return None
+
+
 def resolve_mcp_url(repo_root: Path | None = None) -> str | None:
     """Resolve the ha-mcp URL from .ha-mcp-url or .env (fallback)."""
     root = repo_root or Path(__file__).resolve().parent.parent
@@ -70,10 +78,7 @@ def resolve_mcp_url(repo_root: Path | None = None) -> str | None:
         try:
             content = url_file.read_text(encoding="utf-8").strip()
             if content:
-                if content.startswith(("http://", "https://")):
-                    return content
-                sys.stderr.write(f"Error: Invalid MCP URL in {url_file}: {content}\n")
-                return None
+                return _validate_mcp_url(content, str(url_file))
         except OSError as e:
             sys.stderr.write(f"Warning: Could not read {url_file}: {e}\n")
 
@@ -81,10 +86,7 @@ def resolve_mcp_url(repo_root: Path | None = None) -> str | None:
     load_env_file(root / ".env")
     env_url = os.environ.get("HA_MCP_URL", "").strip()
     if env_url:
-        if env_url.startswith(("http://", "https://")):
-            return env_url
-        sys.stderr.write(f"Error: Invalid MCP URL in HA_MCP_URL: {env_url}\n")
-        return None
+        return _validate_mcp_url(env_url, "HA_MCP_URL")
 
     sys.stderr.write(
         "Error: No HA MCP URL found. Set HA_MCP_URL in .env or put "
@@ -99,7 +101,7 @@ async def run_bridge(
 ) -> int:
     """Run the bidirectional stdio <-> MCP bridge."""
     stop_event = asyncio.Event()
-    session_id: list[str] = []
+    session_id: str | None = None
 
     async def default_read_line() -> str:
         return await asyncio.to_thread(sys.stdin.readline)
@@ -109,9 +111,9 @@ async def run_bridge(
     )
 
     async def handle_post_response(response: aiohttp.ClientResponse) -> None:
+        nonlocal session_id
         if "mcp-session-id" in response.headers:
-            session_id.clear()
-            session_id.append(response.headers["mcp-session-id"])
+            session_id = response.headers["mcp-session-id"]
 
         content_type = response.headers.get("content-type", "")
         if "text/event-stream" in content_type:
@@ -171,7 +173,7 @@ async def run_bridge(
                     "Accept": "application/json, text/event-stream",
                 }
                 if session_id:
-                    headers["mcp-session-id"] = session_id[0]
+                    headers["mcp-session-id"] = session_id
 
                 try:
                     async with session.post(

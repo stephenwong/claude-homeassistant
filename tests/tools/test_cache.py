@@ -9,7 +9,6 @@ import pytest
 
 from tools.cache import (
     CACHE_SCHEMA_VERSION,
-    _compute_hash_status,
     cache_path,
     compute_hash,
     compute_hash_status,
@@ -156,7 +155,7 @@ class TestL79UnreadableFile:
             return original(path)
 
         monkeypatch.setattr(Path, "read_bytes", fail_for_broken)
-        _digest, complete = _compute_hash_status(tmp_path, ["*.yaml"])
+        _digest, complete = compute_hash_status(tmp_path, ["*.yaml"])
         assert complete is False
 
 

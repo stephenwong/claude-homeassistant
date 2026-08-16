@@ -11,7 +11,7 @@ from pathlib import Path
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
 
-from tools.common import _atomic_replace
+from tools.common import atomic_replace
 
 
 class ValidationError(Exception):
@@ -75,7 +75,7 @@ class YAMLEditor:
             if not validator(tmp_path):
                 raise ValidationError("Atomic save aborted: validation failed")
 
-        _atomic_replace(
+        atomic_replace(
             self.path,
             lambda tmp_path: self.dump(self._data, tmp_path),
             validate=validate_temp,

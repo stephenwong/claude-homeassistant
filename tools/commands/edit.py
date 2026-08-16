@@ -265,30 +265,26 @@ def _run_add(
     if not isinstance(entry, dict):
         return fail_stderr("--add value must be a JSON object")
 
-    resolved_shape = shape if shape is not None else _resolve_shape(editor)
-    if resolved_shape.editable is None:
-        return fail_stderr(
-            f"Cannot add to {editor.path.name}: expected a list or mapping, got unknown"
-        )
-
-    def add_script(ed: YAMLEditor) -> str:
+    def add_script(ed: YAMLEditor, _alias: str) -> str:
         key = str(entry.get("id") or entry.get("alias") or "")
         if not key:
             raise ValueError("--add requires 'id' or 'alias' key for script files")
         ed.add_script(key, entry)
         return key
 
-    def add_automation(ed: YAMLEditor) -> str:
+    def add_automation(ed: YAMLEditor, _alias: str) -> str:
         ed.add_automation(entry)
         return str(entry.get("alias") or entry.get("id") or "(no alias)")
 
-    add_entry: Callable[[YAMLEditor], str] = (
-        add_script if resolved_shape.editable is _ShapeKind.DICT else add_automation
-    )
-
     return _run_mutation(
         editor,
-        lambda: add_entry(editor),
+        lambda: _dispatch_by_filetype(
+            editor,
+            "",
+            shape=shape,
+            on_dict=add_script,
+            on_list=add_automation,
+        ),
         lambda result: f"Added: {result}",
         quiet,
     )

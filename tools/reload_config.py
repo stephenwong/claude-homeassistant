@@ -157,21 +157,15 @@ def _resolve_reload_services(
     detected_services: set[str] | None, summary: bool
 ) -> tuple[str, ...]:
     """Return the effective reload services in deterministic order."""
-    if detected_services is None:
-        if not summary:
-            print(
-                "⚠️  Could not detect config changes with git; "
-                "reloading all domains to be safe",
-                file=sys.stderr,
-            )
-        return tuple(sorted(ALL_SERVICES))
-
     if not detected_services:
         if not summary:
-            print(
-                "⚠️  No config changes detected, reloading all domains to be safe",
-                file=sys.stderr,
+            msg = (
+                "⚠️  Could not detect config changes with git; "
+                "reloading all domains to be safe"
+                if detected_services is None
+                else "⚠️  No config changes detected, reloading all domains to be safe"
             )
+            print(msg, file=sys.stderr)
         return tuple(sorted(ALL_SERVICES))
 
     return tuple(sorted(detected_services))

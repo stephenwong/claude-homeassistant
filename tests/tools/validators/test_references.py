@@ -328,8 +328,8 @@ class TestExtractEntityReferencesUUID:
 
 
 class TestIsTemplate:
-    def test_valid_templates(self, setup_config):
-        v = ReferenceValidator(str(setup_config))
+    def test_valid_templates(self, tmp_path):
+        v = ReferenceValidator(str(tmp_path))
         assert v.is_template("{{ states('sensor.temperature') }}") is True
         assert (
             v.is_template(
@@ -340,20 +340,20 @@ class TestIsTemplate:
         assert v.is_template("{{states('binary_sensor.motion')}}") is True
         assert v.is_template("Value: {{ 25 + 5 }}") is True
 
-    def test_non_templates(self, setup_config):
-        v = ReferenceValidator(str(setup_config))
+    def test_non_templates(self, tmp_path):
+        v = ReferenceValidator(str(tmp_path))
         assert v.is_template("sensor.temperature") is False
         assert v.is_template("normal text") is False
         assert v.is_template("{ single brace }") is False
         assert v.is_template("") is False
 
-    def test_detects_control_flow(self, setup_config):
-        v = ReferenceValidator(str(setup_config))
+    def test_detects_control_flow(self, tmp_path):
+        v = ReferenceValidator(str(tmp_path))
         assert v.is_template("{% if true %}sensor.a{% endif %}") is True
         assert v.is_template("{%- if x -%}sensor.a{%- endif -%}") is True
 
-    def test_multiline_template_detected_dotall(self, setup_config):
-        v = ReferenceValidator(str(setup_config))
+    def test_multiline_template_detected_dotall(self, tmp_path):
+        v = ReferenceValidator(str(tmp_path))
         multiline = "{{ states('sensor.x')\n+ states('sensor.y') }}"
         assert v.is_template(multiline) is True
 
@@ -680,37 +680,37 @@ class TestReferenceDiagnosticOrder:
 
 
 class TestExtractEntitiesFromTemplate:
-    def test_states_single_quotes(self, setup_config):
-        v = ReferenceValidator(str(setup_config))
+    def test_states_single_quotes(self, tmp_path):
+        v = ReferenceValidator(str(tmp_path))
         result = v.extract_entities_from_template("{{ states('sensor.test') }}")
         assert "sensor.test" in result
 
-    def test_states_double_quotes(self, setup_config):
-        v = ReferenceValidator(str(setup_config))
+    def test_states_double_quotes(self, tmp_path):
+        v = ReferenceValidator(str(tmp_path))
         result = v.extract_entities_from_template('{{ states("sensor.test") }}')
         assert "sensor.test" in result
 
-    def test_states_dot_notation(self, setup_config):
-        v = ReferenceValidator(str(setup_config))
+    def test_states_dot_notation(self, tmp_path):
+        v = ReferenceValidator(str(tmp_path))
         result = v.extract_entities_from_template("{{ states.sensor.test }}")
         assert "sensor.test" in result
 
-    def test_is_state(self, setup_config):
-        v = ReferenceValidator(str(setup_config))
+    def test_is_state(self, tmp_path):
+        v = ReferenceValidator(str(tmp_path))
         result = v.extract_entities_from_template(
             "{{ is_state('binary_sensor.motion', 'on') }}"
         )
         assert "binary_sensor.motion" in result
 
-    def test_state_attr(self, setup_config):
-        v = ReferenceValidator(str(setup_config))
+    def test_state_attr(self, tmp_path):
+        v = ReferenceValidator(str(tmp_path))
         result = v.extract_entities_from_template(
             "{{ state_attr('climate.hvac', 'temperature') }}"
         )
         assert "climate.hvac" in result
 
-    def test_state_attr_double_quotes(self, setup_config):
-        v = ReferenceValidator(str(setup_config))
+    def test_state_attr_double_quotes(self, tmp_path):
+        v = ReferenceValidator(str(tmp_path))
         result = v.extract_entities_from_template(
             '{{ state_attr("climate.hvac", "temperature") }}'
         )
@@ -732,48 +732,46 @@ class TestExtractEntitiesFromTemplate:
     ids=["device", "area"],
 )
 class TestExtractDeviceAndAreaReferences:
-    def test_single_id(self, setup_config, extractor, singular, plural, first, second):
-        v = ReferenceValidator(str(setup_config))
+    def test_single_id(self, tmp_path, extractor, singular, plural, first, second):
+        v = ReferenceValidator(str(tmp_path))
         result = getattr(v, extractor)({singular: first})
         assert first in result
 
-    def test_id_list(self, setup_config, extractor, singular, plural, first, second):
-        v = ReferenceValidator(str(setup_config))
+    def test_id_list(self, tmp_path, extractor, singular, plural, first, second):
+        v = ReferenceValidator(str(tmp_path))
         result = getattr(v, extractor)({plural: [first, second]})
         assert {first, second} <= result
 
     def test_skips_templates(
-        self, setup_config, extractor, singular, plural, first, second
+        self, tmp_path, extractor, singular, plural, first, second
     ):
-        v = ReferenceValidator(str(setup_config))
+        v = ReferenceValidator(str(tmp_path))
         result = getattr(v, extractor)({singular: "{{ trigger.device_id }}"})
         assert not result
 
-    def test_skips_ha_tags(
-        self, setup_config, extractor, singular, plural, first, second
-    ):
-        v = ReferenceValidator(str(setup_config))
+    def test_skips_ha_tags(self, tmp_path, extractor, singular, plural, first, second):
+        v = ReferenceValidator(str(tmp_path))
         result = getattr(v, extractor)({singular: "!input my_reference"})
         assert not result
 
     def test_recursive_extraction(
-        self, setup_config, extractor, singular, plural, first, second
+        self, tmp_path, extractor, singular, plural, first, second
     ):
-        v = ReferenceValidator(str(setup_config))
+        v = ReferenceValidator(str(tmp_path))
         result = getattr(v, extractor)({"target": {singular: first}})
         assert first in result
 
     def test_list_extraction(
-        self, setup_config, extractor, singular, plural, first, second
+        self, tmp_path, extractor, singular, plural, first, second
     ):
-        v = ReferenceValidator(str(setup_config))
+        v = ReferenceValidator(str(tmp_path))
         result = getattr(v, extractor)([{singular: first}, {singular: second}])
         assert len(result) == 2
 
     def test_list_skips_templates(
-        self, setup_config, extractor, singular, plural, first, second
+        self, tmp_path, extractor, singular, plural, first, second
     ):
-        v = ReferenceValidator(str(setup_config))
+        v = ReferenceValidator(str(tmp_path))
         result = getattr(v, extractor)({plural: [first, "{{ input_reference }}"]})
         assert first in result
         assert "{{ input_reference }}" not in result

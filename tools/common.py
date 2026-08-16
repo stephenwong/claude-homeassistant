@@ -22,7 +22,6 @@ DEFAULT_HA_URL = "http://homeassistant.local:8123"
 DEFAULT_HA_TIMEOUT = 10
 
 ENTITY_ID_RE = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")
-_ENTITY_RE = ENTITY_ID_RE
 DEFAULT_SUMMARY_MAX_CHARS = 8000
 
 
@@ -45,7 +44,7 @@ def load_env_file(path: Path | None = None) -> None:
     env_file = path or (Path(__file__).parent.parent / ".env")
     if not env_file.exists():
         return
-    with open(env_file) as f:
+    with open(env_file, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
@@ -246,7 +245,7 @@ def add_config_dir_arg(parser: argparse.ArgumentParser, *, help: str) -> None:
     )
 
 
-def _atomic_replace(
+def atomic_replace(
     path: Path,
     write_temp: Callable[[Path], None],
     *,
@@ -282,6 +281,10 @@ def _atomic_replace(
         if tmp_path is not None:
             with contextlib.suppress(OSError):
                 tmp_path.unlink(missing_ok=True)
+
+
+# Backwards compatibility alias
+_atomic_replace = atomic_replace
 
 
 def atomic_write_text(path: Path, content: str) -> bool:

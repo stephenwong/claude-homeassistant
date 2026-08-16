@@ -69,22 +69,18 @@ def _search_file(
                     remaining_pairs.append((pending_match, remaining - 1))
             pending_after = remaining_pairs
 
-        if not pattern.search(line):
+        if pattern.search(line):
+            match_entry: _MatchResult = {
+                "file": display_name,
+                "line_num": line_num,
+                "line": line,
+            }
             if context_lines > 0:
-                context_before.append(line)
-            continue
+                match_entry["context_before"] = list(context_before)
+                match_entry["context_after"] = []
+                pending_after.append((match_entry, context_lines))
 
-        match_entry: _MatchResult = {
-            "file": display_name,
-            "line_num": line_num,
-            "line": line,
-        }
-        if context_lines > 0:
-            match_entry["context_before"] = list(context_before)
-            match_entry["context_after"] = []
-            pending_after.append((match_entry, context_lines))
-
-        matches.append(match_entry)
+            matches.append(match_entry)
 
         if context_lines > 0:
             context_before.append(line)

@@ -55,21 +55,6 @@ def make_backup_record(path: Path, filename: str, timestamp: datetime) -> Backup
     return {"path": path, "filename": filename, "timestamp": timestamp}
 
 
-def create_test_backup(
-    backup_dir: Path,
-    name: str,
-    files: dict[str, Any],
-    timestamp: datetime | None = None,
-    *,
-    symlinks: dict[str, str] | None = None,
-) -> tuple[Path, BackupRecord]:
-    """Create a backup tar archive and corresponding BackupRecord."""
-    tar_path = make_tar(backup_dir, files, name=name, symlinks=symlinks)
-    ts = timestamp or datetime.fromtimestamp(tar_path.stat().st_mtime)
-    record = make_backup_record(tar_path, name, ts)
-    return tar_path, record
-
-
 def write_yaml(config_dir: Path, data: Any, filename: str = "automations.yaml") -> Path:
     """Write a YAML fixture and return its path."""
     path = config_dir / filename

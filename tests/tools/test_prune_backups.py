@@ -1,17 +1,26 @@
 """Tests for tools/prune_backups.py - backup retention management."""
 
+import pathlib
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
 
 from tests.helpers import make_backup_record
-from tools.backup_common import parse_backup_filename
+from tools import prune_backups as pb
+from tools import prune_backups as prune
+from tools.backup_common import _BACKUP_RE, parse_backup_filename
 from tools.prune_backups import (
+    _format_backup_line,
+    _format_delete_line,
+    _format_keep_line,
+    _validate_deletion_safety,
     apply_retention,
     clean_orphaned_changelogs,
     format_size,
+    get_backups,
     group_by_retention_period,
+    main,
 )
 
 
@@ -78,8 +87,6 @@ class TestGetBackups:
         (backup_dir / "not_a_backup.txt").write_text("skip")
 
         with patch("tools.backup_common.BACKUP_DIR", backup_dir):
-            from tools.prune_backups import get_backups
-
             backups = get_backups()
             assert len(backups) == 2
             # Should be sorted oldest first
@@ -91,20 +98,15 @@ class TestGetBackups:
         backup_dir.mkdir()
 
         with patch("tools.backup_common.BACKUP_DIR", backup_dir):
-            from tools.prune_backups import get_backups
-
             assert get_backups() == []
 
     def test_get_backups_nonexistent_dir(self, tmp_path):
         with patch("tools.backup_common.BACKUP_DIR", tmp_path / "nonexistent"):
-            from tools.prune_backups import get_backups
-
             assert get_backups() == []
 
 
 class TestGroupByRetentionPeriod:
     def test_retention_boundaries_are_named(self):
-        from tools import prune_backups as prune
 
         assert prune.RECENT_MAX_AGE_DAYS == 7
         assert prune.DAILY_MAX_AGE_DAYS == 30
@@ -294,7 +296,6 @@ class TestCleanOrphanedChangelogs:
     def test_orphan_discovery_uses_public_artifact_iterator(
         self, tmp_path, monkeypatch
     ):
-        from tools import prune_backups as prune
 
         orphan = tmp_path / "ha_config_20260101_120000.changelog"
         iterator_calls = []
@@ -311,7 +312,6 @@ class TestCleanOrphanedChangelogs:
         assert iterator_calls == ["backup", "changelog"]
 
     def test_orphan_discovery_is_pure(self, tmp_path):
-        from tools import prune_backups as prune
 
         backup_dir = tmp_path / "backups"
         backup_dir.mkdir()
@@ -327,7 +327,6 @@ class TestCleanOrphanedChangelogs:
         assert matched.exists()
 
     def test_cleanup_returns_discovered_paths(self, tmp_path):
-        from tools import prune_backups as prune
 
         backup_dir = tmp_path / "backups"
         backup_dir.mkdir()
@@ -404,7 +403,6 @@ class TestCleanOrphanedChangelogs:
         assert not changelog.exists()
 
     def test_apply_check_does_not_rescan_orphans(self, tmp_path, monkeypatch):
-        from tools import prune_backups as prune
 
         backup_dir = tmp_path / "backups"
         backup_dir.mkdir()
@@ -444,7 +442,6 @@ class TestFormatSize:
 
 class TestMain:
     def test_negative_min_keep_is_rejected(self, capsys):
-        from tools.prune_backups import main
 
         with pytest.raises(SystemExit):
             main(["--min-keep", "-1"])
@@ -454,8 +451,6 @@ class TestMain:
         backup_dir = tmp_path / "backups"
         backup_dir.mkdir()
         with patch("tools.backup_common.BACKUP_DIR", backup_dir):
-            from tools.prune_backups import main
-
             result = main([])
             assert result == 0
             captured = capsys.readouterr()
@@ -470,8 +465,6 @@ class TestMain:
         (backup_dir / fname).write_bytes(b"x" * 1024)
 
         with patch("tools.backup_common.BACKUP_DIR", backup_dir):
-            from tools.prune_backups import main
-
             result = main([])
             assert result == 0
             captured = capsys.readouterr()
@@ -486,8 +479,6 @@ class TestMain:
         (backup_dir / fname).write_bytes(b"x" * 1024)
 
         with patch("tools.backup_common.BACKUP_DIR", backup_dir):
-            from tools.prune_backups import main
-
             result = main([])
             assert result == 0
             captured = capsys.readouterr()
@@ -505,8 +496,6 @@ class TestMain:
         with (
             patch("tools.backup_common.BACKUP_DIR", backup_dir),
         ):
-            from tools.prune_backups import main
-
             result = main(["--apply", "--min-keep", "1"])
             assert result == 0
             # Should keep the later one (200000) and delete earlier (100000)
@@ -526,8 +515,6 @@ class TestMain:
         (backup_dir / fname2.replace(".tar.gz", ".changelog")).write_text("kept")
 
         with patch("tools.backup_common.BACKUP_DIR", backup_dir):
-            from tools.prune_backups import main
-
             assert main(["--apply", "--min-keep", "1"]) == 0
             # Kept backup's changelog survives
             assert (backup_dir / fname2.replace(".tar.gz", ".changelog")).exists()
@@ -552,8 +539,6 @@ class TestMain:
         with (
             patch("tools.backup_common.BACKUP_DIR", backup_dir),
         ):
-            from tools.prune_backups import main
-
             result = main(["--apply", "--min-keep", "1"])
             assert result == 0
             # Wednesday (later) kept, Monday (earlier) deleted
@@ -568,8 +553,6 @@ class TestMain:
         fname1, fname2 = _write_same_day_backups(backup_dir, datetime.now())
 
         with patch("tools.backup_common.BACKUP_DIR", backup_dir):
-            from tools.prune_backups import main
-
             result = main(["--dry-run"])
             assert result == 0
             # Both files should still exist
@@ -595,14 +578,11 @@ class TestMain:
         with (
             patch("tools.backup_common.BACKUP_DIR", backup_dir),
         ):
-            from tools.prune_backups import main
-
             main(["--apply", "--min-keep", "1"])
             assert not orphan.exists()
 
     def test_orphan_cleanup_failure_returns_nonzero(self, tmp_path, monkeypatch):
         """A failed orphan cleanup must not be reported as a successful prune."""
-        from tools import prune_backups as pb
 
         backup_dir = tmp_path / "backups"
         backup_dir.mkdir()
@@ -611,8 +591,6 @@ class TestMain:
         backup.write_bytes(b"x")
         orphan = backup_dir / "ha_config_20250101_120000.changelog"
         orphan.write_text("orphan")
-
-        import pathlib
 
         original_unlink = pathlib.Path.unlink
 
@@ -629,9 +607,6 @@ class TestMain:
 
     def test_delete_error_returns_nonzero(self, tmp_path, capsys):
         """If a file can't be deleted, main() should return 1."""
-        import pathlib
-
-        from tools import prune_backups as pb
 
         backup_dir = tmp_path / "backups"
         backup_dir.mkdir()
@@ -665,7 +640,6 @@ class TestL64Regex:
 
     def test_filename_regex_rejects_unmatched_suffix(self):
         """L64: ha_config_<digits>.tar.gz.bak must NOT match (regex end-anchored)."""
-        from tools.backup_common import _BACKUP_RE
 
         assert _BACKUP_RE.match("ha_config_20260201_120000.tar.gz") is not None
         assert _BACKUP_RE.match("ha_config_20260201_120000.tar.gz.bak") is None
@@ -677,7 +651,6 @@ class TestL65Sort:
 
     def test_identical_timestamps_sorted_deterministically(self, tmp_path, monkeypatch):
         """L65: two backups with the same timestamp must tie-break on filename."""
-        from tools.prune_backups import get_backups
 
         backup_dir = tmp_path / "backups"
         backup_dir.mkdir()
@@ -703,7 +676,6 @@ class TestL67RootPerms:
         self, tmp_path, monkeypatch, capsys
     ):
         """L67: deleting 3 of 5 must report success, not abort the batch."""
-        from tools.prune_backups import main
 
         backup_dir = tmp_path / "backups"
         backup_dir.mkdir()
@@ -711,8 +683,6 @@ class TestL67RootPerms:
         _write_same_day_backups(backup_dir, datetime.now(), count=5)
 
         monkeypatch.setattr("tools.backup_common.BACKUP_DIR", backup_dir)
-
-        import pathlib
 
         n_calls = 0
         orig_unlink = pathlib.Path.unlink
@@ -732,15 +702,12 @@ class TestL67RootPerms:
 
     def test_delete_error_mocked_not_chmod(self, tmp_path, monkeypatch, capsys):
         """L67: mock Path.unlink instead of chmod (fails open as root)."""
-        from tools.prune_backups import main
 
         backup_dir = tmp_path / "backups"
         backup_dir.mkdir()
         fname1, fname2 = _write_same_day_backups(backup_dir, datetime.now())
 
         monkeypatch.setattr("tools.backup_common.BACKUP_DIR", backup_dir)
-
-        import pathlib
 
         call_count = 0
         orig_unlink = pathlib.Path.unlink
@@ -761,9 +728,6 @@ class TestL67RootPerms:
 
 def test_missing_file_during_display_does_not_crash(tmp_path, monkeypatch):
     """A file vanishing between get_backups() and stat() display must not crash."""
-    import pathlib
-
-    from tools import prune_backups as pb
 
     backup_dir = tmp_path / "backups"
     backup_dir.mkdir()
@@ -794,7 +758,6 @@ class TestFormatLines:
         return make_backup_record(path, path.name, timestamp)
 
     def test_delete_line_includes_filename_size_and_age(self, tmp_path):
-        from tools.prune_backups import _format_delete_line
 
         backup = self._backup(tmp_path, datetime(2024, 1, 1))
         line = _format_delete_line(backup, datetime(2024, 1, 8))
@@ -803,7 +766,6 @@ class TestFormatLines:
         assert "1.0KB" in line
 
     def test_shared_line_formatter_preserves_delete_output(self, tmp_path):
-        from tools.prune_backups import _format_backup_line
 
         backup = self._backup(tmp_path, datetime(2024, 1, 1))
         assert _format_backup_line(backup, 1024, "7 days old") == (
@@ -811,7 +773,6 @@ class TestFormatLines:
         )
 
     def test_delete_line_missing_file_size_zero(self, tmp_path):
-        from tools.prune_backups import _format_delete_line
 
         backup = self._backup(tmp_path, datetime(2024, 1, 1))
         backup["path"].unlink()
@@ -826,15 +787,12 @@ class TestFormatLines:
         ],
     )
     def test_keep_line_formats_age(self, tmp_path, now, expected):
-        from tools.prune_backups import _format_keep_line
 
         backup = self._backup(tmp_path, datetime(2024, 1, 1))
         assert expected in _format_keep_line(backup, now)
 
     def test_delete_preview_uses_one_stat_snapshot(self, tmp_path, capsys):
         from types import SimpleNamespace
-
-        from tools import prune_backups as prune
 
         class ChangingPath:
             name = "ha_config_20240101_000000.tar.gz"
@@ -864,7 +822,6 @@ class TestFormatLines:
 
 class TestValidateDeletionSafety:
     def test_all_backups_deleted_returns_error(self):
-        from tools.prune_backups import _validate_deletion_safety
 
         backups = [{"filename": f"b{i}.tar.gz"} for i in range(3)]
         error = _validate_deletion_safety(backups, backups, min_keep=1)
@@ -872,7 +829,6 @@ class TestValidateDeletionSafety:
         assert "would remove all backups" in error
 
     def test_below_min_keep_returns_error(self):
-        from tools.prune_backups import _validate_deletion_safety
 
         backups = [{"filename": f"b{i}.tar.gz"} for i in range(5)]
         error = _validate_deletion_safety(backups, backups[:4], min_keep=3)
@@ -880,7 +836,6 @@ class TestValidateDeletionSafety:
         assert "below --min-keep" in error
 
     def test_safe_plan_returns_none(self):
-        from tools.prune_backups import _validate_deletion_safety
 
         backups = [{"filename": f"b{i}.tar.gz"} for i in range(10)]
         assert _validate_deletion_safety(backups, backups[:3], min_keep=3) is None

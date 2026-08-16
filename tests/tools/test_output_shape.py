@@ -1,10 +1,16 @@
 """Tests for tools/output_shape.py — shared JSON output-shaping helper."""
 
+import copy
 import json
 
 import pytest
 
-from tools.output_shape import apply_output_shape
+from tools.output_shape import (
+    _truncate_list,
+    apply_output_shape,
+    print_json,
+    truncate_dict_by_key_size,
+)
 
 
 class TestFirstBound:
@@ -175,7 +181,6 @@ class TestMaxChars:
         ids=["multiple-keys", "single-key"],
     )
     def test_max_chars_dict_is_bounded(self, data):
-        import json
 
         out = apply_output_shape(data, max_chars=80)
         serialized = json.dumps(out, separators=(",", ":"), ensure_ascii=False)
@@ -206,13 +211,11 @@ class TestPrintJson:
     """L58: print_json output formatting."""
 
     def test_compact_default(self, capsys):
-        from tools.output_shape import print_json
 
         print_json({"a": 1})
         assert capsys.readouterr().out == '{"a":1}\n'
 
     def test_pretty_indents(self, capsys):
-        from tools.output_shape import print_json
 
         print_json({"a": 1}, pretty=True)
         out = capsys.readouterr().out
@@ -232,15 +235,11 @@ class TestTruncateList:
     the O(N²) → O(N log N) refactor."""
 
     def test_truncate_list_empty_input(self):
-        from tools.output_shape import _truncate_list
 
         result = _truncate_list([], 100)
         assert result == [{"_truncated": True, "shown": 0, "total": 0}]
 
     def test_truncate_list_keeps_largest_prefix_that_fits(self):
-        import json
-
-        from tools.output_shape import _truncate_list
 
         items = [{"i": i, "v": "x" * 10} for i in range(50)]
         max_chars = 300
@@ -254,7 +253,6 @@ class TestTruncateList:
         assert len(serialized) <= max_chars
 
     def test_truncate_list_tiny_cap_returns_marker_only(self):
-        from tools.output_shape import _truncate_list
 
         result = _truncate_list(["x" * 200], 10)
         assert result == [{"_truncated": True, "shown": 0, "total": 1}]
@@ -270,9 +268,6 @@ class TestMaxCharsPrettyAsymmetry:
     """
 
     def test_max_chars_measures_compact_not_pretty(self):
-        import json
-
-        from tools.output_shape import apply_output_shape
 
         data = [{"k": i} for i in range(5)]
         out = apply_output_shape(data, max_chars=200)
@@ -314,13 +309,11 @@ class TestTruncateDictByKeySize:
     """Direct tests for the unified truncation helper."""
 
     def test_no_truncation_when_already_fits(self):
-        from tools.output_shape import truncate_dict_by_key_size
 
         data = {"a": 1, "b": 2}
         assert truncate_dict_by_key_size(data, max_chars=500) is data
 
     def test_flat_dict_default_marker_uses_dropped_keys_kept_keys(self):
-        from tools.output_shape import truncate_dict_by_key_size
 
         data = {"small": "x", "big1": "v" * 500, "big2": "w" * 500}
         out = truncate_dict_by_key_size(data, max_chars=80)
@@ -329,7 +322,6 @@ class TestTruncateDictByKeySize:
         assert "kept_keys" in out
 
     def test_flat_dict_dropped_keys_absent_from_result(self):
-        from tools.output_shape import truncate_dict_by_key_size
 
         data = {"small": "x", "big1": "v" * 500, "big2": "w" * 500}
         out = truncate_dict_by_key_size(data, max_chars=80)
@@ -337,7 +329,6 @@ class TestTruncateDictByKeySize:
             assert k not in out
 
     def test_flat_dict_kept_keys_matches_actual_keys(self):
-        from tools.output_shape import truncate_dict_by_key_size
 
         data = {"small": "x", "big1": "v" * 500, "big2": "w" * 500}
         out = truncate_dict_by_key_size(data, max_chars=80)
@@ -345,7 +336,6 @@ class TestTruncateDictByKeySize:
         assert set(out["kept_keys"]) == actual
 
     def test_nested_target_preserves_top_level_fields(self):
-        from tools.output_shape import truncate_dict_by_key_size
 
         data = {
             "item_id": "abc",
@@ -368,7 +358,6 @@ class TestTruncateDictByKeySize:
         assert len(out["trace"]) >= 1
 
     def test_nested_target_marker_uses_custom_field_names(self):
-        from tools.output_shape import truncate_dict_by_key_size
 
         data = {
             "item_id": "abc",
@@ -389,7 +378,6 @@ class TestTruncateDictByKeySize:
         assert "kept_keys" not in out
 
     def test_nested_target_bails_when_subdict_missing(self):
-        from tools.output_shape import truncate_dict_by_key_size
 
         data = {"item_id": "abc"}
         out = truncate_dict_by_key_size(
@@ -401,7 +389,6 @@ class TestTruncateDictByKeySize:
         assert out is data
 
     def test_nested_target_bails_when_subdict_too_small(self):
-        from tools.output_shape import truncate_dict_by_key_size
 
         data = {"item_id": "abc", "trace": {"only_one": "x" * 1000}}
         out = truncate_dict_by_key_size(
@@ -413,7 +400,6 @@ class TestTruncateDictByKeySize:
         assert out is data
 
     def test_preserve_min_prevents_dropping_below_threshold(self):
-        from tools.output_shape import truncate_dict_by_key_size
 
         data = {k: "v" * 100 for k in "abcde"}
         out = truncate_dict_by_key_size(data, max_chars=50, preserve_min=3)
@@ -421,9 +407,6 @@ class TestTruncateDictByKeySize:
         assert len(actual_keys) >= 3
 
     def test_result_compact_serialization_fits_max_chars(self):
-        import json
-
-        from tools.output_shape import truncate_dict_by_key_size
 
         data = {"small": "x", **{f"big{i}": "v" * 200 for i in range(10)}}
         out = truncate_dict_by_key_size(data, max_chars=150)
@@ -431,9 +414,6 @@ class TestTruncateDictByKeySize:
         assert len(serialized) <= 150
 
     def test_does_not_mutate_input(self):
-        import copy
-
-        from tools.output_shape import truncate_dict_by_key_size
 
         data = {"small": "x", "big1": "v" * 500, "big2": "w" * 500}
         snapshot = copy.deepcopy(data)
@@ -441,9 +421,6 @@ class TestTruncateDictByKeySize:
         assert data == snapshot
 
     def test_nested_target_does_not_mutate_input(self):
-        import copy
-
-        from tools.output_shape import truncate_dict_by_key_size
 
         data = {
             "item_id": "abc",

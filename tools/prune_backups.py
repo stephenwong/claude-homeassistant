@@ -11,7 +11,7 @@ Retention rules:
 import argparse
 import sys
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import TypedDict
@@ -245,23 +245,48 @@ def _print_retention_summary(
     print(f"  - Deleting {len(to_delete)} backup(s)", file=sys.stderr)
 
 
-def _print_delete_preview(to_delete: list[BackupRecord], now: datetime) -> None:
-    """Print the delete preview and total space freed."""
-    print("\nBackups to delete:", file=sys.stderr)
+def _print_backup_list(
+    backups: list[BackupRecord],
+    now: datetime,
+    header: str,
+    line_formatter: Callable[[BackupRecord, datetime, tuple[int, int]], str],
+    *,
+    reverse: bool = False,
+    file=sys.stdout,
+) -> int:
+    """Print formatted backup entries with a header and return total size in bytes."""
+    print(header, file=sys.stderr)
     total_size = 0
-    for backup in sorted(to_delete, key=lambda x: x["timestamp"]):
+    for backup in sorted(backups, key=lambda x: x["timestamp"], reverse=reverse):
         stats = _backup_size_and_age(backup, now)
         total_size += stats[0]
-        print(_format_delete_line(backup, now, stats))
+        print(line_formatter(backup, now, stats), file=file)
+    return total_size
+
+
+def _print_delete_preview(to_delete: list[BackupRecord], now: datetime) -> None:
+    """Print the delete preview and total space freed."""
+    total_size = _print_backup_list(
+        to_delete,
+        now,
+        "\nBackups to delete:",
+        _format_delete_line,
+        reverse=False,
+        file=sys.stdout,
+    )
     print(f"\nTotal space to free: {format_size(total_size)}")
 
 
 def _print_keep_summary(to_keep: list[BackupRecord], now: datetime) -> None:
     """Print the retained backup summary."""
-    print("\nRetained backups:", file=sys.stderr)
-    for backup in sorted(to_keep, key=lambda x: x["timestamp"], reverse=True):
-        stats = _backup_size_and_age(backup, now)
-        print(_format_keep_line(backup, now, stats), file=sys.stderr)
+    _print_backup_list(
+        to_keep,
+        now,
+        "\nRetained backups:",
+        _format_keep_line,
+        reverse=True,
+        file=sys.stderr,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

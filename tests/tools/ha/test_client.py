@@ -9,7 +9,7 @@ import requests
 
 from tests.helpers import make_response
 from tools.common import HARequestError, MissingTokenError
-from tools.ha.client import HAClient, HAWSClient
+from tools.ha.client import _MAX_RESULT_MESSAGES, HAClient, HAWSClient
 
 
 def _mock_session() -> MagicMock:
@@ -551,33 +551,35 @@ class TestHAWSReceive:
         assert str(exc_info.value) == message
 
 
+def _create_mock_ws_client(messages, url="http://ha:8123", token="tok"):
+    ws = _make_mock_ws(messages)
+    sf = _make_mock_session_factory(ws)
+    return ws, sf, HAWSClient(url, token, session_factory=sf)
+
+
 class TestHAWSCommand:
     def test_transport_error_is_wrapped(self):
-        ws = _make_mock_ws([])
-        sf = _make_mock_session_factory(ws)
-        c = HAWSClient("http://ha:8123", "tok", session_factory=sf)
+        _ws, _sf, c = _create_mock_ws_client([])
         c._authenticate = AsyncMock(side_effect=OSError("network down"))
         with pytest.raises(HARequestError, match="cannot connect"):
             asyncio.run(c._command("system_log/list"))
 
     def test_deliberate_request_error_is_preserved(self):
-        ws = _make_mock_ws([])
-        sf = _make_mock_session_factory(ws)
-        c = HAWSClient("http://ha:8123", "tok", session_factory=sf)
+        _ws, _sf, c = _create_mock_ws_client([])
         c._authenticate = AsyncMock(side_effect=HARequestError("auth contract"))
         with pytest.raises(HARequestError, match="auth contract"):
             asyncio.run(c._command("system_log/list"))
 
     def test_programming_error_is_not_mislabeled_as_connection_failure(self):
-        ws = _make_mock_ws([{"type": "auth_required"}, {"type": "auth_ok"}])
-        sf = _make_mock_session_factory(ws)
-        c = HAWSClient("http://ha:8123", "tok", session_factory=sf)
+        _ws, _sf, c = _create_mock_ws_client(
+            [{"type": "auth_required"}, {"type": "auth_ok"}]
+        )
         c._send_and_receive = AsyncMock(side_effect=TypeError("bad result shape"))
         with pytest.raises(TypeError, match="bad result shape"):
             asyncio.run(c._command("system_log/list"))
 
     def test_full_flow_returns_result(self):
-        ws = _make_mock_ws(
+        _ws, _sf, c = _create_mock_ws_client(
             [
                 {"type": "auth_required"},
                 {"type": "auth_ok"},
@@ -589,25 +591,21 @@ class TestHAWSCommand:
                 },
             ]
         )
-        sf = _make_mock_session_factory(ws)
-        c = HAWSClient("http://ha:8123", "tok", session_factory=sf)
         result = c.command("system_log/list")
         assert result == [{"level": "ERROR"}]
 
     def test_auth_failure_raises(self):
-        ws = _make_mock_ws(
+        _ws, _sf, c = _create_mock_ws_client(
             [
                 {"type": "auth_required"},
                 {"type": "auth_invalid", "message": "Invalid token"},
             ]
         )
-        sf = _make_mock_session_factory(ws)
-        c = HAWSClient("http://ha:8123", "tok", session_factory=sf)
         with pytest.raises(HARequestError, match="authentication failed"):
             c.command("system_log/list")
 
     def test_command_failure_raises(self):
-        ws = _make_mock_ws(
+        _ws, _sf, c = _create_mock_ws_client(
             [
                 {"type": "auth_required"},
                 {"type": "auth_ok"},
@@ -619,8 +617,6 @@ class TestHAWSCommand:
                 },
             ]
         )
-        sf = _make_mock_session_factory(ws)
-        c = HAWSClient("http://ha:8123", "tok", session_factory=sf)
         with pytest.raises(HARequestError, match="Unknown command"):
             c.command("bad/command")
 
@@ -631,15 +627,13 @@ class TestHAWSCommand:
         commands. The reset at the start of command() proved it didn't. Drop the
         instance attr and use a local.
         """
-        ws = _make_mock_ws(
+        _ws, _sf, c = _create_mock_ws_client(
             [
                 {"type": "auth_required"},
                 {"type": "auth_ok"},
                 {"type": "result", "id": 1, "success": True, "result": "ok"},
             ]
         )
-        sf = _make_mock_session_factory(ws)
-        c = HAWSClient("http://ha:8123", "tok", session_factory=sf)
         c.command("system_log/list")
         assert not hasattr(c, "_msg_id")
 
@@ -658,8 +652,6 @@ class TestHAWSCommand:
 
     def test_loop_exhaustion_raises(self):
         """Sending _MAX_RESULT_MESSAGES+ non-result messages exhausts loop guard."""
-        from tools.ha.client import _MAX_RESULT_MESSAGES
-
         messages = [{"type": "event", "id": i} for i in range(_MAX_RESULT_MESSAGES + 1)]
         ws = _make_mock_ws(messages)
         c = HAWSClient("http://ha:8123", "tok")

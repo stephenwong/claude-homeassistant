@@ -189,19 +189,14 @@ class HAOfficialValidator(ValidatorBase):
             line = line.strip()
             if not line:
                 continue
-            if _is_explicit_error(line) and not (
-                benign_ctx and _is_benign_package_line(line)
+            if benign_ctx and (
+                line == "^^^"
+                or self.is_ignorable_traceback_line(line, benign_ctx=True)
+                or _is_benign_package_line(line)
             ):
+                continue
+            if _is_explicit_error(line) or not self.is_ignorable_message(line):
                 self._classify_stdout_line(line)
-                continue
-            if self.is_ignorable_message(line):
-                continue
-            if benign_ctx:
-                if line.strip() == "^^^":
-                    continue
-                if self.is_ignorable_traceback_line(line, benign_ctx=True):
-                    continue
-            self._classify_stdout_line(line)
 
     def _classify_stdout_line(self, line: str) -> None:
         """Route a single (non-ignorable) stdout line to the right bucket."""
@@ -238,9 +233,9 @@ class HAOfficialValidator(ValidatorBase):
             if any(ind in line_lower for ind in _STDERR_ERROR_INDICATORS):
                 self.errors.append(f"HA Error: {line}")
                 continue
-            if any(x in line_lower for x in _STDERR_BENIGN_ANY):
-                continue
-            if any(x in line_lower for x in _STDERR_BENIGN_PHRASES):
+            if any(x in line_lower for x in _STDERR_BENIGN_ANY) or any(
+                x in line_lower for x in _STDERR_BENIGN_PHRASES
+            ):
                 continue
             self.errors.append(f"HA Error: {line}")
 

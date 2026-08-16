@@ -1,6 +1,5 @@
 """Validator result cache — skips re-validation when no relevant files changed."""
 
-import contextlib
 import hashlib
 import json
 import math
@@ -45,10 +44,6 @@ def compute_hash_status(config_dir: Path, patterns: list[str]) -> tuple[str, boo
             complete = False
             continue
     return sha.hexdigest(), complete
-
-
-# Backwards compatibility alias
-_compute_hash_status = compute_hash_status
 
 
 def compute_hash(config_dir: Path, patterns: list[str]) -> str:
@@ -114,15 +109,11 @@ def load_cache(config_dir: Path, name: str) -> dict | None:
 
     if "duration" in data:
         duration = data["duration"]
-        finite_duration = False
-        if not isinstance(duration, bool) and isinstance(duration, (int, float)):
-            with contextlib.suppress(OverflowError):
-                finite_duration = math.isfinite(duration)
         if (
             isinstance(duration, bool)
             or not isinstance(duration, (int, float))
+            or not math.isfinite(duration)
             or duration < 0
-            or not finite_duration
         ):
             return None
     if "stderr" in data and not isinstance(data["stderr"], str):

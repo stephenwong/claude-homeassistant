@@ -8,16 +8,26 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tools import common
 from tools import common as tools_common
 from tools.common import (
     DEFAULT_HA_URL,
+    DEFAULT_SUMMARY_MAX_CHARS,
     HAYamlLoader,
     ValidatorBase,
     _is_tty,
+    add_output_shape_args,
+    add_summary_args,
+    atomic_write_text,
+    fail_stderr,
     format_diagnostics,
     get_env_int,
     get_ha_config,
+    is_valid_entity_id,
     load_env_file,
+    non_negative_int,
+    positive_int,
+    resolve_max_chars,
     resolve_summary,
     validate_ha_url,
 )
@@ -197,24 +207,20 @@ class TestResolveMaxChars:
         return ns
 
     def test_explicit_wins_over_env(self, monkeypatch):
-        from tools.common import resolve_max_chars
 
         monkeypatch.setenv("HA_CLI_MAX_CHARS", "2000")
         assert resolve_max_chars(self._args(max_chars=500), summary=True) == 500
 
     def test_zero_disables(self):
-        from tools.common import resolve_max_chars
 
         assert resolve_max_chars(self._args(max_chars=0), summary=True) is None
 
     def test_env_overrides_default(self, monkeypatch):
-        from tools.common import resolve_max_chars
 
         monkeypatch.setenv("HA_CLI_MAX_CHARS", "3000")
         assert resolve_max_chars(self._args(), summary=True) == 3000
 
     def test_default_only_in_summary(self, monkeypatch):
-        from tools.common import DEFAULT_SUMMARY_MAX_CHARS, resolve_max_chars
 
         monkeypatch.delenv("HA_CLI_MAX_CHARS", raising=False)
         assert (
@@ -223,7 +229,6 @@ class TestResolveMaxChars:
         assert resolve_max_chars(self._args(), summary=False) is None
 
     def test_invalid_env_falls_through(self, monkeypatch):
-        from tools.common import DEFAULT_SUMMARY_MAX_CHARS, resolve_max_chars
 
         monkeypatch.setenv("HA_CLI_MAX_CHARS", "not-a-number")
         assert (
@@ -233,7 +238,6 @@ class TestResolveMaxChars:
 
 class TestAddOutputShapeArgs:
     def test_registers_all_flags(self):
-        from tools.common import add_output_shape_args
 
         p = argparse.ArgumentParser()
         add_output_shape_args(p)
@@ -243,7 +247,6 @@ class TestAddOutputShapeArgs:
         assert ns.max_chars == 100
 
     def test_partial_registration(self):
-        from tools.common import add_output_shape_args
 
         p = argparse.ArgumentParser()
         add_output_shape_args(p, first=False, max_chars=False)
@@ -253,7 +256,6 @@ class TestAddOutputShapeArgs:
         assert not hasattr(ns, "max_chars")
 
     def test_max_chars_help_uses_shared_default(self):
-        from tools.common import DEFAULT_SUMMARY_MAX_CHARS, add_output_shape_args
 
         p = argparse.ArgumentParser()
         add_output_shape_args(p)
@@ -263,7 +265,6 @@ class TestAddOutputShapeArgs:
 
 class TestAddSummaryArgs:
     def test_registers_both_flags(self):
-        from tools.common import add_summary_args
 
         p = argparse.ArgumentParser()
         add_summary_args(p)
@@ -276,7 +277,6 @@ class TestAddSummaryArgs:
 
     def test_both_flags_allowed_not_mutually_exclusive(self):
         """Both flags can be set together (resolve_summary handles the conflict)."""
-        from tools.common import add_summary_args
 
         p = argparse.ArgumentParser()
         add_summary_args(p)
@@ -450,61 +450,51 @@ class TestArgparseTypes:
     """Argparse integer and float types enforce their documented bounds."""
 
     def test_positive_int_accepts_valid(self):
-        from tools.common import positive_int
 
         assert positive_int("5") == 5
         assert isinstance(positive_int("5"), int)
 
     def test_positive_int_rejects_zero(self):
-        from tools.common import positive_int
 
         with pytest.raises((argparse.ArgumentTypeError, ValueError)):
             positive_int("0")
 
     def test_positive_int_rejects_negative(self):
-        from tools.common import positive_int
 
         with pytest.raises((argparse.ArgumentTypeError, ValueError)):
             positive_int("-1")
 
     def test_positive_int_rejects_float_string(self):
-        from tools.common import positive_int
 
         with pytest.raises((argparse.ArgumentTypeError, ValueError, TypeError)):
             positive_int("3.5")
 
     def test_positive_int_rejects_non_numeric(self):
-        from tools.common import positive_int
 
         with pytest.raises((argparse.ArgumentTypeError, ValueError)):
             positive_int("abc")
 
     def test_non_negative_int_accepts_zero(self):
-        from tools.common import non_negative_int
 
         assert non_negative_int("0") == 0
         assert isinstance(non_negative_int("0"), int)
 
     def test_non_negative_int_accepts_positive(self):
-        from tools.common import non_negative_int
 
         assert non_negative_int("3") == 3
 
     def test_non_negative_int_rejects_negative(self):
-        from tools.common import non_negative_int
 
         with pytest.raises((argparse.ArgumentTypeError, ValueError)):
             non_negative_int("-1")
 
     def test_is_valid_entity_id_valid(self):
-        from tools.common import is_valid_entity_id
 
         assert is_valid_entity_id("sensor.living_room_temp") is True
         assert is_valid_entity_id("light.kitchen") is True
         assert is_valid_entity_id("automation.turn_off_1") is True
 
     def test_is_valid_entity_id_invalid(self):
-        from tools.common import is_valid_entity_id
 
         assert is_valid_entity_id("sensor") is False
         assert is_valid_entity_id("sensor.") is False
@@ -545,21 +535,18 @@ class TestAtomicWriteText:
     """Tests for the shared atomic-write helper."""
 
     def test_writes_content_to_path(self, tmp_path):
-        from tools.common import atomic_write_text
 
         target = tmp_path / "out.json"
         atomic_write_text(target, '{"key": "value"}')
         assert target.read_text() == '{"key": "value"}'
 
     def test_no_tmp_file_left_after_success(self, tmp_path):
-        from tools.common import atomic_write_text
 
         target = tmp_path / "out.json"
         atomic_write_text(target, "content")
         assert not (tmp_path / "out.json.tmp").exists()
 
     def test_overwrites_existing_file(self, tmp_path):
-        from tools.common import atomic_write_text
 
         target = tmp_path / "out.json"
         target.write_text("old")
@@ -567,7 +554,6 @@ class TestAtomicWriteText:
         assert target.read_text() == "new"
 
     def test_preserves_existing_permissions(self, tmp_path):
-        from tools.common import atomic_write_text
 
         target = tmp_path / "out.json"
         target.write_text("old")
@@ -576,8 +562,6 @@ class TestAtomicWriteText:
         assert target.stat().st_mode & 0o777 == 0o600
 
     def test_original_survives_on_failure(self, tmp_path, monkeypatch):
-        from tools import common
-        from tools.common import atomic_write_text
 
         target = tmp_path / "out.json"
         target.write_text("original")
@@ -592,8 +576,6 @@ class TestAtomicWriteText:
         assert not (tmp_path / "out.json.tmp").exists()
 
     def test_fsyncs_temporary_file_before_replacement(self, tmp_path, monkeypatch):
-        from tools import common
-        from tools.common import atomic_write_text
 
         target = tmp_path / "out.json"
         fsynced = []
@@ -608,8 +590,6 @@ class TestAtomicWriteText:
         assert target.read_text() == "content"
 
     def test_warns_on_oserror(self, tmp_path, monkeypatch, capsys):
-        from tools import common
-        from tools.common import atomic_write_text
 
         target = tmp_path / "out.json"
 
@@ -627,7 +607,6 @@ class TestFailStderr:
     """Pin the fail_stderr helper."""
 
     def test_prints_emoji_message_to_stderr(self, capsys):
-        from tools.common import fail_stderr
 
         result = fail_stderr("network unreachable")
         captured = capsys.readouterr()
@@ -636,7 +615,6 @@ class TestFailStderr:
         assert captured.out == ""
 
     def test_empty_message_still_prints_emoji(self, capsys):
-        from tools.common import fail_stderr
 
         result = fail_stderr("")
         captured = capsys.readouterr()

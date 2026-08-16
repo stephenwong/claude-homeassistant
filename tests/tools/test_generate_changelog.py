@@ -1,6 +1,6 @@
 """Tests for tools/generate_changelog.py - backup changelog generation."""
 
-import io
+import contextlib
 import tarfile
 from datetime import datetime
 from pathlib import Path
@@ -8,13 +8,21 @@ from unittest.mock import patch
 
 import pytest
 
+import tools.common as tcommon
 from tests.helpers import make_backup_record, make_tar
 from tools.backup_common import backup_path_for_changelog
 from tools.generate_changelog import (
+    _collect_file_changes,
+    _count_diff,
+    _describe_file_change,
+    _select_predecessor,
+    _unified_diff,
+    _write_changelog,
     changelog_path_for,
     extract_files,
     generate_changelog,
     generate_for_backup,
+    main,
     should_include,
 )
 
@@ -90,28 +98,19 @@ class TestExtractFiles:
             generate_changelog(bad_backup, good_backup)
 
     def test_skips_non_file_members(self, tmp_path):
-        tar_path = tmp_path / "test.tar.gz"
-        with tarfile.open(tar_path, "w:gz") as tar:
-            # Add directory
-            info = tarfile.TarInfo(name="config/")
-            info.type = tarfile.DIRTYPE
-            tar.addfile(info)
-            # Add file
-            data = b"key: value\n"
-            finfo = tarfile.TarInfo(name="config/test.yaml")
-            finfo.size = len(data)
-            tar.addfile(finfo, io.BytesIO(data))
+        tar_path = make_tar(
+            tmp_path,
+            {"config/": None, "config/test.yaml": "key: value\n"},
+        )
         files = extract_files(tar_path)
         assert "config/test.yaml" in files
         assert "config/" not in files
 
     def test_skips_binary_content(self, tmp_path):
-        tar_path = tmp_path / "test.tar.gz"
-        with tarfile.open(tar_path, "w:gz") as tar:
-            data = b"\xff\xfe\x00\x01"
-            info = tarfile.TarInfo(name="config/binary.yaml")
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
+        tar_path = make_tar(
+            tmp_path,
+            {"config/binary.yaml": b"\xff\xfe\x00\x01"},
+        )
         files = extract_files(tar_path)
         assert "config/binary.yaml" not in files
 
@@ -138,7 +137,6 @@ class TestUnifiedDiff:
     """W3.7: _unified_diff extracts canonical a/b-filename unified diffs."""
 
     def test_returns_diff_with_a_b_filenames(self):
-        from tools.generate_changelog import _unified_diff
 
         result = _unified_diff("config/test.yaml", ["old"], ["new"])
         assert isinstance(result, list)
@@ -150,7 +148,6 @@ class TestUnifiedDiff:
         )
 
     def test_empty_when_inputs_identical(self):
-        from tools.generate_changelog import _unified_diff
 
         assert _unified_diff("x.yaml", ["same"], ["same"]) == []
 
@@ -159,13 +156,11 @@ class TestCountDiff:
     """W3.7: _count_diff counts + and - lines ignoring file headers."""
 
     def test_counts_additions_and_removals(self):
-        from tools.generate_changelog import _count_diff
 
         diff = ["+++ b/x", "--- a/x", "+added", "-removed", "+kept"]
         assert _count_diff(diff) == (2, 1)
 
     def test_ignores_filename_headers(self):
-        from tools.generate_changelog import _count_diff
 
         diff = ["+++ b/x", "--- a/x"]
         assert _count_diff(diff) == (0, 0)
@@ -184,7 +179,6 @@ class TestGenerateChangelog:
     def test_describe_change_normalizes_diff_inputs(
         self, previous, current, expected_summary
     ):
-        from tools.generate_changelog import _describe_file_change
 
         summary, diff = _describe_file_change("config/test.yaml", previous, current)
 
@@ -196,7 +190,6 @@ class TestGenerateChangelog:
             assert "b/config/test.yaml" in diff
 
     def test_file_change_collection_keeps_summaries_paired_with_diffs(self):
-        from tools.generate_changelog import _collect_file_changes
 
         changes = _collect_file_changes(
             {"config/b.yaml": "new\n", "config/a.yaml": "added\n"},
@@ -343,7 +336,6 @@ class TestGenerateForBackup:
             assert "Previous:" in content
 
     def test_predecessor_helper_returns_adjacent_oldest_first_backup(self):
-        from tools.generate_changelog import _select_predecessor
 
         older = {"filename": "older"}
         newer = {"filename": "newer"}
@@ -351,13 +343,11 @@ class TestGenerateForBackup:
         assert _select_predecessor(older, [older, newer]) is None
 
     def test_predecessor_helper_rejects_absent_backup(self):
-        from tools.generate_changelog import _select_predecessor
 
         with pytest.raises(ValueError, match="not found in the backup list"):
             _select_predecessor({"filename": "missing"}, [{"filename": "other"}])
 
     def test_write_failure_is_reported(self, tmp_path, monkeypatch):
-        from tools.generate_changelog import _write_changelog
 
         tar_path = make_tar(tmp_path, {"config/test.yaml": "key: value\n"})
         backup = make_backup_record(
@@ -372,18 +362,22 @@ class TestGenerateForBackup:
             _write_changelog(backup, None)
 
 
+def _run_main(monkeypatch, backups, *args, backup_dir=None):
+    monkeypatch.setattr("sys.argv", ["generate_changelog", *args])
+    patches = [patch("tools.generate_changelog.get_backups", return_value=backups)]
+    if backup_dir is not None:
+        patches.append(patch("tools.backup_common.BACKUP_DIR", backup_dir))
+    with contextlib.ExitStack() as stack:
+        for p in patches:
+            stack.enter_context(p)
+        return main()
+
+
 class TestMain:
     def test_no_backups(self, monkeypatch):
-        from tools.generate_changelog import main
-
-        monkeypatch.setattr("sys.argv", ["generate_changelog"])
-        with patch("tools.generate_changelog.get_backups", return_value=[]):
-            result = main()
-            assert result == 1
+        assert _run_main(monkeypatch, []) == 1
 
     def test_generate_all(self, tmp_path, monkeypatch, capsys):
-        from tools.generate_changelog import main
-
         tar1 = make_tar(tmp_path, {"config/test.yaml": "content1\n"})
         sub = tmp_path / "sub"
         sub.mkdir()
@@ -402,19 +396,12 @@ class TestMain:
             ),
         ]
 
-        monkeypatch.setattr("sys.argv", ["generate_changelog", "--generate-all"])
-        with (
-            patch("tools.generate_changelog.get_backups", return_value=backups),
-            patch("tools.backup_common.BACKUP_DIR", tmp_path),
-        ):
-            result = main()
-            assert result == 0
-            captured = capsys.readouterr()
-            assert "Generated 2" in captured.err
+        result = _run_main(monkeypatch, backups, "--generate-all", backup_dir=tmp_path)
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "Generated 2" in captured.err
 
     def test_generate_all_uses_adjacent_predecessors(self, tmp_path, monkeypatch):
-        from tools.generate_changelog import main
-
         backups = []
         for index in range(4):
             archive_dir = tmp_path / f"backup-{index}"
@@ -448,8 +435,6 @@ class TestMain:
             assert f"Previous: {expected_previous}" in content
 
     def test_generate_all_skips_existing(self, tmp_path, monkeypatch, capsys):
-        from tools.generate_changelog import main
-
         tar1 = make_tar(tmp_path, {"config/test.yaml": "content1\n"})
         backups = [
             make_backup_record(
@@ -461,19 +446,12 @@ class TestMain:
         # Pre-create changelog
         (tmp_path / "ha_config_20260201_120000.changelog").write_text("existing")
 
-        monkeypatch.setattr("sys.argv", ["generate_changelog", "--generate-all"])
-        with (
-            patch("tools.generate_changelog.get_backups", return_value=backups),
-            patch("tools.backup_common.BACKUP_DIR", tmp_path),
-        ):
-            result = main()
-            assert result == 0
-            captured = capsys.readouterr()
-            assert "skipped 1" in captured.err
+        result = _run_main(monkeypatch, backups, "--generate-all", backup_dir=tmp_path)
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "skipped 1" in captured.err
 
     def test_specific_backup(self, tmp_path, monkeypatch, capsys):
-        from tools.generate_changelog import main
-
         tar1 = make_tar(tmp_path, {"config/test.yaml": "content\n"})
         backups = [
             make_backup_record(
@@ -483,22 +461,17 @@ class TestMain:
             ),
         ]
 
-        monkeypatch.setattr(
-            "sys.argv",
-            ["generate_changelog", "ha_config_20260201_120000.tar.gz"],
+        result = _run_main(
+            monkeypatch,
+            backups,
+            "ha_config_20260201_120000.tar.gz",
+            backup_dir=tmp_path,
         )
-        with (
-            patch("tools.generate_changelog.get_backups", return_value=backups),
-            patch("tools.backup_common.BACKUP_DIR", tmp_path),
-        ):
-            result = main()
-            assert result == 0
-            captured = capsys.readouterr()
-            assert "Changelog written" in captured.err
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "Changelog written" in captured.err
 
     def test_backup_not_found(self, tmp_path, monkeypatch, capsys):
-        from tools.generate_changelog import main
-
         backups = [
             make_backup_record(
                 tmp_path / "other.tar.gz",
@@ -507,35 +480,19 @@ class TestMain:
             ),
         ]
 
-        monkeypatch.setattr(
-            "sys.argv",
-            ["generate_changelog", "nonexistent.tar.gz"],
-        )
-        with patch("tools.generate_changelog.get_backups", return_value=backups):
-            result = main()
-            assert result == 1
-            captured = capsys.readouterr()
-            assert "not found" in captured.err
+        result = _run_main(monkeypatch, backups, "nonexistent.tar.gz")
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "not found" in captured.err
 
     def test_generate_all_with_positional_arg_errors(self, monkeypatch):
         """L61: --generate-all + a positional must error, not silently ignore."""
-        from tools.generate_changelog import main
-
-        monkeypatch.setattr(
-            "sys.argv",
-            ["generate_changelog", "--generate-all", "some_backup.tar.gz"],
-        )
-        with (
-            pytest.raises(SystemExit) as exc,
-            patch("tools.generate_changelog.get_backups", return_value=[]),
-        ):
-            main()
+        with pytest.raises(SystemExit) as exc:
+            _run_main(monkeypatch, [], "--generate-all", "some_backup.tar.gz")
         assert exc.value.code == 2
 
     def test_force_overwrites_existing_changelog(self, tmp_path, monkeypatch, capsys):
         """L61: --force overwrites an existing .changelog."""
-        from tools.generate_changelog import main
-
         tar_path = make_tar(tmp_path, {"config/test.yaml": "content1\n"})
         backups = [
             make_backup_record(
@@ -547,17 +504,11 @@ class TestMain:
         cl_path = tmp_path / "ha_config_20260201_120000.changelog"
         cl_path.write_text("old content")
 
-        monkeypatch.setattr(
-            "sys.argv",
-            ["generate_changelog", "--generate-all", "--force"],
+        result = _run_main(
+            monkeypatch, backups, "--generate-all", "--force", backup_dir=tmp_path
         )
-        with (
-            patch("tools.generate_changelog.get_backups", return_value=backups),
-            patch("tools.backup_common.BACKUP_DIR", tmp_path),
-        ):
-            result = main()
-            assert result == 0
-            assert cl_path.read_text() != "old content"
+        assert result == 0
+        assert cl_path.read_text() != "old content"
 
 
 class TestL59AtomicWrite:
@@ -565,7 +516,6 @@ class TestL59AtomicWrite:
 
     def test_changelog_write_is_atomic_on_failure(self, tmp_path, monkeypatch):
         """L59: if write fails, no partial .changelog sticks (corruption-on-stick)."""
-        from tools.generate_changelog import generate_for_backup
 
         tar_path = make_tar(tmp_path, {"config/test.yaml": "key: value\n"})
         backup = make_backup_record(
@@ -577,8 +527,6 @@ class TestL59AtomicWrite:
         # Pre-create a changelog to verify it survives a failure
         cl_path = tmp_path / "ha_config_20260201_120000.changelog"
         cl_path.write_text("original content")
-
-        import tools.common as tcommon
 
         orig_replace = tcommon.os.replace
 
@@ -604,7 +552,6 @@ class TestL60ValueError:
 
     def test_generate_for_unknown_backup_raises(self, tmp_path):
         """L60: passing an unknown backup must raise, not silently print 'Initial'."""
-        from tools.generate_changelog import generate_for_backup
 
         tar_path = make_tar(tmp_path, {"config/test.yaml": "key: value\n"})
         backup = make_backup_record(
@@ -631,8 +578,6 @@ class TestL62Format:
         """L62: a Date: header with %z offset must preserve tz on the datetime."""
         from datetime import timedelta, timezone
 
-        from tools.generate_changelog import generate_changelog
-
         tar_path = make_tar(tmp_path, {"config/test.yaml": "key: value\n"})
         tz_aware = datetime(2026, 2, 1, 12, 0, 0, tzinfo=timezone(timedelta(hours=11)))
         backup = make_backup_record(
@@ -643,7 +588,6 @@ class TestL62Format:
 
     def test_removesuffix_handles_double_extension(self):
         """L62: removesuffix anchors to the suffix exactly."""
-        from tools.generate_changelog import changelog_path_for
 
         backup = {
             "path": Path("/tmp/ha_config_20260201_120000.tar.gz"),
@@ -658,7 +602,6 @@ class TestL63Gaps:
 
     def test_write_encoding_round_trip_utf8(self, tmp_path):
         """L63: write→read of the changelog preserves UTF-8."""
-        from tools.generate_changelog import generate_for_backup
 
         content = "key: value\nemoji: 🔥\n"
         tar_path = make_tar(tmp_path, {"config/test.yaml": content})
@@ -675,7 +618,6 @@ class TestL63Gaps:
 
     def test_extract_files_returns_none_on_missing_member(self, tmp_path):
         """L63: extractfile() returning None must not crash extract_files."""
-        from tools.generate_changelog import extract_files
 
         tar_path = tmp_path / "test.tar.gz"
         with tarfile.open(tar_path, "w:gz") as tar:
@@ -689,7 +631,6 @@ class TestL63Gaps:
 
     def test_idempotency_of_generated_content(self, tmp_path):
         """L63: running generate twice on the same backup produces identical content."""
-        from tools.generate_changelog import generate_changelog
 
         tar_path = make_tar(tmp_path, {"config/test.yaml": "content\n"})
         backup = make_backup_record(
@@ -708,7 +649,6 @@ class TestL63Gaps:
 
     def test_predecessor_ordering(self, tmp_path):
         """L63: predecessor selection must use timestamp ordering."""
-        from tools.generate_changelog import generate_for_backup
 
         sub = tmp_path / "sub"
         sub.mkdir()

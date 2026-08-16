@@ -6,7 +6,7 @@ from pathlib import Path
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 
-from tools.common import _atomic_replace
+from tools.common import atomic_replace
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -37,7 +37,7 @@ def main(argv: list[str] | None = None) -> int:
         with temp_path.open("w", encoding="utf-8") as temp:
             yaml.dump(data, temp)
 
-    _atomic_replace(path, write_temp)
+    atomic_replace(path, write_temp)
     return 0
 
 

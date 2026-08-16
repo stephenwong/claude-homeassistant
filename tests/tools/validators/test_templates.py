@@ -15,8 +15,6 @@ from tools.ha.client import HAClient
 from tools.validators._templates import is_jinja_template, template_delimiter_state
 from tools.validators.templates import TemplateValidator, main
 
-_write_automation = write_yaml
-
 
 def _mock_render(success: bool = True, message: str = "") -> MagicMock:
     client = MagicMock(spec=HAClient)
@@ -238,7 +236,7 @@ class TestRenderErrors:
     def test_catch_all_warning_path(self, config_dir):
         """A 400 response that matches neither syntax nor runtime signatures
         should produce a warning, not an error."""
-        _write_automation(
+        write_yaml(
             config_dir,
             [
                 {
@@ -263,7 +261,7 @@ class TestRenderErrors:
 
     def test_post_raises_request_error(self, config_dir):
         """When from_env succeeds but post() raises HARequestError, warn."""
-        _write_automation(
+        write_yaml(
             config_dir,
             [
                 {
@@ -285,7 +283,7 @@ class TestRenderErrors:
 
     def test_non_json_error_body_handled(self, config_dir):
         """When HA returns 400 with non-JSON body, fall back to resp.text."""
-        _write_automation(
+        write_yaml(
             config_dir,
             [
                 {
@@ -311,7 +309,7 @@ class TestRenderErrors:
 
 class TestOfflineDegradation:
     def test_offline_warns_and_static_checks(self, config_dir):
-        _write_automation(
+        write_yaml(
             config_dir,
             [
                 {
@@ -336,7 +334,7 @@ class TestOfflineDegradation:
             assert_diagnostic(v, "info", "skipped")
 
     def test_offline_balanced_template_passes(self, config_dir):
-        _write_automation(
+        write_yaml(
             config_dir,
             [
                 {
@@ -364,7 +362,7 @@ class TestOfflineDegradation:
     def test_offline_unbalanced_brace_errors(self, config_dir):
         """A string with balanced {{ }} pairs PLUS extra unmatched }} is
         extractable (regex finds the pairs) but _balanced catches the mismatch."""
-        _write_automation(
+        write_yaml(
             config_dir,
             [
                 {
@@ -401,7 +399,7 @@ class TestEdgeCases:
         assert_diagnostic(v, "errors", "does not exist")
 
     def test_no_templates_passes(self, config_dir):
-        _write_automation(
+        write_yaml(
             config_dir,
             [
                 {"id": "t", "alias": "T", "triggers": [], "actions": []},
@@ -430,7 +428,7 @@ class TestEdgeCases:
             assert v.validate_all() is True
 
     def test_mixed_syntax_and_runtime(self, config_dir):
-        _write_automation(
+        write_yaml(
             config_dir,
             [
                 {
@@ -456,7 +454,7 @@ class TestEdgeCases:
             assert_diagnostic(v, "errors", "nonexistent")
 
     def test_control_flow_template_detected(self, config_dir):
-        _write_automation(
+        write_yaml(
             config_dir,
             [
                 {
@@ -484,7 +482,7 @@ class TestEmptyRenderErrorBody:
     def test_empty_error_body_does_not_crash(self, config_dir):
         """A render response with an empty message does not crash validation."""
 
-        _write_automation(
+        write_yaml(
             config_dir,
             [
                 {
@@ -514,7 +512,7 @@ class TestClientCreationOSError:
 
     def test_oserror_from_from_env_is_caught(self, config_dir):
         """An OSError from client creation is reported as a skipped live check."""
-        _write_automation(
+        write_yaml(
             config_dir,
             [
                 {
@@ -541,7 +539,7 @@ class TestClientCreationOSError:
 
 class TestMain:
     def test_main_dispatches_clean(self, config_dir, monkeypatch):
-        _write_automation(
+        write_yaml(
             config_dir,
             [
                 {

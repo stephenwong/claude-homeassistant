@@ -6,6 +6,7 @@ from tests.helpers import (
     assert_diagnostic,
     assert_no_diagnostic,
     mock_json_client,
+    mock_offline_client,
     write_yaml,
 )
 from tools.common import HARequestError
@@ -16,15 +17,9 @@ from tools.validators.services import (
     main,
 )
 
-_write_automation = write_yaml
-
 
 def _mock_services(entries: list[dict]) -> MagicMock:
     return mock_json_client(entries)
-
-
-def _mock_offline() -> MagicMock:
-    return mock_json_client(side_effect=HARequestError("offline"))
 
 
 def _run_service_validation(config_dir, data, catalog, *, filename="automations.yaml"):
@@ -295,7 +290,7 @@ class TestServiceValidation:
     def test_non_domain_service_value_ignored(self, config_dir):
         """Bare service names without a dot (e.g. notify.group sub-services)
         are not domain-qualified service calls and should be skipped."""
-        _write_automation(
+        write_yaml(
             config_dir,
             [
                 {
@@ -349,7 +344,7 @@ class TestServiceValidation:
 
 class TestOfflineDegradation:
     def test_offline_degrades_to_format_check(self, config_dir):
-        _write_automation(
+        write_yaml(
             config_dir,
             [
                 {
@@ -362,7 +357,7 @@ class TestOfflineDegradation:
                 },
             ],
         )
-        mock_client = _mock_offline()
+        mock_client = mock_offline_client()
         with patch(
             "tools.validators.services.HAClient.from_env", return_value=mock_client
         ):
@@ -371,7 +366,7 @@ class TestOfflineDegradation:
             assert_diagnostic(v, "info", "skipped")
 
     def test_offline_bad_format_fails(self, config_dir):
-        _write_automation(
+        write_yaml(
             config_dir,
             [
                 {
@@ -384,7 +379,7 @@ class TestOfflineDegradation:
                 },
             ],
         )
-        mock_client = _mock_offline()
+        mock_client = mock_offline_client()
         with patch(
             "tools.validators.services.HAClient.from_env", return_value=mock_client
         ):
@@ -392,7 +387,7 @@ class TestOfflineDegradation:
             assert v.validate_all() is False
 
     def test_catalog_is_none_handled(self, config_dir):
-        _write_automation(
+        write_yaml(
             config_dir,
             [
                 {
@@ -415,7 +410,7 @@ class TestOfflineDegradation:
             assert_no_diagnostic(v, "errors")
 
     def test_offline_from_env_fails(self, config_dir):
-        _write_automation(
+        write_yaml(
             config_dir,
             [
                 {
@@ -473,7 +468,7 @@ class TestL45NetworkGate:
         self, config_dir, monkeypatch
     ):
         """L45: with only bare names (no dot), the catalog fetch must be skipped."""
-        _write_automation(
+        write_yaml(
             config_dir,
             [
                 {
@@ -495,7 +490,7 @@ class TestL45NetworkGate:
 
 class TestMain:
     def test_main_dispatches_clean(self, config_dir, monkeypatch):
-        _write_automation(
+        write_yaml(
             config_dir,
             [
                 {
@@ -548,7 +543,7 @@ class TestOfflineOSError:
     """W3.1: OSError from from_env() must degrade, not crash."""
 
     def test_oserror_from_from_env_is_skipped(self, config_dir):
-        _write_automation(
+        write_yaml(
             config_dir,
             [
                 {

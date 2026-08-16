@@ -440,16 +440,13 @@ class TestRunRemove:
 
 
 class TestEdgeCases:
-    def _ns(self, **overrides):
-        return make_args(**overrides)
-
     def test_conflicting_show_and_remove_rejected(self, capsys):
-        result = run(self._ns(show=True, remove=True, alias="X"))
+        result = run(make_args(show=True, remove=True, alias="X"))
         assert result == 1
         assert "conflicting" in capsys.readouterr().err.lower()
 
     def test_conflicting_add_and_show_rejected(self):
-        result = run(self._ns(show=True, add='{"x":1}'))
+        result = run(make_args(show=True, add='{"x":1}'))
         assert result == 1
 
     def test_set_rejects_dotted_nested_key(self, tmp_path, capsys):
@@ -458,14 +455,14 @@ class TestEdgeCases:
             "automations",
             "- alias: A\n  mode: single\n  triggers: []\n  actions: []\n",
         )
-        args = self._ns(config=str(tmp_path), alias="A", set=["mode.parallel=1"])
+        args = make_args(config=str(tmp_path), alias="A", set=["mode.parallel=1"])
         result = run(args)
         assert result == 1
         assert "nested" in capsys.readouterr().err.lower()
 
     def test_show_corrupt_yaml_reports_error(self, tmp_path, capsys):
         _write_file(tmp_path, "automations", "{[[[ not valid yaml\n")
-        args = self._ns(config=str(tmp_path), show=True)
+        args = make_args(config=str(tmp_path), show=True)
         result = run(args)
         assert result == 1
         err = capsys.readouterr().err
@@ -481,27 +478,27 @@ class TestEdgeCases:
             raise FileNotFoundError("file vanished")
 
         monkeypatch.setattr("tools.commands.edit.YAMLEditor.load", missing)
-        result = run(self._ns(config=str(tmp_path), show=True))
+        result = run(make_args(config=str(tmp_path), show=True))
         assert result == 1
         err = capsys.readouterr().err.lower()
         assert "could not read" in err
         assert "could not parse" not in err
 
     def test_nonexistent_file_errors(self, tmp_path, capsys):
-        args = self._ns(config=str(tmp_path), show=True)
+        args = make_args(config=str(tmp_path), show=True)
         result = run(args)
         assert result == 1
         assert "not found" in capsys.readouterr().err.lower()
 
     def test_set_on_nonexistent_file_errors(self, tmp_path, capsys):
-        args = self._ns(config=str(tmp_path), set=["x=y"], alias="X")
+        args = make_args(config=str(tmp_path), set=["x=y"], alias="X")
         result = run(args)
         assert result == 1
         assert "not found" in capsys.readouterr().err.lower()
 
     def test_add_creates_file(self, tmp_path):
         """--add creates the file if it didn't exist."""
-        args = self._ns(
+        args = make_args(
             config=str(tmp_path),
             add='{"alias":"New","id":"n","triggers":[],"conditions":[],"actions":[],"mode":"single"}',
         )
@@ -511,7 +508,7 @@ class TestEdgeCases:
         assert data[0]["alias"] == "New"
 
     def test_empty_add_value_is_parsed_and_rejected(self, tmp_path, capsys):
-        args = self._ns(config=str(tmp_path), add="")
+        args = make_args(config=str(tmp_path), add="")
 
         assert run(args) == 1
         assert "json" in capsys.readouterr().err.lower()
@@ -519,7 +516,7 @@ class TestEdgeCases:
     def test_add_to_scripts_file(self, tmp_path):
         """--add on a scripts (dict) file adds as a new key."""
         _write_file(tmp_path, "scripts", "{}")
-        args = self._ns(
+        args = make_args(
             config=str(tmp_path),
             file="scripts",
             add='{"alias":"Notify","id":"notify","sequence":[]}',
@@ -532,7 +529,7 @@ class TestEdgeCases:
 
     def test_add_to_new_scripts_file_creates_dict(self, tmp_path):
         """--add to a non-existent scripts file creates a dict, not a list."""
-        args = self._ns(
+        args = make_args(
             config=str(tmp_path),
             file="scripts",
             add='{"alias":"Notify","id":"notify","sequence":[]}',
@@ -545,7 +542,7 @@ class TestEdgeCases:
 
     def test_no_action_defaults_to_show(self, tmp_path, capsys):
         """No flag defaults to --show (lists aliases or errors if no file)."""
-        args = self._ns(config=str(tmp_path), show=False)
+        args = make_args(config=str(tmp_path), show=False)
         result = run(args)
         assert (
             result == 1
@@ -554,7 +551,7 @@ class TestEdgeCases:
         assert "not found" in err.lower()
 
     def test_missing_alias_for_set_errors(self, capsys):
-        result = run(self._ns(set=["x=y"]))
+        result = run(make_args(set=["x=y"]))
         assert result == 1
         assert "alias required" in capsys.readouterr().err.lower()
 
@@ -569,7 +566,7 @@ morning:
   sequence: []
 """,
         )
-        args = self._ns(
+        args = make_args(
             config=str(tmp_path),
             file="scripts",
             alias="morning",
@@ -594,7 +591,7 @@ delete:
   sequence: []
 """,
         )
-        args = self._ns(
+        args = make_args(
             config=str(tmp_path),
             file="scripts",
             alias="delete",
@@ -614,7 +611,7 @@ delete:
             "scripts",
             "morning:\n  sequence: []\nevening:\n  sequence: []\n",
         )
-        run(self._ns(config=str(tmp_path), file="scripts", show=True))
+        run(make_args(config=str(tmp_path), file="scripts", show=True))
         out = capsys.readouterr().out
         assert "morning" in out
         assert "evening" in out
@@ -625,13 +622,13 @@ delete:
             "scripts",
             "morning:\n  alias: Morning\n  sequence: []\n",
         )
-        run(self._ns(config=str(tmp_path), file="scripts", alias="morning", show=True))
+        run(make_args(config=str(tmp_path), file="scripts", alias="morning", show=True))
         assert "Morning" in capsys.readouterr().out
 
     def test_show_missing_script_prints_error(self, tmp_path, capsys):
         _write_file(tmp_path, "scripts", "morning:\n  sequence: []\n")
         result = run(
-            self._ns(config=str(tmp_path), file="scripts", alias="ghost", show=True)
+            make_args(config=str(tmp_path), file="scripts", alias="ghost", show=True)
         )
         assert result == 1
         assert "not found" in capsys.readouterr().err.lower()
@@ -639,19 +636,19 @@ delete:
     # --add and --set error branches
 
     def test_add_invalid_json_returns_error(self, tmp_path, capsys):
-        result = run(self._ns(config=str(tmp_path), add="{not json"))
+        result = run(make_args(config=str(tmp_path), add="{not json"))
         assert result == 1
         assert "invalid json" in capsys.readouterr().err.lower()
 
     def test_add_json_array_returns_error(self, tmp_path, capsys):
-        result = run(self._ns(config=str(tmp_path), add="[1,2,3]"))
+        result = run(make_args(config=str(tmp_path), add="[1,2,3]"))
         assert result == 1
         assert "json object" in capsys.readouterr().err.lower()
 
     def test_add_scripts_without_id_or_alias_errors(self, tmp_path, capsys):
         _write_file(tmp_path, "scripts", "{}\n")
         result = run(
-            self._ns(config=str(tmp_path), file="scripts", add='{"foo":"bar"}')
+            make_args(config=str(tmp_path), file="scripts", add='{"foo":"bar"}')
         )
         assert result == 1
         err = capsys.readouterr().err.lower()
@@ -659,13 +656,13 @@ delete:
 
     def test_set_malformed_kv_returns_error(self, tmp_path, capsys):
         _write_file(tmp_path, "automations", "[]")
-        result = run(self._ns(config=str(tmp_path), alias="X", set=["no_equals"]))
+        result = run(make_args(config=str(tmp_path), alias="X", set=["no_equals"]))
         assert result == 1
         assert "key=value" in capsys.readouterr().err.lower()
 
     def test_set_empty_key_returns_error(self, tmp_path, capsys):
         _write_file(tmp_path, "automations", "- alias: X\n")
-        result = run(self._ns(config=str(tmp_path), alias="X", set=["=value"]))
+        result = run(make_args(config=str(tmp_path), alias="X", set=["=value"]))
         assert result == 1
         assert "key" in capsys.readouterr().err.lower()
 
@@ -678,40 +675,40 @@ delete:
             raise PermissionError("permission denied")
 
         monkeypatch.setattr("tools.commands.edit.YAMLEditor.load", denied)
-        result = run(self._ns(config=str(tmp_path), show=True))
+        result = run(make_args(config=str(tmp_path), show=True))
         assert result == 1
         assert "could not read" in capsys.readouterr().err.lower()
 
     # TypeError handlers
 
-    def test_add_type_error_returns_error(self, tmp_path, capsys, monkeypatch):
-        _write_file(tmp_path, "automations", "[]")
-        monkeypatch.setattr("tools.commands.edit.YAMLEditor.add_automation", _boom)
-        result = run(self._ns(config=str(tmp_path), add='{"alias":"X","id":"x"}'))
-        assert result == 1
-        assert "boom" in capsys.readouterr().err
-
-    def test_set_type_error_returns_error(self, tmp_path, capsys, monkeypatch):
-        _write_file(
-            tmp_path,
-            "automations",
-            "- id: a\n  alias: A\n  triggers: []\n"
-            "  conditions: []\n  actions: []\n  mode: single\n",
-        )
-        monkeypatch.setattr("tools.commands.edit.YAMLEditor.update_automation", _boom)
-        result = run(self._ns(config=str(tmp_path), alias="A", set=["x=y"]))
-        assert result == 1
-        assert "boom" in capsys.readouterr().err
-
-    def test_remove_type_error_returns_error(self, tmp_path, capsys, monkeypatch):
-        _write_file(
-            tmp_path,
-            "automations",
-            "- id: a\n  alias: A\n  triggers: []\n"
-            "  conditions: []\n  actions: []\n  mode: single\n",
-        )
-        monkeypatch.setattr("tools.commands.edit.YAMLEditor.remove_automation", _boom)
-        result = run(self._ns(config=str(tmp_path), alias="A", remove=True))
+    @pytest.mark.parametrize(
+        ("method_name", "args_kwargs", "initial_yaml"),
+        [
+            ("add_automation", {"add": '{"alias":"X","id":"x"}'}, "[]"),
+            (
+                "update_automation",
+                {"alias": "A", "set": ["x=y"]},
+                (
+                    "- id: a\n  alias: A\n  triggers: []\n"
+                    "  conditions: []\n  actions: []\n  mode: single\n"
+                ),
+            ),
+            (
+                "remove_automation",
+                {"alias": "A", "remove": True},
+                (
+                    "- id: a\n  alias: A\n  triggers: []\n"
+                    "  conditions: []\n  actions: []\n  mode: single\n"
+                ),
+            ),
+        ],
+    )
+    def test_mutation_type_error_returns_error(
+        self, tmp_path, capsys, monkeypatch, method_name, args_kwargs, initial_yaml
+    ):
+        _write_file(tmp_path, "automations", initial_yaml)
+        monkeypatch.setattr(f"tools.commands.edit.YAMLEditor.{method_name}", _boom)
+        result = run(make_args(config=str(tmp_path), **args_kwargs))
         assert result == 1
         assert "boom" in capsys.readouterr().err
 
@@ -720,7 +717,7 @@ delete:
     def test_add_duplicate_script_key_returns_error(self, tmp_path, capsys):
         _write_file(tmp_path, "scripts", "morning:\n  sequence: []\n")
         result = run(
-            self._ns(
+            make_args(
                 config=str(tmp_path),
                 file="scripts",
                 add='{"id":"morning","alias":"M","sequence":[]}',
@@ -733,21 +730,21 @@ delete:
 
     def test_path_traversal_rejected(self, tmp_path, capsys):
         result = run(
-            self._ns(config=str(tmp_path), file="../../../etc/passwd", show=True)
+            make_args(config=str(tmp_path), file="../../../etc/passwd", show=True)
         )
         assert result == 1
         assert "inside config directory" in capsys.readouterr().err.lower()
 
     @pytest.mark.parametrize("file", ["configuration", "other.yaml"])
     def test_only_supported_files_are_editable(self, tmp_path, file, capsys):
-        result = run(self._ns(config=str(tmp_path), file=file, show=True))
+        result = run(make_args(config=str(tmp_path), file=file, show=True))
         assert result == 1
         assert "automations" in capsys.readouterr().err.lower()
 
     def test_existing_empty_scripts_file_creates_mapping(self, tmp_path):
         _write_file(tmp_path, "scripts", "")
         result = run(
-            self._ns(
+            make_args(
                 config=str(tmp_path),
                 file="scripts",
                 add='{"id":"notify","sequence":[]}',
@@ -760,7 +757,7 @@ delete:
 
     def test_scalar_yaml_is_rejected(self, tmp_path, capsys):
         _write_file(tmp_path, "automations", "42\n")
-        result = run(self._ns(config=str(tmp_path), show=True))
+        result = run(make_args(config=str(tmp_path), show=True))
         assert result == 1
         assert "list or mapping" in capsys.readouterr().err.lower()
 
@@ -770,11 +767,11 @@ delete:
     ):
         _write_file(tmp_path, "automations", "42\n")
         if operation == "add":
-            args = self._ns(config=str(tmp_path), add='{"alias":"New"}')
+            args = make_args(config=str(tmp_path), add='{"alias":"New"}')
         elif operation == "set":
-            args = self._ns(config=str(tmp_path), alias="A", set=["x=y"])
+            args = make_args(config=str(tmp_path), alias="A", set=["x=y"])
         else:
-            args = self._ns(config=str(tmp_path), alias="A", remove=True)
+            args = make_args(config=str(tmp_path), alias="A", remove=True)
 
         assert run(args) == 1
         assert capsys.readouterr().err.endswith("got unknown\n")
@@ -813,7 +810,7 @@ delete:
 
     @patch("tools.common._is_tty", return_value=True)
     def test_add_prints_success_when_verbose(self, mock_is_tty, tmp_path, capsys):
-        run(self._ns(config=str(tmp_path), add='{"alias":"New","id":"n"}'))
+        run(make_args(config=str(tmp_path), add='{"alias":"New","id":"n"}'))
         assert "Added:" in capsys.readouterr().out
 
     @patch("tools.common._is_tty", return_value=True)
@@ -824,7 +821,7 @@ delete:
             "- id: a\n  alias: A\n  triggers: []\n"
             "  conditions: []\n  actions: []\n  mode: single\n",
         )
-        run(self._ns(config=str(tmp_path), alias="A", remove=True))
+        run(make_args(config=str(tmp_path), alias="A", remove=True))
         assert "Removed:" in capsys.readouterr().out
 
 

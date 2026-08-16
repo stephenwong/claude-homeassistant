@@ -1112,33 +1112,22 @@ def test_fail_on_stale_ignores_non_staleness_warnings(config_dir):
 
 def test_fail_on_stale_trips_on_real_stale_sensor(config_dir):
     """A genuinely stale sensor with fail_on_stale=True must fail (return False)."""
-    _write_entity_registry(
+    v, result = _run_stale_validation(
         config_dir,
+        [{"entity_id": "sensor.stale", "platform": "zha", "disabled_by": None}],
         [
-            {"entity_id": "sensor.stale", "platform": "zha", "disabled_by": None},
+            {
+                "entity_id": "sensor.stale",
+                "state": "1",
+                "last_updated": "2026-07-15T00:00:00+00:00",
+                "attributes": {},
+            }
         ],
+        datetime(2026, 7, 17, 0, 0, 0, tzinfo=UTC),
+        fail_on_stale=True,
+        threshold_hours=24,
     )
-    stale = [
-        {
-            "entity_id": "sensor.stale",
-            "state": "1",
-            "last_updated": "2026-07-15T00:00:00+00:00",
-            "attributes": {},
-        }
-    ]
-    mock_client = _mock_states(stale)
-    with (
-        patch("tools.validators.stale_sensors.HAClient", return_value=mock_client),
-        patch.object(
-            StaleSensorValidator,
-            "_get_current_time",
-            return_value=datetime(2026, 7, 17, 0, 0, 0, tzinfo=UTC),
-        ),
-    ):
-        v = StaleSensorValidator(
-            str(config_dir), fail_on_stale=True, threshold_hours=24
-        )
-        assert v.validate_all() is False
+    assert result is False
     assert_diagnostic(v, "errors", "Stale sensor check failed")
 
 
@@ -1147,7 +1136,7 @@ def test_fail_on_stale_trips_on_real_stale_sensor(config_dir):
 
 def test_ignore_restored_true_skips_restored_entities(config_dir):
     """ignore_restored=True skips entities with restored=true."""
-    _write_entity_registry(
+    v, result = _run_stale_validation(
         config_dir,
         [
             {
@@ -1157,8 +1146,6 @@ def test_ignore_restored_true_skips_restored_entities(config_dir):
                 "hidden_by": None,
             }
         ],
-    )
-    mock_client = _mock_states(
         [
             {
                 "entity_id": "sensor.restored_temp",
@@ -1166,20 +1153,17 @@ def test_ignore_restored_true_skips_restored_entities(config_dir):
                 "last_updated": "2026-06-24T20:00:00+00:00",
                 "attributes": {"restored": True},
             }
-        ]
+        ],
+        datetime(2026, 6, 25, 21, 0, 0, tzinfo=UTC),
+        ignore_restored=True,
     )
-    with patch("tools.validators.stale_sensors.HAClient", return_value=mock_client):
-        v = StaleSensorValidator(str(config_dir), ignore_restored=True)
-        v._get_current_time = MagicMock(
-            return_value=datetime(2026, 6, 25, 21, 0, 0, tzinfo=UTC)
-        )
-        assert v.validate_all() is True
-        assert_no_diagnostic(v, "warnings")
+    assert result is True
+    assert_no_diagnostic(v, "warnings")
 
 
 def test_last_changed_and_last_updated_uses_older_timestamp(config_dir):
     """When both timestamps exist, validation uses the older timestamp."""
-    _write_entity_registry(
+    v, result = _run_stale_validation(
         config_dir,
         [
             {
@@ -1189,8 +1173,6 @@ def test_last_changed_and_last_updated_uses_older_timestamp(config_dir):
                 "hidden_by": None,
             }
         ],
-    )
-    mock_client = _mock_states(
         [
             {
                 "entity_id": "sensor.test_temp",
@@ -1199,21 +1181,18 @@ def test_last_changed_and_last_updated_uses_older_timestamp(config_dir):
                 "last_updated": "2026-06-25T00:00:00+00:00",
                 "attributes": {},
             }
-        ]
+        ],
+        datetime(2026, 6, 25, 21, 0, 0, tzinfo=UTC),
+        threshold_hours=24,
     )
-    with patch("tools.validators.stale_sensors.HAClient", return_value=mock_client):
-        v = StaleSensorValidator(str(config_dir), threshold_hours=24)
-        v._get_current_time = MagicMock(
-            return_value=datetime(2026, 6, 25, 21, 0, 0, tzinfo=UTC)
-        )
-        assert v.validate_all() is True
-        assert_diagnostic(v, "warnings", "sensor.test_temp")
-        assert_diagnostic(v, "warnings", "stale")
+    assert result is True
+    assert_diagnostic(v, "warnings", "sensor.test_temp")
+    assert_diagnostic(v, "warnings", "stale")
 
 
 def test_strict_boundary_not_flagged(config_dir):
     """Elapsed time exactly at the threshold is not flagged (strict >)."""
-    _write_entity_registry(
+    v, result = _run_stale_validation(
         config_dir,
         [
             {
@@ -1223,8 +1202,6 @@ def test_strict_boundary_not_flagged(config_dir):
                 "hidden_by": None,
             }
         ],
-    )
-    mock_client = _mock_states(
         [
             {
                 "entity_id": "sensor.boundary",
@@ -1232,15 +1209,12 @@ def test_strict_boundary_not_flagged(config_dir):
                 "last_updated": "2026-06-24T21:00:00+00:00",
                 "attributes": {},
             }
-        ]
+        ],
+        datetime(2026, 6, 25, 21, 0, 0, tzinfo=UTC),
+        threshold_hours=24,
     )
-    with patch("tools.validators.stale_sensors.HAClient", return_value=mock_client):
-        v = StaleSensorValidator(str(config_dir), threshold_hours=24)
-        v._get_current_time = MagicMock(
-            return_value=datetime(2026, 6, 25, 21, 0, 0, tzinfo=UTC)
-        )
-        assert v.validate_all() is True
-        assert_no_diagnostic(v, "warnings")
+    assert result is True
+    assert_no_diagnostic(v, "warnings")
 
 
 def test_stale_validator_missing_config_dir_uses_base_validation():

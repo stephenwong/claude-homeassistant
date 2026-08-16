@@ -1,8 +1,6 @@
 """Tests for tools/search_backups.py - backup search utility."""
 
-import io
 import re
-import tarfile
 from datetime import datetime
 from unittest.mock import patch
 
@@ -10,7 +8,12 @@ import pytest
 
 from tests.helpers import make_backup_record, make_tar
 from tools.backup_common import BackupRecord
-from tools.search_backups import is_likely_unsafe_regex, search_backup
+from tools.search_backups import (
+    _search_file,
+    is_likely_unsafe_regex,
+    main,
+    search_backup,
+)
 
 
 def _make_backup(tmp_path, files_dict, *, name="test.tar.gz") -> BackupRecord:
@@ -23,8 +26,6 @@ def _run_main(monkeypatch, backups, *arguments):
     """Invoke search_backups.main with a controlled argv and backup list."""
     monkeypatch.setattr("sys.argv", ["search_backups", *arguments])
     with patch("tools.search_backups.get_backups", return_value=backups):
-        from tools.search_backups import main
-
         return main()
 
 
@@ -53,18 +54,14 @@ class TestSearchBackup:
 
     def test_handles_binary_file_with_all_flag(self, tmp_path):
         """Binary files do not mark archive unreadable when yaml_only=False."""
-        tar_path = tmp_path / "binary.tar.gz"
-        with tarfile.open(tar_path, "w:gz") as tar:
-            bin_data = b"\xff\xfe binary byte\n"
-            ti = tarfile.TarInfo("data.bin")
-            ti.size = len(bin_data)
-            tar.addfile(ti, io.BytesIO(bin_data))
-
-            txt_data = b"matching pattern line\n"
-            ti2 = tarfile.TarInfo("notes.txt")
-            ti2.size = len(txt_data)
-            tar.addfile(ti2, io.BytesIO(txt_data))
-
+        tar_path = make_tar(
+            tmp_path,
+            {
+                "data.bin": b"\xff\xfe binary byte\n",
+                "notes.txt": b"matching pattern line\n",
+            },
+            name="binary.tar.gz",
+        )
         backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
         matches, unreadable = search_backup(
             backup, re.compile("pattern"), yaml_only=False
@@ -136,45 +133,30 @@ class TestSearchBackup:
 
     def test_skips_non_file_members(self, tmp_path):
         """Directories in tar should be skipped."""
-        tar_path = tmp_path / "test.tar.gz"
-        with tarfile.open(tar_path, "w:gz") as tar:
-            # Add a directory
-            info = tarfile.TarInfo(name="config/")
-            info.type = tarfile.DIRTYPE
-            tar.addfile(info)
-            # Add a file
-            data = b"match_line\n"
-            finfo = tarfile.TarInfo(name="config/test.yaml")
-            finfo.size = len(data)
-            tar.addfile(finfo, io.BytesIO(data))
-
+        tar_path = make_tar(
+            tmp_path,
+            {"config/": None, "config/test.yaml": "match_line\n"},
+        )
         backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
         matches, _u = search_backup(backup, re.compile("match"))
         assert len(matches) == 1
 
     def test_skips_binary_files(self, tmp_path):
         """Non-UTF8 files should be skipped without error."""
-        tar_path = tmp_path / "test.tar.gz"
-        with tarfile.open(tar_path, "w:gz") as tar:
-            # Binary content in a yaml file
-            data = b"\xff\xfe\x00\x01match\n"
-            info = tarfile.TarInfo(name="config/binary.yaml")
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
-
+        tar_path = make_tar(
+            tmp_path,
+            {"config/binary.yaml": b"\xff\xfe\x00\x01match\n"},
+        )
         backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
         matches, _u = search_backup(backup, re.compile("match"))
         assert matches == []
 
     def test_decode_failure_keeps_partial_matches_and_marks_archive(self, tmp_path):
         """A decode failure does not discard matches from earlier lines."""
-        tar_path = tmp_path / "test.tar.gz"
-        with tarfile.open(tar_path, "w:gz") as tar:
-            data = b"match\n\xff\n"
-            info = tarfile.TarInfo(name="config/binary.yaml")
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
-
+        tar_path = make_tar(
+            tmp_path,
+            {"config/binary.yaml": b"match\n\xff\n"},
+        )
         backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
         matches, unreadable = search_backup(backup, re.compile("match"))
         assert len(matches) == 1
@@ -229,14 +211,12 @@ class TestSearchBackupsMainFlow:
 
     def test_main_invalid_regex(self, capsys, monkeypatch):
         monkeypatch.setattr("sys.argv", ["search_backups", "[invalid"])
-        from tools.search_backups import main
 
         result = main()
         assert result == 1
 
     def test_main_unsafe_regex(self, capsys, monkeypatch):
         monkeypatch.setattr("sys.argv", ["search_backups", "(a+)+b"])
-        from tools.search_backups import main
 
         result = main()
         assert result == 1
@@ -249,15 +229,7 @@ class TestMemberNameNormalization:
 
     def test_output_strips_dot_slash_prefix(self, tmp_path):
         """Member names starting with './' are displayed without that prefix."""
-        import re
-
-        tar_path = tmp_path / "test.tar.gz"
-        with tarfile.open(tar_path, "w:gz") as tar:
-            data = b"sensor.test\n"
-            info = tarfile.TarInfo(name="./config/test.yaml")
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
-
+        tar_path = make_tar(tmp_path, {"./config/test.yaml": "sensor.test\n"})
         backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
         matches, unreadable = search_backup(backup, re.compile("sensor"))
         assert unreadable is False
@@ -272,26 +244,12 @@ class TestLazyTarIteration:
 
     def test_lazy_tar_iteration_handles_large_archive(self, tmp_path):
         """Non-file members do not prevent lazy scanning of real files."""
-        import re
-
-        # Create a tar with a symlink and a directory then a file
-        tar_path = tmp_path / "test.tar.gz"
-        with tarfile.open(tar_path, "w:gz") as tar:
-            # Add a directory
-            dir_info = tarfile.TarInfo(name="subdir/")
-            dir_info.type = tarfile.DIRTYPE
-            tar.addfile(dir_info)
-            # Add a symlink
-            link_info = tarfile.TarInfo(name="link_to_file")
-            link_info.type = tarfile.SYMTYPE
-            link_info.linkname = "config/test.yaml"
-            tar.addfile(link_info)
-            # Add a real file
-            data = b"match_this\n"
-            finfo = tarfile.TarInfo(name="config/test.yaml")
-            finfo.size = len(data)
-            tar.addfile(finfo, io.BytesIO(data))
-
+        # Create a tar with a directory and symlink then a file
+        tar_path = make_tar(
+            tmp_path,
+            {"subdir/": None, "config/test.yaml": "match_this\n"},
+            symlinks={"link_to_file": "config/test.yaml"},
+        )
         backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
         matches, unreadable = search_backup(backup, re.compile("match_this"))
         assert unreadable is False
@@ -322,7 +280,6 @@ class TestMatchResultShape:
 
     def test_internal_key_does_not_leak(self, tmp_path):
         """Returned matches contain public context fields, not internal bookkeeping."""
-        import re
 
         tar_path = make_tar(
             tmp_path,
@@ -342,8 +299,6 @@ class TestSearchTypeContracts:
     def test_search_inputs_are_typed_as_text_patterns_and_binary_streams(self):
         from typing import IO, get_type_hints
 
-        from tools.search_backups import _search_file, search_backup
-
         search_file_hints = get_type_hints(_search_file)
         search_backup_hints = get_type_hints(search_backup)
         assert search_file_hints["extracted"] == IO[bytes]
@@ -356,15 +311,11 @@ class TestTarExtractionSafety:
 
     def test_malicious_tar_member_name_does_not_escape(self, tmp_path):
         """Traversal member names must not write outside the temporary directory."""
-        import re
-
-        tar_path = tmp_path / "evil.tar.gz"
-        with tarfile.open(tar_path, "w:gz") as tar:
-            data = b"root:x:0:0\n"
-            info = tarfile.TarInfo(name="../../../etc/passwd")
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
-
+        tar_path = make_tar(
+            tmp_path,
+            {"../../../etc/passwd": "root:x:0:0\n"},
+            name="evil.tar.gz",
+        )
         before_files = set(tmp_path.rglob("*"))
         backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
         search_backup(backup, re.compile("root"))
@@ -376,21 +327,11 @@ class TestTarExtractionSafety:
 
     def test_symlink_member_not_followed(self, tmp_path):
         """Symlink members are skipped rather than extracted or followed."""
-        import re
-
-        tar_path = tmp_path / "test.tar.gz"
-        with tarfile.open(tar_path, "w:gz") as tar:
-            # Add a symlink pointing to a non-existent file
-            link_info = tarfile.TarInfo(name="bad_link.yaml")
-            link_info.type = tarfile.SYMTYPE
-            link_info.linkname = "/etc/passwd"
-            tar.addfile(link_info)
-            # Add a real file
-            data = b"actual_content\n"
-            finfo = tarfile.TarInfo(name="config/real.yaml")
-            finfo.size = len(data)
-            tar.addfile(finfo, io.BytesIO(data))
-
+        tar_path = make_tar(
+            tmp_path,
+            {"config/real.yaml": "actual_content\n"},
+            symlinks={"bad_link.yaml": "/etc/passwd"},
+        )
         backup = make_backup_record(tar_path, tar_path.name, datetime(2026, 2, 1))
         matches, unreadable = search_backup(backup, re.compile("actual_content"))
         assert unreadable is False

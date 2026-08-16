@@ -1,7 +1,6 @@
 """Tests for tools/backup_common.py — shared backup primitives."""
 
 import importlib
-import io
 import tarfile
 
 import pytest
@@ -26,40 +25,25 @@ class TestIterTarballFileMembers:
         assert name == "config/test.yaml"
 
     def test_skips_directories(self, tmp_path):
-        tar_path = tmp_path / "test.tar.gz"
-        with tarfile.open(tar_path, "w:gz") as tar:
-            info = tarfile.TarInfo(name="config/")
-            info.type = tarfile.DIRTYPE
-            tar.addfile(info)
-            data = b"content\n"
-            finfo = tarfile.TarInfo(name="config/test.yaml")
-            finfo.size = len(data)
-            tar.addfile(finfo, io.BytesIO(data))
+        tar_path = make_tar(
+            tmp_path,
+            {"config/": None, "config/test.yaml": "content\n"},
+        )
         result = list(iter_tarball_file_members(tar_path))
         assert len(result) == 1
         assert result[0][0] == "config/test.yaml"
 
     def test_normalizes_dot_slash_prefix(self, tmp_path):
-        tar_path = tmp_path / "test.tar.gz"
-        with tarfile.open(tar_path, "w:gz") as tar:
-            data = b"content\n"
-            info = tarfile.TarInfo(name="./config/test.yaml")
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
+        tar_path = make_tar(tmp_path, {"./config/test.yaml": "content\n"})
         result = list(iter_tarball_file_members(tar_path))
         assert result[0][0] == "config/test.yaml"
 
     def test_skips_symlinks(self, tmp_path):
-        tar_path = tmp_path / "test.tar.gz"
-        with tarfile.open(tar_path, "w:gz") as tar:
-            link_info = tarfile.TarInfo(name="link.yaml")
-            link_info.type = tarfile.SYMTYPE
-            link_info.linkname = "config/test.yaml"
-            tar.addfile(link_info)
-            data = b"content\n"
-            finfo = tarfile.TarInfo(name="config/real.yaml")
-            finfo.size = len(data)
-            tar.addfile(finfo, io.BytesIO(data))
+        tar_path = make_tar(
+            tmp_path,
+            {"config/real.yaml": "content\n"},
+            symlinks={"link.yaml": "config/test.yaml"},
+        )
         result = list(iter_tarball_file_members(tar_path))
         assert len(result) == 1
         assert result[0][0] == "config/real.yaml"
@@ -71,9 +55,7 @@ class TestIterTarballFileMembers:
             assert content == "hello world\n"
 
     def test_empty_tarball_yields_nothing(self, tmp_path):
-        tar_path = tmp_path / "empty.tar.gz"
-        with tarfile.open(tar_path, "w:gz"):
-            pass
+        tar_path = make_tar(tmp_path, {}, name="empty.tar.gz")
         result = list(iter_tarball_file_members(tar_path))
         assert result == []
 

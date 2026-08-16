@@ -168,23 +168,17 @@ class ValidatorBase(ABC):
         if self.quiet and not self.errors:
             return
 
-        if self.info:
-            print("INFO:", file=sys.stderr)
-            for info in self.info:
-                print(f"  \U0001f5c8\ufe0f  {info}", file=sys.stderr)
-            print(file=sys.stderr)
-
-        if self.errors:
-            print("ERRORS:", file=sys.stderr)
-            for error in self.errors:
-                print(f"  \u274c {error}", file=sys.stderr)
-            print(file=sys.stderr)
-
-        if self.warnings:
-            print("WARNINGS:", file=sys.stderr)
-            for warning in self.warnings:
-                print(f"  \u26a0\ufe0f  {warning}", file=sys.stderr)
-            print(file=sys.stderr)
+        sections = (
+            ("INFO:", self.info, "\U0001f5c8\ufe0f "),
+            ("ERRORS:", self.errors, "\u274c"),
+            ("WARNINGS:", self.warnings, "\u26a0\ufe0f "),
+        )
+        for header, items, emoji in sections:
+            if items:
+                print(header, file=sys.stderr)
+                for item in items:
+                    print(f"  {emoji} {item}", file=sys.stderr)
+                print(file=sys.stderr)
 
         if not self.errors and not self.warnings:
             print(f"\u2705 {self.validator_name} is valid!")

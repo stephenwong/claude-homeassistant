@@ -400,6 +400,8 @@ class TestRunHACheckConfig:
             assert validator.run_ha_check_config() is False
         assert any("bad config" in e for e in validator.errors)
 
+
+class TestValidate:
     def test_nonexistent_config_dir(self):
         v = HAOfficialValidator("/nonexistent/path")
         assert v.validate_all() is False
@@ -420,17 +422,16 @@ class TestRunHACheckConfig:
         ):
             assert validator.validate_all() is True
 
+    def test_non_subprocess_error_propagates(self, monkeypatch, tmp_path):
+        (tmp_path / "configuration.yaml").write_text("default_config:")
+        v = HAOfficialValidator(str(tmp_path))
 
-def test_non_subprocess_error_propagates(monkeypatch, tmp_path):
-    (tmp_path / "configuration.yaml").write_text("default_config:")
-    v = HAOfficialValidator(str(tmp_path))
+        def boom(*a, **k):
+            raise ValueError("unexpected logic bug")
 
-    def boom(*a, **k):
-        raise ValueError("unexpected logic bug")
-
-    monkeypatch.setattr("tools.validators.ha_official.subprocess.run", boom)
-    with pytest.raises(ValueError):
-        v.validate_all()
+        monkeypatch.setattr("tools.validators.ha_official.subprocess.run", boom)
+        with pytest.raises(ValueError):
+            v.validate_all()
 
 
 class TestTimeoutConfiguration:
@@ -496,6 +497,11 @@ class TestClassifyStdoutLine:
 
 class TestParseStderr:
     """Direct unit tests for the extracted _parse_stderr helper."""
+
+    def test_warning_indicator_line_routed_to_warnings(self, validator):
+        v = validator
+        v._parse_stderr("WARNING: something deprecated")
+        assert any("something deprecated" in w for w in v.warnings)
 
     def test_error_indicator_line_routed_to_errors(self, validator):
         v = validator

@@ -46,45 +46,30 @@ class TestDetectChangedServices:
         assert SERVICE_LABELS[FULL_RELOAD_SERVICE] == "all YAML config"
         assert SERVICE_LABELS[CORE_RELOAD_SERVICE] == "core config"
 
-    def test_automations_yaml_returns_automation_reload(self):
+    @pytest.mark.parametrize(
+        ("diff_output", "expected_services"),
+        [
+            ("config/automations.yaml\n", {"automation/reload"}),
+            ("config/scripts.yaml\n", {"script/reload"}),
+            ("config/scenes.yaml\n", {"scene/reload"}),
+            ("config/configuration.yaml\n", {FULL_RELOAD_SERVICE}),
+            ("config/secrets.yaml\n", {FULL_RELOAD_SERVICE}),
+            ("config/blueprints/foo.yaml\n", {FULL_RELOAD_SERVICE}),
+            (
+                "config/automations.yaml\nconfig/scripts.yaml\n",
+                {"automation/reload", "script/reload"},
+            ),
+            (
+                "config/automations.yaml\nconfig/blueprints/automation/motion.yaml\n",
+                {"automation/reload", FULL_RELOAD_SERVICE},
+            ),
+        ],
+    )
+    def test_diff_classification(self, diff_output: str, expected_services: set[str]):
         with patch("subprocess.run") as mock_run:
-            mock_run.side_effect = _diff_only(_nul("config/automations.yaml\n"))
+            mock_run.side_effect = _diff_only(_nul(diff_output))
             result = detect_changed_services()
-        assert result == {"automation/reload"}
-
-    def test_scripts_yaml_returns_script_reload(self):
-        with patch("subprocess.run") as mock_run:
-            mock_run.side_effect = _diff_only(_nul("config/scripts.yaml\n"))
-            result = detect_changed_services()
-        assert result == {"script/reload"}
-
-    def test_nested_yaml_files_return_full_reload(self):
-        with patch("subprocess.run") as mock_run:
-            mock_run.side_effect = _diff_only(
-                _nul(
-                    "config/automations.yaml\nconfig/blueprints/automation/motion.yaml\n"
-                )
-            )
-            result = detect_changed_services()
-        assert result == {"automation/reload", FULL_RELOAD_SERVICE}
-
-    def test_scenes_yaml_returns_scene_reload(self):
-        with patch("subprocess.run") as mock_run:
-            mock_run.side_effect = _diff_only(_nul("config/scenes.yaml\n"))
-            result = detect_changed_services()
-        assert result == {"scene/reload"}
-
-    def test_configuration_yaml_returns_reload_all(self):
-        with patch("subprocess.run") as mock_run:
-            mock_run.side_effect = _diff_only(_nul("config/configuration.yaml\n"))
-            result = detect_changed_services()
-        assert result == {FULL_RELOAD_SERVICE}
-
-    def test_unknown_yaml_returns_reload_all(self):
-        with patch("subprocess.run") as mock_run:
-            mock_run.side_effect = _diff_only(_nul("config/secrets.yaml\n"))
-            result = detect_changed_services()
-        assert result == {FULL_RELOAD_SERVICE}
+        assert result == expected_services
 
     def test_full_reload_short_circuits_domain_reloads(self):
         client = _make_client()
@@ -98,20 +83,6 @@ class TestDetectChangedServices:
         client.post.assert_called_once_with(
             "/api/services/homeassistant/reload_all", json={}
         )
-
-    def test_subdir_file_triggers_full_reload(self):
-        with patch("subprocess.run") as mock_run:
-            mock_run.side_effect = _diff_only(_nul("config/blueprints/foo.yaml\n"))
-            result = detect_changed_services()
-        assert result == {FULL_RELOAD_SERVICE}
-
-    def test_multiple_files_returns_multiple_services(self):
-        with patch("subprocess.run") as mock_run:
-            mock_run.side_effect = _diff_only(
-                _nul("config/automations.yaml\nconfig/scripts.yaml\n")
-            )
-            result = detect_changed_services()
-        assert result == {"automation/reload", "script/reload"}
 
     def test_modified_added_and_deleted_statuses_are_classified(self):
         with patch("subprocess.run") as mock_run:

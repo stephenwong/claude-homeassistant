@@ -219,17 +219,23 @@ class EntityDefinitionExtractor:
         self._config_defined_entities = entities
         return self._config_defined_entities
 
+    def _is_safe_include_path(self, target: Path) -> bool:
+        """Check if *target* is within config_dir, logging a warning if outside."""
+        try:
+            target.resolve().relative_to(self.config_dir)
+            return True
+        except ValueError:
+            self.warnings.append(
+                f"{target}: Include path is outside the config directory"
+            )
+            return False
+
     def _load_yaml_glob(self, target: Path) -> list[tuple[Path, Any]]:
         """Load every ``*.yaml`` under *target* (sorted),
         returning ``(path, data)`` pairs."""
         loaded: list[tuple[Path, Any]] = []
         for f in sorted(target.glob("*.yaml")):
-            try:
-                f.resolve().relative_to(self.config_dir)
-            except ValueError:
-                self.warnings.append(
-                    f"{f}: Include path is outside the config directory"
-                )
+            if not self._is_safe_include_path(f):
                 continue
             data = self._load_yaml_file(f)
             if data is not None:
@@ -251,12 +257,7 @@ class EntityDefinitionExtractor:
             return None
         tag, raw = parts[0], parts[1].strip().rstrip("/")
         target = (self.config_dir / raw).resolve()
-        try:
-            target.relative_to(self.config_dir)
-        except ValueError:
-            self.warnings.append(
-                f"{target}: Include path is outside the config directory"
-            )
+        if not self._is_safe_include_path(target):
             return None
         try:
             if tag in ("!include",):
@@ -313,6 +314,15 @@ class EntityDefinitionExtractor:
         data = self._load_yaml_file(config_file)
         return data if isinstance(data, dict) else None
 
+    @staticmethod
+    def _as_dict_list(data: Any) -> list[dict]:
+        """Normalize a dict, list of dicts, or other payload into a list of dicts."""
+        if isinstance(data, list):
+            return [x for x in data if isinstance(x, dict)]
+        if isinstance(data, dict):
+            return [data]
+        return []
+
     def _record_extraction_warning(self, source: Path, error: Exception) -> None:
         """Record entity extraction errors without hiding them."""
         self.warnings.append(
@@ -327,13 +337,8 @@ class EntityDefinitionExtractor:
             return entities
 
         # Extract group entities
-        if "group" in config_data and isinstance(config_data["group"], dict):
-            for group_name in config_data["group"]:
-                if isinstance(group_name, str) and self._is_valid_object_id(group_name):
-                    entities.add(f"group.{group_name}")
-
-        # Extract input helpers
-        for input_type in _INPUT_HELPER_DOMAINS:
+        # Extract group and input helpers
+        for input_type in ("group", *_INPUT_HELPER_DOMAINS):
             if input_type in config_data and isinstance(config_data[input_type], dict):
                 for name in config_data[input_type]:
                     if isinstance(name, str) and self._is_valid_object_id(name):
@@ -342,11 +347,8 @@ class EntityDefinitionExtractor:
         # Extract template entities
         if "template" in config_data:
             template_data = config_data["template"]
-            if isinstance(template_data, list):
-                for item in template_data:
-                    entities.update(self._extract_template_entities(item))
-            elif isinstance(template_data, dict):
-                entities.update(self._extract_template_entities(template_data))
+            for item in self._as_dict_list(template_data):
+                entities.update(self._extract_template_entities(item))
 
         # Extract platform-based sensors/binary_sensors
         for sensor_type in _PLATFORM_SENSOR_DOMAINS:
@@ -401,27 +403,20 @@ class EntityDefinitionExtractor:
         for entity_type in _TEMPLATE_ENTITY_DOMAINS:
             if entity_type in template_config:
                 type_data = template_config[entity_type]
-                if isinstance(type_data, list):
-                    items = type_data
-                elif isinstance(type_data, dict):
-                    items = [type_data]
-                else:
-                    items = []
-                for item in items:
-                    if isinstance(item, dict):
-                        default_entity_id = item.get("default_entity_id")
-                        name = item.get("name", "")
-                        if default_entity_id:
-                            default_entity_id = str(default_entity_id)
-                            if "." in default_entity_id:
-                                if self._is_valid_entity_id(default_entity_id):
-                                    entities.add(default_entity_id)
-                            elif self._is_valid_object_id(default_entity_id):
-                                entities.add(f"{entity_type}.{default_entity_id}")
-                        elif name:
-                            object_id = self._slugify_object_id(str(name))
-                            if object_id:
-                                entities.add(f"{entity_type}.{object_id}")
+                for item in self._as_dict_list(type_data):
+                    default_entity_id = item.get("default_entity_id")
+                    name = item.get("name", "")
+                    if default_entity_id:
+                        default_entity_id = str(default_entity_id)
+                        if "." in default_entity_id:
+                            if self._is_valid_entity_id(default_entity_id):
+                                entities.add(default_entity_id)
+                        elif self._is_valid_object_id(default_entity_id):
+                            entities.add(f"{entity_type}.{default_entity_id}")
+                    elif name:
+                        object_id = self._slugify_object_id(str(name))
+                        if object_id:
+                            entities.add(f"{entity_type}.{object_id}")
 
         return entities
 
@@ -461,17 +456,8 @@ class EntityDefinitionExtractor:
         ``id`` falls back to slugifying the id.
         """
         raw = self._resolve_config_or_sidecar(config_data, config_key, file_name)
-        if isinstance(raw, list):
-            items = raw
-        elif isinstance(raw, dict):
-            items = [raw]
-        else:
-            items = []
-
         entities: set[str] = set()
-        for item in items:
-            if not isinstance(item, dict):
-                continue
+        for item in self._as_dict_list(raw):
             name = item.get(name_field, "")
             if name:
                 entity_id = self._make_entity_id(domain, name)
