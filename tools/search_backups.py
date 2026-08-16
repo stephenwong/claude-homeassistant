@@ -32,17 +32,19 @@ class _MatchResult(TypedDict):
     context_after: NotRequired[list[str]]
 
 
+_NESTED_QUANTIFIER_RES = (
+    re.compile(r"\([^)]*[+*][^)]*\)[+*]"),  # e.g. (a+)+, (.*)+
+    re.compile(r"\([^)]*\{[^}]+\}[^)]*\)[+*]"),  # e.g. (a{1,3})+
+)
+
+
 def is_likely_unsafe_regex(pattern: str) -> bool:
     """Heuristic check for patterns that MIGHT cause ReDoS.
 
     Only catches the classic ``(a+)+`` / ``(a*)*`` shapes. NOT a complete
     ReDoS detector — pair with a watchdog timeout at the call site.
     """
-    nested_quantifier_patterns = [
-        r"\([^)]*[+*][^)]*\)[+*]",  # e.g. (a+)+, (.*)+
-        r"\([^)]*\{[^}]+\}[^)]*\)[+*]",  # e.g. (a{1,3})+
-    ]
-    return any(re.search(expr, pattern) for expr in nested_quantifier_patterns)
+    return any(expr.search(pattern) for expr in _NESTED_QUANTIFIER_RES)
 
 
 def _search_file(

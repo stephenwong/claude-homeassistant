@@ -6,6 +6,7 @@ from tests.tools.trace_support import (
     _mock_trace_entry,
     make_args,
 )
+from tools.commands.trace import run
 
 
 class TestEntityResolution:
@@ -28,8 +29,6 @@ class TestEntityResolution:
         mock_ws.command.side_effect = _make_ws_command_side_effect(
             traces=[_mock_trace_entry(item_id="baz_qux")],
         )
-
-        from tools.commands.trace import run
 
         exit_code = run(make_args(entity_id="automation.foo_bar"))
         assert exit_code == 0
@@ -74,8 +73,6 @@ class TestEntityResolution:
             traces=[_mock_trace_entry(item_id="my_old_auto", run_id="run789")],
         )
 
-        from tools.commands.trace import run
-
         exit_code = run(make_args(entity_id="automation.my_old_auto"))
         assert exit_code == 0
 
@@ -104,7 +101,6 @@ class TestEntityResolution:
                 ),
             ]
         )
-        from tools.commands.trace import run
 
         assert run(make_args(entity_id="automation.auto")) == 0
         mock_ws.command.assert_any_call(
@@ -124,8 +120,6 @@ class TestEntityResolution:
         # trace/list returns empty for this item_id.
         mock_ws.command.side_effect = _make_ws_command_side_effect(traces=[])
 
-        from tools.commands.trace import run
-
         exit_code = run(make_args(entity_id="automation.never_triggered"))
         assert exit_code == 1
 
@@ -141,8 +135,6 @@ class TestEntityResolution:
         )
         # No traces match the slug-stripped id either.
         mock_ws.command.side_effect = _make_ws_command_side_effect(traces=[])
-
-        from tools.commands.trace import run
 
         exit_code = run(make_args(entity_id="automation.nope"))
         assert exit_code == 1

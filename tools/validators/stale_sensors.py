@@ -6,9 +6,7 @@ virtual platforms using the local core.entity_registry, and identifies sensors
 whose last update or radio check-in exceeds the configured threshold.
 """
 
-import json
 import os
-import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -111,37 +109,23 @@ class StaleSensorValidator(ValidatorBase):
             )
             return None
 
-        last_error: Exception | None = None
-        for attempt in range(2):
-            try:
-                return load_storage_registry(
-                    registry_file, list_key="entities", key_field="entity_id"
-                )
-            except json.JSONDecodeError as e:
-                last_error = e
-                if attempt == 0:
-                    time.sleep(0.1)
-                    continue
-            except (OSError, KeyError, TypeError, ValueError, AttributeError) as e:
-                last_error = e
-            break
-
-        if last_error is not None:
+        try:
+            return load_storage_registry(
+                registry_file, list_key="entities", key_field="entity_id"
+            )
+        except (OSError, KeyError, TypeError, ValueError, AttributeError) as e:
             self.warnings.append(
-                f"Failed to read entity registry: {last_error}. "
+                f"Failed to read entity registry: {e}. "
                 "Falling back to state-only analysis."
             )
-        return None
+            return None
 
     def _parse_iso_string(self, s: str) -> datetime | None:
         """Parse an ISO-8601 string into an offset-aware datetime.
 
-        Normalises a trailing ``Z`` to ``+00:00``, attaches UTC to naive
-        datetimes, and returns ``None`` on parse failure (no warning —
-        callers decide whether to warn).
+        Attaches UTC to naive datetimes, and returns ``None`` on parse
+        failure (no warning — callers decide whether to warn).
         """
-        if s.endswith("Z"):
-            s = s[:-1] + "+00:00"
         try:
             dt = datetime.fromisoformat(s)
         except ValueError:

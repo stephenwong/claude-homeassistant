@@ -6,31 +6,7 @@ from unittest.mock import Mock, patch
 import pytest
 import requests
 
-from tools._dev.api_diagnostic import (
-    _request,
-    _request_with_failure_handling,
-    get_config,
-    main,
-    show_websocket_info,
-)
-from tools._dev.api_diagnostic import (
-    test_api_connection as diagnostic_api_connection,
-)
-from tools._dev.api_diagnostic import (
-    test_api_endpoints as diagnostic_api_endpoints,
-)
-from tools._dev.api_diagnostic import (
-    test_entity_registry_read as diagnostic_entity_registry_read,
-)
-from tools._dev.api_diagnostic import (
-    test_entity_rename as diagnostic_entity_rename,
-)
-from tools._dev.api_diagnostic import (
-    test_service_call_method as diagnostic_service_call_method,
-)
-from tools._dev.api_diagnostic import (
-    test_states_endpoint as diagnostic_states_endpoint,
-)
+from tools._dev import api_diagnostic as diag
 
 
 def test_get_config_returns_typed_runtime_shape():
@@ -38,7 +14,7 @@ def test_get_config_returns_typed_runtime_shape():
         "tools._dev.api_diagnostic.get_ha_config",
         return_value=("https://ha.example.com", "secret", 9),
     ) as shared_config:
-        assert get_config() == {
+        assert diag.get_config() == {
             "ha_url": "https://ha.example.com",
             "token": "secret",
             "request_timeout": 9,
@@ -50,7 +26,7 @@ def test_get_config_returns_typed_runtime_shape():
 def test_get_config_keeps_timeout_warning_on_stdout(monkeypatch, capsys):
     monkeypatch.setenv("HA_REQUEST_TIMEOUT", "not-a-number")
     with patch("tools.common.load_env_file"):
-        assert get_config()["request_timeout"] == 10
+        assert diag.get_config()["request_timeout"] == 10
 
     captured = capsys.readouterr()
     assert captured.out == (
@@ -65,7 +41,7 @@ def test_request_centralizes_get_transport_contract():
         "tools._dev.api_diagnostic.requests.request", return_value=response
     ) as request:
         assert (
-            _request(
+            diag._request(
                 "http://ha.example.com:8123",
                 "secret",
                 "/api/states",
@@ -88,7 +64,7 @@ def test_request_centralizes_post_transport_contract():
     with patch(
         "tools._dev.api_diagnostic.requests.request", return_value=response
     ) as request:
-        _request(
+        diag._request(
             "https://ha.example.com",
             "secret",
             "/api/service",
@@ -114,7 +90,7 @@ def test_request_normalizes_base_url_path_and_query():
     with patch(
         "tools._dev.api_diagnostic.requests.request", return_value=response
     ) as request:
-        _request(
+        diag._request(
             "https://ha.example.com/ha/?stale=1#fragment",
             "secret",
             "/api/states",
@@ -131,7 +107,7 @@ def test_request_propagates_transport_errors():
         ),
         pytest.raises(requests.RequestException, match="offline"),
     ):
-        _request("http://ha.example.com", "secret", "/api/")
+        diag._request("http://ha.example.com", "secret", "/api/")
 
 
 def test_request_with_failure_handling_preserves_output_and_sentinel(capsys):
@@ -142,7 +118,7 @@ def test_request_with_failure_handling_preserves_output_and_sentinel(capsys):
         side_effect=requests.RequestException("offline"),
     ):
         assert (
-            _request_with_failure_handling(
+            diag._request_with_failure_handling(
                 "http://ha",
                 "token",
                 "/api/",
@@ -163,7 +139,7 @@ def test_api_connection_handles_request_failure(capsys):
         "tools._dev.api_diagnostic._request",
         side_effect=requests.RequestException("offline"),
     ):
-        assert diagnostic_api_connection("http://ha", "token") is False
+        assert diag.test_api_connection("http://ha", "token") is False
 
     captured = capsys.readouterr()
     assert captured.out == "🔗 Testing API Connection...\n   Exception: offline\n"
@@ -176,7 +152,7 @@ def test_api_endpoints_handles_request_failure_and_continues(capsys):
         "tools._dev.api_diagnostic._request",
         side_effect=[requests.RequestException("offline"), *([response] * 6)],
     ):
-        assert diagnostic_api_endpoints("http://ha", "token") == []
+        assert diag.test_api_endpoints("http://ha", "token") == []
 
     captured = capsys.readouterr()
     assert "   ❌ Exception: offline\n" in captured.out
@@ -191,7 +167,7 @@ def test_entity_registry_read_handles_request_failure(capsys):
         "tools._dev.api_diagnostic._request",
         side_effect=requests.RequestException("offline"),
     ):
-        assert diagnostic_entity_registry_read("http://ha", "token") == []
+        assert diag.test_entity_registry_read("http://ha", "token") == []
 
     captured = capsys.readouterr()
     assert captured.out == (
@@ -205,7 +181,7 @@ def test_states_endpoint_handles_request_failure(capsys):
         "tools._dev.api_diagnostic._request",
         side_effect=requests.RequestException("offline"),
     ):
-        assert diagnostic_states_endpoint("http://ha", "token") is False
+        assert diag.test_states_endpoint("http://ha", "token") is False
 
     captured = capsys.readouterr()
     assert captured.out == (
@@ -233,17 +209,17 @@ def test_states_endpoint_handles_request_failure(capsys):
     ],
 )
 def test_websocket_guidance_uses_configured_ha_url(ha_url, websocket_url, capsys):
-    show_websocket_info(ha_url)
+    diag.show_websocket_info(ha_url)
     assert websocket_url in capsys.readouterr().out
 
 
 def test_mutating_diagnostic_steps_are_read_only():
     with patch("tools._dev.api_diagnostic._request") as request:
         assert (
-            diagnostic_entity_rename("http://ha", "token", [{"entity_id": "light.x"}])
+            diag.test_entity_rename("http://ha", "token", [{"entity_id": "light.x"}])
             is False
         )
-        diagnostic_service_call_method("http://ha", "token", [{"entity_id": "light.x"}])
+        diag.test_service_call_method("http://ha", "token", [{"entity_id": "light.x"}])
     request.assert_not_called()
 
 
@@ -255,4 +231,4 @@ def test_main_returns_failure_when_connection_fails(monkeypatch):
     monkeypatch.setattr(
         "tools._dev.api_diagnostic.test_api_connection", lambda *_: False
     )
-    assert main() == 1
+    assert diag.main() == 1

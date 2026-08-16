@@ -2,28 +2,26 @@
 
 import pytest
 
-from tools import format_yaml
+from tools import common, format_yaml
 
 
-def test_formats_yaml_and_preserves_permissions(tmp_path, monkeypatch):
+def test_formats_yaml_and_preserves_permissions(tmp_path):
     path = tmp_path / "config.yaml"
     path.write_text("root:\n    value: 'quoted'\n")
     path.chmod(0o640)
-    monkeypatch.setattr("sys.argv", ["format_yaml", str(path)])
 
-    assert format_yaml.main() == 0
+    assert format_yaml.main([str(path)]) == 0
     formatted = path.read_text()
     assert formatted == "root:\n  value: 'quoted'\n"
     assert path.stat().st_mode & 0o777 == 0o640
 
 
-def test_empty_yaml_is_left_unchanged(tmp_path, monkeypatch):
+def test_empty_yaml_is_left_unchanged(tmp_path):
     path = tmp_path / "empty.yaml"
     path.write_text("# comment only\n")
     before = path.read_text()
-    monkeypatch.setattr("sys.argv", ["format_yaml", str(path)])
 
-    assert format_yaml.main() == 0
+    assert format_yaml.main([str(path)]) == 0
     assert path.read_text() == before
 
 
@@ -42,17 +40,14 @@ def test_dump_failure_preserves_original(tmp_path, monkeypatch):
             raise OSError("disk full")
 
     monkeypatch.setattr(format_yaml, "YAML", FailingYaml)
-    monkeypatch.setattr("sys.argv", ["format_yaml", str(path)])
     with pytest.raises(OSError, match="disk full"):
-        format_yaml.main()
+        format_yaml.main([str(path)])
 
     assert path.read_text() == before
     assert not any(p.name.startswith("tmp") for p in tmp_path.iterdir())
 
 
 def test_replace_failure_preserves_original_and_cleans_temp(tmp_path, monkeypatch):
-    from tools import common
-
     path = tmp_path / "config.yaml"
     path.write_text("root: value\n")
     before = path.read_text()
@@ -61,37 +56,31 @@ def test_replace_failure_preserves_original_and_cleans_temp(tmp_path, monkeypatc
         raise OSError("rename failed")
 
     monkeypatch.setattr(common.os, "replace", fail_replace)
-    monkeypatch.setattr("sys.argv", ["format_yaml", str(path)])
 
     with pytest.raises(OSError, match="rename failed"):
-        format_yaml.main()
+        format_yaml.main([str(path)])
 
     assert path.read_text() == before
     assert len(list(tmp_path.iterdir())) == 1
 
 
-def test_missing_arguments_returns_two(monkeypatch, capsys):
-    monkeypatch.setattr("sys.argv", ["format_yaml"])
-    assert format_yaml.main() == 2
+def test_missing_arguments_returns_two(capsys):
+    assert format_yaml.main([]) == 2
     captured = capsys.readouterr()
     assert "Usage:" in captured.err
 
 
-def test_missing_file_returns_one(tmp_path, monkeypatch, capsys):
+def test_missing_file_returns_one(tmp_path, capsys):
     missing_path = tmp_path / "nonexistent.yaml"
-    monkeypatch.setattr("sys.argv", ["format_yaml", str(missing_path)])
-    assert format_yaml.main() == 1
+    assert format_yaml.main([str(missing_path)]) == 1
     captured = capsys.readouterr()
     assert "Error reading" in captured.err
 
 
-def test_malformed_yaml_syntax_returns_one_with_clean_stderr(
-    tmp_path, monkeypatch, capsys
-):
+def test_malformed_yaml_syntax_returns_one_with_clean_stderr(tmp_path, capsys):
     path = tmp_path / "bad.yaml"
     path.write_text("root: [unclosed\n")
-    monkeypatch.setattr("sys.argv", ["format_yaml", str(path)])
 
-    assert format_yaml.main() == 1
+    assert format_yaml.main([str(path)]) == 1
     captured = capsys.readouterr()
     assert "Error parsing" in captured.err

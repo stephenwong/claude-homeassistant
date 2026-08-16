@@ -9,13 +9,11 @@ import pytest
 
 from tools.cache import (
     CACHE_SCHEMA_VERSION,
-    _blob_hash,
     _compute_hash_status,
     cache_path,
     compute_hash,
-    load_blob,
+    compute_hash_status,
     load_cache,
-    save_blob,
     save_cache,
 )
 
@@ -375,84 +373,31 @@ class TestM2AtomicSaveCache:
         assert calls == 2
 
 
-class TestSaveBlobErrors:
-    @pytest.mark.parametrize(
-        ("save_function", "name", "error"),
-        [
-            (save_blob, "testkey", "permission denied"),
-            (save_cache, "Foo", "disk full"),
-        ],
-        ids=["blob", "validator"],
-    )
-    def test_save_warns_on_oserror(self, tmp_path, capsys, save_function, name, error):
+class TestSaveCacheErrors:
+    def test_save_warns_on_oserror(self, tmp_path, capsys):
         """Cache writers print WARN to stderr when file writes fail."""
-        with patch("builtins.open", side_effect=OSError(error)):
-            if save_function is save_blob:
-                save_function(tmp_path, name, {"output": "data"})
-            else:
-                save_function(tmp_path, name, "Test", "hash", True, 0.5)
+        with patch("builtins.open", side_effect=OSError("disk full")):
+            save_cache(tmp_path, "Foo", "Test", "hash", True, 0.5)
         _, err = capsys.readouterr()
         assert "WARN" in err
-        assert name in err
+        assert "Foo" in err
 
 
-class TestBlobCache:
-    """Tests for blob cache (save_blob / load_blob / _blob_hash)."""
+class TestComputeHashStatus:
+    """Tests for public compute_hash_status API."""
 
-    def test_blob_hash_empty(self):
-        h = _blob_hash([])
-        assert isinstance(h, str)
-        assert len(h) == 64  # SHA256 hex
+    def test_compute_hash_status_success(self, tmp_path):
+        f = tmp_path / "test.yaml"
+        f.write_text("hello: world")
+        digest, complete = compute_hash_status(tmp_path, ["*.yaml"])
+        assert isinstance(digest, str)
+        assert len(digest) == 64
+        assert complete is True
 
-    def test_blob_hash_deterministic(self):
-        h1 = _blob_hash(["hello", b"world"])
-        h2 = _blob_hash(["hello", b"world"])
-        assert h1 == h2
-
-    def test_blob_hash_different_inputs_different(self):
-        h1 = _blob_hash(["abc"])
-        h2 = _blob_hash(["ab", "c"])
-        assert h1 != h2
-
-    def test_blob_hash_mixed_str_bytes(self):
-        h = _blob_hash(["domain", b"\x00", "light"])
-        assert isinstance(h, str)
-        assert len(h) == 64
-
-    def test_save_and_load_roundtrip(self, tmp_path):
-        data = {"output": '{"a": 1}'}
-        save_blob(tmp_path, "testkey", data)
-        loaded = load_blob(tmp_path, "testkey")
-        assert loaded == data
-
-    def test_load_missing_returns_none(self, tmp_path):
-        assert load_blob(tmp_path, "nonexistent") is None
-
-    def test_load_corrupt_returns_none(self, tmp_path):
-        cache_dir = tmp_path / ".cache" / "entities"
-        cache_dir.mkdir(parents=True)
-        (cache_dir / "bad.json").write_text("{invalid")
-        assert load_blob(tmp_path, "bad") is None
-
-    def test_load_undecodable_returns_none(self, tmp_path):
-        cache_dir = tmp_path / ".cache" / "entities"
-        cache_dir.mkdir(parents=True)
-        (cache_dir / "bad.json").write_bytes(b"\xff\xfe")
-        assert load_blob(tmp_path, "bad") is None
-
-    def test_save_creates_directory(self, tmp_path):
-        data = {"output": "test"}
-        save_blob(tmp_path, "x", data)
-        assert (tmp_path / ".cache" / "entities" / "x.json").is_file()
-
-    def test_save_and_load_overwrite(self, tmp_path):
-        save_blob(tmp_path, "k", {"output": "v1"})
-        save_blob(tmp_path, "k", {"output": "v2"})
-        loaded = load_blob(tmp_path, "k")
-        assert loaded == {"output": "v2"}
-
-    def test_blob_hash_delimiter_prevents_collision(self):
-        """Without a delimiter, adjacent keys could merge. Verify they don't."""
-        h1 = _blob_hash(["ab", "c"])
-        h2 = _blob_hash(["a", "bc"])
-        assert h1 != h2
+    def test_compute_hash_delegates_to_compute_hash_status(self, tmp_path):
+        f = tmp_path / "test.yaml"
+        f.write_text("hello: world")
+        assert (
+            compute_hash(tmp_path, ["*.yaml"])
+            == compute_hash_status(tmp_path, ["*.yaml"])[0]
+        )

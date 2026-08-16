@@ -11,6 +11,14 @@ from tests.tools.trace_support import (
     make_args,
 )
 from tools.commands import trace as trace_cmd
+from tools.commands.trace import (
+    _cap_trace_dict,
+    _prune_trace_entries,
+    _shape_list_data,
+    _shape_single_entity_data,
+    _summarize_trace_list,
+    _validate_args,
+)
 from tools.common import HARequestError
 
 
@@ -21,7 +29,6 @@ def test_cap_trace_dict_includes_markers_in_fit_check():
     the fit-check loop didn't include the _truncated/dropped_steps/kept_steps
     markers that get appended after the loop.
     """
-    from tools.commands.trace import _cap_trace_dict
 
     # Tuned so that a trial with 2 steps (out of 3) fits within max_chars=500,
     # but adding the ~50-char marker pushes it over 500 — exposing the bug
@@ -212,8 +219,6 @@ class TestRun:
         assert {"script_execution", "last_step", "domain"}.isdisjoint(parsed[0].keys())
 
     def test_summarize_trace_list_projects_and_deduplicates(self):
-        from tools.commands.trace import _summarize_trace_list
-
         traces = [
             {
                 "item_id": "same",
@@ -239,7 +244,6 @@ class TestRun:
         ]
 
     def test_summarize_trace_list_orders_timezone_offsets_by_instant(self):
-        from tools.commands.trace import _summarize_trace_list
 
         traces = [
             {
@@ -676,8 +680,6 @@ class TestSummaryModeSingle:
         assert trace_cmd.run(args) == 0
 
     def test_prune_malformed_trace_preserves_entries_and_strips_attributes(self):
-        from tools.commands.trace import _prune_trace_entries
-
         trace = {
             "not_a_list": "unchanged",
             "entries": [
@@ -830,25 +832,17 @@ class TestValidateArgs:
         return Namespace(**defaults)
 
     def test_invalid_entity_id_returns_1(self, capsys):
-        from tools.commands.trace import _validate_args
-
         assert _validate_args(self._args(entity_id="not-valid"), summary=False) == 1
         assert "Invalid entity_id" in capsys.readouterr().err
 
     def test_first_less_than_1_returns_1(self, capsys):
-        from tools.commands.trace import _validate_args
-
         assert _validate_args(self._args(first=0), summary=False) == 1
         assert "--first must be >= 1" in capsys.readouterr().err
 
     def test_valid_args_returns_none(self):
-        from tools.commands.trace import _validate_args
-
         assert _validate_args(self._args(), summary=False) is None
 
     def test_first_with_entity_id_warns_in_verbose(self, capsys):
-        from tools.commands.trace import _validate_args
-
         assert (
             _validate_args(
                 self._args(entity_id="automation.foo", first=5), summary=False
@@ -862,8 +856,6 @@ class TestShapeSingleEntityData:
     """Direct unit tests for _shape_single_entity_data."""
 
     def test_summary_strips_config_and_blueprint_inputs(self):
-        from tools.commands.trace import _shape_single_entity_data
-
         data = {
             "config": {"x": 1},
             "blueprint_inputs": {"y": 2},
@@ -877,24 +869,18 @@ class TestShapeSingleEntityData:
         assert out["extra"] == 1
 
     def test_verbose_keeps_config(self):
-        from tools.commands.trace import _shape_single_entity_data
-
         data = {"config": {"x": 1}, "trace": {}}
         args = Namespace(pick=None, max_chars=None, pretty=False)
         out = _shape_single_entity_data(data, args, summary=False)
         assert "config" in out
 
     def test_pick_keeps_only_specified_keys(self):
-        from tools.commands.trace import _shape_single_entity_data
-
         data = {"config": "x", "trace": {}, "extra": "keep"}
         args = Namespace(pick="extra", max_chars=None, pretty=False)
         out = _shape_single_entity_data(data, args, summary=True)
         assert out == {"extra": "keep"}
 
     def test_max_chars_invokes_cap_trace_dict(self):
-        from tools.commands.trace import _shape_single_entity_data
-
         data = {"trace": {f"step_{i}": {"x": i} for i in range(50)}}
         args = Namespace(pick=None, max_chars=200, pretty=False)
         out = _shape_single_entity_data(data, args, summary=True)
@@ -905,24 +891,18 @@ class TestShapeListData:
     """Direct unit tests for _shape_list_data."""
 
     def test_first_truncates_list(self):
-        from tools.commands.trace import _shape_list_data
-
         data = [{"i": i} for i in range(10)]
         args = Namespace(first=3, pick=None, max_chars=None)
         out = _shape_list_data(data, args, summary=False)
         assert len(out) == 3
 
     def test_pick_projects_keys(self):
-        from tools.commands.trace import _shape_list_data
-
         data = [{"a": 1, "b": 2}, {"a": 3, "b": 4}]
         args = Namespace(first=None, pick="a", max_chars=None)
         out = _shape_list_data(data, args, summary=False)
         assert out == [{"a": 1}, {"a": 3}]
 
     def test_no_shaping_flags_returns_unchanged(self):
-        from tools.commands.trace import _shape_list_data
-
         data = [{"x": 1}]
         args = Namespace(first=None, pick=None, max_chars=None)
         assert _shape_list_data(data, args, summary=False) == data

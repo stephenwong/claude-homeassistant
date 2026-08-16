@@ -78,10 +78,6 @@ class ServiceValidator(ValidatorBase):
         """Service validation checks live services so caching is never valid."""
         return []
 
-    @staticmethod
-    def _looks_dynamic(value: str) -> bool:
-        return is_dynamic_or_tag(value)
-
     @classmethod
     def _extract_services(
         cls, data: Any, path: str, out: list[tuple[str, str]]
@@ -94,7 +90,7 @@ class ServiceValidator(ValidatorBase):
             for k, v in data.items():
                 p = f"{path}.{k}" if path else str(k)
                 if k in _STEP_SERVICE_KEYS and isinstance(v, str):
-                    if not cls._looks_dynamic(v):
+                    if not is_dynamic_or_tag(v):
                         out.append((v, p))
                 elif k in _NO_RECURSE:
                     continue

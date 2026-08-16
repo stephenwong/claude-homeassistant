@@ -739,20 +739,6 @@ class TestClassifyChangedFiles:
 class TestRunGitDiff:
     """Direct unit tests for _run_git_diff."""
 
-    def test_top_level_config_basename_handles_nested_and_custom_dirs(self):
-        from tools.reload_config import _top_level_config_basename
-
-        assert _top_level_config_basename("config/automations.yaml", "config") == (
-            "automations.yaml"
-        )
-        assert (
-            _top_level_config_basename("config/blueprints/foo.yaml", "config") is None
-        )
-        assert (
-            _top_level_config_basename("custom/ha/configuration.yaml", "custom/ha")
-            == "configuration.yaml"
-        )
-
     def test_returns_basenames_for_diff_paths(self):
         from unittest.mock import MagicMock, patch
 

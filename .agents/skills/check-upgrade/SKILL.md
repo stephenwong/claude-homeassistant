@@ -168,9 +168,9 @@ Use `RELEVANT`, `POSSIBLY RELEVANT`, or `NOT RELEVANT` for every feature. `HIGH 
 
 Write one report at:
 
-`working-docs/upgrades/check-upgrade-<target-version>-<YYYYMMDD>.md`
+`working-docs/upgrades/YYYY-MM-DD-check-upgrade-<target-version>.md`
 
-Create `working-docs/upgrades/` if needed. The report must contain:
+Create `working-docs/upgrades/` if needed. If that filename already exists, append a numeric suffix before `.md`, starting with `-2` and incrementing until an unused filename is found (e.g. `YYYY-MM-DD-check-upgrade-<target-version>-2.md`). The report must contain:
 
 1. `Upgrade summary`: current version, target version, evidence source/timestamp, overall risk, and a short recommendation qualified by any incomplete evidence.
 2. `Coverage`: every release version reviewed, source URL, publication date (or explicitly `unavailable/unverified`), retrieval date, and unresolved sources.

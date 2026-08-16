@@ -2,7 +2,6 @@
 
 import argparse
 import contextlib
-import math
 import os
 import re
 import stat
@@ -22,8 +21,14 @@ from tools.validators.base import (  # noqa: F401 — re-exported
 DEFAULT_HA_URL = "http://homeassistant.local:8123"
 DEFAULT_HA_TIMEOUT = 10
 
-_ENTITY_RE = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")
+ENTITY_ID_RE = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")
+_ENTITY_RE = ENTITY_ID_RE
 DEFAULT_SUMMARY_MAX_CHARS = 8000
+
+
+def is_valid_entity_id(entity_id: str) -> bool:
+    """Return True if entity_id matches the standard domain.object_id pattern."""
+    return bool(ENTITY_ID_RE.fullmatch(entity_id))
 
 
 def load_env_file(path: Path | None = None) -> None:
@@ -134,14 +139,6 @@ def positive_int(value: str) -> int:
 def non_negative_int(value: str) -> int:
     """Argparse type: reject values < 0."""
     return _int_at_least(value, 0, "value must be >= 0")
-
-
-def positive_float(value: str) -> float:
-    """Argparse type: reject values <= 0 and NaN."""
-    f = float(value)
-    if math.isnan(f) or f <= 0:
-        raise argparse.ArgumentTypeError("value must be > 0")
-    return f
 
 
 def resolve_summary(args: argparse.Namespace) -> bool:

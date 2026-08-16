@@ -29,6 +29,9 @@ _IGNORABLE_STDOUT_SUBSTRINGS = (
     "Traceback (most recent call last):",
     "could not be loaded",
 ) + _BENIGN_PACKAGE_INSTALL_MARKERS
+_IGNORABLE_STDOUT_SUBSTRINGS_LOWER = tuple(
+    s.lower() for s in _IGNORABLE_STDOUT_SUBSTRINGS
+)
 _STDERR_ERROR_INDICATORS = ("error", "fail", "fatal", "exception", "traceback")
 _STDERR_BENIGN_ANY = ("debug", "info:", "starting")
 _STDERR_BENIGN_PHRASES = (
@@ -39,10 +42,17 @@ _STDERR_BENIGN_PHRASES = (
     "initialized",
 )
 
+_EXPLICIT_ERROR_RE = re.compile(r"^\W*(ERROR|RuntimeError)\b", re.I)
+_WARNING_RE = re.compile(r"^\W*WARNING\b", re.I)
+_ERRORS_COUNT_RE = re.compile(r"(?:found\s+)?(\d+)\s+errors?\b", re.I)
+_STDERR_WARNING_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(\.\d+)?\s+)?\W*warning\b", re.I
+)
+
 
 def _is_explicit_error(line: str) -> bool:
     """Return whether a stdout line starts with an explicit error prefix."""
-    return bool(re.match(r"^\W*(ERROR|RuntimeError)\b", line, re.I))
+    return bool(_EXPLICIT_ERROR_RE.match(line))
 
 
 def _is_benign_package_line(line: str) -> bool:
@@ -145,7 +155,7 @@ class HAOfficialValidator(ValidatorBase):
         parse_check_config_output (M12) — not here.
         """
         line_lower = line.lower()
-        return any(s.lower() in line_lower for s in _IGNORABLE_STDOUT_SUBSTRINGS)
+        return any(s in line_lower for s in _IGNORABLE_STDOUT_SUBSTRINGS_LOWER)
 
     def is_ignorable_traceback_line(
         self, line: str, *, benign_ctx: bool = False
@@ -200,14 +210,14 @@ class HAOfficialValidator(ValidatorBase):
             or "Configuration check successful!" in line
         ):
             self.info.append(f"HA Check: {line}")
-        elif m := re.search(r"(?:found\s+)?(\d+)\s+errors?\b", line, re.I):
+        elif m := _ERRORS_COUNT_RE.search(line):
             if m.group(1) == "0":
                 self.info.append(f"HA Check: {line}")
             else:
                 self.errors.append(f"HA Check: {line}")
         elif _is_explicit_error(line):
             self.errors.append(f"HA Check: {line}")
-        elif re.match(r"^\W*WARNING\b", line, re.I):
+        elif _WARNING_RE.match(line):
             self.warnings.append(f"HA Check: {line}")
         else:
             if line and not line.startswith("INFO:"):
@@ -222,11 +232,7 @@ class HAOfficialValidator(ValidatorBase):
             if not line:
                 continue
             line_lower = line.lower()
-            if re.match(
-                r"^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(\.\d+)?\s+)?\W*warning\b",
-                line,
-                re.I,
-            ):
+            if _STDERR_WARNING_RE.match(line):
                 self.warnings.append(f"HA Warning: {line}")
                 continue
             if any(ind in line_lower for ind in _STDERR_ERROR_INDICATORS):

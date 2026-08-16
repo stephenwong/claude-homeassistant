@@ -217,23 +217,20 @@ class ReferenceValidator(ValidatorBase):
         registry = self._entities if entities is None else entities
         if (
             self._entity_registry_id_mapping is not None
+            and registry is not None
             and self._entity_registry_id_mapping_source is registry
         ):
             return self._entity_registry_id_mapping
 
-        if entities is None:
-            entities = self.load_entity_registry()
-
-        mapping = self._entity_registry_id_mapping
-        if mapping is None or self._entity_registry_id_mapping_source is not entities:
-            mapping = {
-                entity_data["id"]: entity_data["entity_id"]
-                for entity_data in entities.values()
-                if isinstance(entity_data.get("id"), str)
-                and isinstance(entity_data.get("entity_id"), str)
-            }
-            self._entity_registry_id_mapping = mapping
-            self._entity_registry_id_mapping_source = entities
+        source = self.load_entity_registry() if entities is None else entities
+        mapping = {
+            entity_data["id"]: entity_data["entity_id"]
+            for entity_data in source.values()
+            if isinstance(entity_data.get("id"), str)
+            and isinstance(entity_data.get("entity_id"), str)
+        }
+        self._entity_registry_id_mapping = mapping
+        self._entity_registry_id_mapping_source = source
         return mapping
 
     _UUID_RE = re.compile(
@@ -392,16 +389,6 @@ class ReferenceValidator(ValidatorBase):
             skip=lambda s: not self.is_uuid_format(s),
         )
 
-    @staticmethod
-    def _is_disabled(entity_data: dict) -> bool:
-        """True when the entity/device is disabled (``disabled_by`` is set)."""
-        return is_entity_disabled(entity_data)
-
-    @staticmethod
-    def _is_hidden(entity_data: dict) -> bool:
-        """True when the entity is hidden (``hidden_by`` is set)."""
-        return is_entity_hidden(entity_data)
-
     def _check_entity_refs(
         self,
         file_path: Path,
@@ -428,11 +415,11 @@ class ReferenceValidator(ValidatorBase):
                 continue
 
             if entity_id in entities:
-                if self._is_disabled(entities[entity_id]):
+                if is_entity_disabled(entities[entity_id]):
                     self.warnings.append(
                         f"{file_path}: References disabled entity '{entity_id}'"
                     )
-                if self._is_hidden(entities[entity_id]):
+                if is_entity_hidden(entities[entity_id]):
                     self.info.append(
                         f"{file_path}: References hidden entity '{entity_id}'"
                     )
@@ -479,7 +466,7 @@ class ReferenceValidator(ValidatorBase):
 
             actual_entity_id = entity_id_mapping[registry_id]
             entity_data = entities.get(actual_entity_id, {})
-            if self._is_disabled(entity_data):
+            if is_entity_disabled(entity_data):
                 self.warnings.append(
                     f"{file_path}: Entity registry ID '{registry_id}' "
                     f"references disabled entity '{actual_entity_id}'"
@@ -508,7 +495,7 @@ class ReferenceValidator(ValidatorBase):
                 all_valid = False
                 continue
 
-            if self._is_disabled(devices[device_id]):
+            if is_entity_disabled(devices[device_id]):
                 self.warnings.append(
                     f"{file_path}: References disabled device '{device_id}'"
                 )
@@ -614,7 +601,7 @@ class ReferenceValidator(ValidatorBase):
                 }
 
             summary[domain]["count"] += 1
-            if self._is_disabled(entity_data):
+            if is_entity_disabled(entity_data):
                 summary[domain]["disabled"] += 1
             else:
                 summary[domain]["enabled"] += 1

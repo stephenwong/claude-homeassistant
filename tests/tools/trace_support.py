@@ -1,22 +1,10 @@
-"""Shared fixtures and builders for trace command tests."""
-
-from argparse import Namespace
-
+from tests.helpers import make_command_args
+from tools.commands.trace import add_parser
 from tools.common import HARequestError
 
 
 def make_args(**overrides):
-    defaults = dict(
-        entity_id=None,
-        first=None,
-        pretty=False,
-        summary=False,
-        no_summary=True,
-        pick=None,
-        max_chars=None,
-    )
-    defaults.update(overrides)
-    return Namespace(**defaults)
+    return make_command_args("trace", add_parser, ["--no-summary"], **overrides)
 
 
 def _mock_trace_entry(

@@ -1,4 +1,6 @@
+import asyncio
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,6 +12,39 @@ from tools.ha_mcp_bridge import (
     resolve_mcp_url,
     run_bridge,
 )
+
+
+def _make_stdin_reader(lines: list[str]):
+    queue = list(lines)
+
+    async def read_stdin() -> str:
+        if queue:
+            return queue.pop(0)
+        return ""
+
+    return read_stdin
+
+
+def _mock_aiohttp_session(
+    post_response: Any = None,
+    *,
+    post_side_effect: Any = None,
+) -> tuple[MagicMock, MagicMock]:
+    """Return (session_ctx, mock_session) configured for aiohttp.ClientSession patch."""
+    mock_session = MagicMock()
+    if post_response is not None or post_side_effect is not None:
+        post_ctx = MagicMock()
+        if post_side_effect is not None:
+            post_ctx.__aenter__ = AsyncMock(side_effect=post_side_effect)
+        else:
+            post_ctx.__aenter__ = AsyncMock(return_value=post_response)
+        post_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_session.post.return_value = post_ctx
+
+    session_ctx = MagicMock()
+    session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    session_ctx.__aexit__ = AsyncMock(return_value=None)
+    return session_ctx, mock_session
 
 
 class TestResolveMCPUrl:
@@ -105,7 +140,22 @@ class TestParseSSELines:
             data='{"jsonrpc": "2.0", "result": {"tools": []}, "id": 1}',
         )
 
-    def test_parse_multi_line_data(self):
+    def test_parse_multiple_events(self):
+        lines = [
+            "event: endpoint",
+            "data: /message?sessionId=abc",
+            "",
+            "event: message",
+            "data: line1",
+            "",
+        ]
+        events = list(parse_sse_lines(lines))
+        assert len(events) == 2
+        assert events[0].event == "endpoint"
+        assert events[1].event == "message"
+        assert events[1].data == "line1"
+
+    def test_parse_multiline_data(self):
         lines = [
             "event: message",
             "data: line1",
@@ -114,19 +164,17 @@ class TestParseSSELines:
         ]
         events = list(parse_sse_lines(lines))
         assert len(events) == 1
-        assert events[0] == SSEEvent(event="message", data="line1\nline2")
+        assert events[0].data == "line1\nline2"
 
-    def test_parse_default_message_event_without_explicit_event_line(self):
+    def test_parse_default_event_type(self):
         lines = [
-            'data: {"jsonrpc": "2.0", "method": "notify"}',
+            "data: hello",
             "",
         ]
         events = list(parse_sse_lines(lines))
         assert len(events) == 1
-        assert events[0] == SSEEvent(
-            event="message",
-            data='{"jsonrpc": "2.0", "method": "notify"}',
-        )
+        assert events[0].event == "message"
+        assert events[0].data == "hello"
 
     def test_parse_empty_data_line(self):
         lines = [
@@ -162,16 +210,13 @@ class TestParseSSELines:
 class TestRunBridge:
     @pytest.mark.anyio
     async def test_run_bridge_streamable_http_sse_flow(self, capsys):
-        input_lines = [
-            "\n",  # empty line should be skipped
-            '{"jsonrpc":"2.0","id":1,"method":"initialize"}\n',
-            "",  # EOF
-        ]
-
-        async def mock_read_stdin() -> str:
-            if input_lines:
-                return input_lines.pop(0)
-            return ""
+        stdin_reader = _make_stdin_reader(
+            [
+                "\n",  # empty line should be skipped
+                '{"jsonrpc":"2.0","id":1,"method":"initialize"}\n',
+                "",  # EOF
+            ]
+        )
 
         mock_sse_lines = [
             b"event: message\n",
@@ -199,20 +244,11 @@ class TestRunBridge:
         }
         mock_post_response.content = MockContent(mock_sse_lines)
 
-        post_ctx = MagicMock()
-        post_ctx.__aenter__ = AsyncMock(return_value=mock_post_response)
-        post_ctx.__aexit__ = AsyncMock(return_value=None)
-
-        mock_session = MagicMock()
-        mock_session.post.return_value = post_ctx
-
-        session_ctx = MagicMock()
-        session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-        session_ctx.__aexit__ = AsyncMock(return_value=None)
+        session_ctx, mock_session = _mock_aiohttp_session(mock_post_response)
 
         with patch("aiohttp.ClientSession", return_value=session_ctx):
             exit_code = await run_bridge(
-                "http://ha-host:9583/private_token", stdin_reader=mock_read_stdin
+                "http://ha-host:9583/private_token", stdin_reader=stdin_reader
             )
             assert exit_code == 0
 
@@ -233,15 +269,12 @@ class TestRunBridge:
 
     @pytest.mark.anyio
     async def test_run_bridge_split_utf8_chunks(self, capsys):
-        input_lines = [
-            '{"jsonrpc":"2.0","id":1,"method":"read"}\n',
-            "",
-        ]
-
-        async def mock_read_stdin() -> str:
-            if input_lines:
-                return input_lines.pop(0)
-            return ""
+        stdin_reader = _make_stdin_reader(
+            [
+                '{"jsonrpc":"2.0","id":1,"method":"read"}\n',
+                "",
+            ]
+        )
 
         full_payload = 'event: message\ndata: {"text":"🌡️ 22°C"}\n\n'.encode()
         # Split full_payload right inside a multi-byte sequence
@@ -268,20 +301,11 @@ class TestRunBridge:
         }
         mock_post_response.content = MockChunkContent([chunk1, chunk2])
 
-        post_ctx = MagicMock()
-        post_ctx.__aenter__ = AsyncMock(return_value=mock_post_response)
-        post_ctx.__aexit__ = AsyncMock(return_value=None)
-
-        mock_session = MagicMock()
-        mock_session.post.return_value = post_ctx
-
-        session_ctx = MagicMock()
-        session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-        session_ctx.__aexit__ = AsyncMock(return_value=None)
+        session_ctx, _ = _mock_aiohttp_session(mock_post_response)
 
         with patch("aiohttp.ClientSession", return_value=session_ctx):
             exit_code = await run_bridge(
-                "http://ha-host:9583/token", stdin_reader=mock_read_stdin
+                "http://ha-host:9583/token", stdin_reader=stdin_reader
             )
             assert exit_code == 0
 
@@ -291,15 +315,12 @@ class TestRunBridge:
 
     @pytest.mark.anyio
     async def test_run_bridge_streamable_http_json_flow(self, capsys):
-        input_lines = [
-            '{"jsonrpc":"2.0","id":1,"method":"ping"}\n',
-            "",
-        ]
-
-        async def mock_read_stdin() -> str:
-            if input_lines:
-                return input_lines.pop(0)
-            return ""
+        stdin_reader = _make_stdin_reader(
+            [
+                '{"jsonrpc":"2.0","id":1,"method":"ping"}\n',
+                "",
+            ]
+        )
 
         mock_post_response = AsyncMock()
         mock_post_response.status = 200
@@ -308,20 +329,11 @@ class TestRunBridge:
             return_value='{"jsonrpc":"2.0","id":1,"result":{}}'
         )
 
-        post_ctx = MagicMock()
-        post_ctx.__aenter__ = AsyncMock(return_value=mock_post_response)
-        post_ctx.__aexit__ = AsyncMock(return_value=None)
-
-        mock_session = MagicMock()
-        mock_session.post.return_value = post_ctx
-
-        session_ctx = MagicMock()
-        session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-        session_ctx.__aexit__ = AsyncMock(return_value=None)
+        session_ctx, _ = _mock_aiohttp_session(mock_post_response)
 
         with patch("aiohttp.ClientSession", return_value=session_ctx):
             exit_code = await run_bridge(
-                "http://ha-host:9583/private_token", stdin_reader=mock_read_stdin
+                "http://ha-host:9583/private_token", stdin_reader=stdin_reader
             )
             assert exit_code == 0
 
@@ -330,16 +342,13 @@ class TestRunBridge:
 
     @pytest.mark.anyio
     async def test_run_bridge_post_warning_and_exception(self, capsys):
-        input_lines = [
-            '{"jsonrpc":"2.0","id":1,"method":"ping"}\n',
-            '{"jsonrpc":"2.0","id":2,"method":"ping"}\n',
-            "",
-        ]
-
-        async def mock_read_stdin() -> str:
-            if input_lines:
-                return input_lines.pop(0)
-            return ""
+        stdin_reader = _make_stdin_reader(
+            [
+                '{"jsonrpc":"2.0","id":1,"method":"ping"}\n',
+                '{"jsonrpc":"2.0","id":2,"method":"ping"}\n',
+                "",
+            ]
+        )
 
         call_count = 0
 
@@ -354,20 +363,11 @@ class TestRunBridge:
                 return res
             raise Exception("Post transport failed")
 
-        post_ctx = MagicMock()
-        post_ctx.__aenter__ = AsyncMock(side_effect=mock_post_enter)
-        post_ctx.__aexit__ = AsyncMock(return_value=None)
-
-        mock_session = MagicMock()
-        mock_session.post.return_value = post_ctx
-
-        session_ctx = MagicMock()
-        session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-        session_ctx.__aexit__ = AsyncMock(return_value=None)
+        session_ctx, _ = _mock_aiohttp_session(post_side_effect=mock_post_enter)
 
         with patch("aiohttp.ClientSession", return_value=session_ctx):
             exit_code = await run_bridge(
-                "http://ha-host:9583/token", stdin_reader=mock_read_stdin
+                "http://ha-host:9583/token", stdin_reader=stdin_reader
             )
             assert exit_code == 0
 
@@ -377,18 +377,13 @@ class TestRunBridge:
 
     @pytest.mark.anyio
     async def test_run_bridge_cancels_pending_stop_waiter(self):
-        import asyncio
-
-        input_lines = [
-            '{"jsonrpc":"2.0","id":1,"method":"ping"}\n',
-            '{"jsonrpc":"2.0","id":2,"method":"ping"}\n',
-            "",
-        ]
-
-        async def mock_read_stdin() -> str:
-            if input_lines:
-                return input_lines.pop(0)
-            return ""
+        stdin_reader = _make_stdin_reader(
+            [
+                '{"jsonrpc":"2.0","id":1,"method":"ping"}\n',
+                '{"jsonrpc":"2.0","id":2,"method":"ping"}\n',
+                "",
+            ]
+        )
 
         mock_post_response = AsyncMock()
         mock_post_response.status = 200
@@ -397,16 +392,7 @@ class TestRunBridge:
             return_value='{"jsonrpc":"2.0","id":1,"result":{}}'
         )
 
-        post_ctx = MagicMock()
-        post_ctx.__aenter__ = AsyncMock(return_value=mock_post_response)
-        post_ctx.__aexit__ = AsyncMock(return_value=None)
-
-        mock_session = MagicMock()
-        mock_session.post.return_value = post_ctx
-
-        session_ctx = MagicMock()
-        session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-        session_ctx.__aexit__ = AsyncMock(return_value=None)
+        session_ctx, _ = _mock_aiohttp_session(mock_post_response)
 
         tasks_created: list[asyncio.Task] = []
         orig_create_task = asyncio.create_task
@@ -421,12 +407,10 @@ class TestRunBridge:
             patch("asyncio.create_task", side_effect=tracking_create_task),
         ):
             exit_code = await run_bridge(
-                "http://ha-host:9583/token", stdin_reader=mock_read_stdin
+                "http://ha-host:9583/token", stdin_reader=stdin_reader
             )
             assert exit_code == 0
 
-        # After bridge terminates, all created tasks should be done
-        # (finished or cancelled).
         assert len(tasks_created) > 0
         for task in tasks_created:
             assert task.done()
@@ -434,15 +418,12 @@ class TestRunBridge:
     @pytest.mark.anyio
     async def test_run_bridge_handles_http_error_response(self, capsys):
         """HTTP error responses with JSON-RPC payload are still forwarded to stdout."""
-        input_lines = [
-            '{"jsonrpc":"2.0","id":1,"method":"bad"}\n',
-            "",
-        ]
-
-        async def mock_read_stdin() -> str:
-            if input_lines:
-                return input_lines.pop(0)
-            return ""
+        stdin_reader = _make_stdin_reader(
+            [
+                '{"jsonrpc":"2.0","id":1,"method":"bad"}\n',
+                "",
+            ]
+        )
 
         mock_post_response = AsyncMock()
         mock_post_response.status = 400
@@ -454,20 +435,11 @@ class TestRunBridge:
             )
         )
 
-        post_ctx = MagicMock()
-        post_ctx.__aenter__ = AsyncMock(return_value=mock_post_response)
-        post_ctx.__aexit__ = AsyncMock(return_value=None)
-
-        mock_session = MagicMock()
-        mock_session.post.return_value = post_ctx
-
-        session_ctx = MagicMock()
-        session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-        session_ctx.__aexit__ = AsyncMock(return_value=None)
+        session_ctx, _ = _mock_aiohttp_session(mock_post_response)
 
         with patch("aiohttp.ClientSession", return_value=session_ctx):
             exit_code = await run_bridge(
-                "http://ha-host:9583/token", stdin_reader=mock_read_stdin
+                "http://ha-host:9583/token", stdin_reader=stdin_reader
             )
             assert exit_code == 0
 
@@ -482,10 +454,7 @@ class TestRunBridge:
         async def failing_read_stdin() -> str:
             raise RuntimeError("stdin stream corrupted")
 
-        mock_session = MagicMock()
-        session_ctx = MagicMock()
-        session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-        session_ctx.__aexit__ = AsyncMock(return_value=None)
+        session_ctx, _ = _mock_aiohttp_session()
 
         with patch("aiohttp.ClientSession", return_value=session_ctx):
             exit_code = await run_bridge(

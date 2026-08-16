@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from tools.cache import _compute_hash_status, load_cache, save_cache
+from tools.cache import compute_hash_status, load_cache, save_cache
 from tools.common import add_config_dir_arg, add_summary_args, resolve_summary
 from tools.validators.base import ValidatorBase, format_diagnostics
 from tools.validators.duplicate_ids import DuplicateIDValidator
@@ -35,16 +35,6 @@ class ValidatorResult:
     stderr: str = ""
     duration: float = 0.0
     cached: bool = False
-
-
-@dataclass(frozen=True)
-class _ValidatorExecutionResult:
-    """Internal validator outcome before the public description is attached."""
-
-    passed: bool
-    stderr: str = ""
-    cached: bool = False
-    duration: float | None = None
 
 
 # (module_class, description) tuples for each validator in the default suite.
@@ -86,7 +76,7 @@ def _cache_key(instance: Any, cls: type) -> str | None:
     data_hash: str | None = None
     complete = False
     with contextlib.suppress(OSError):
-        data_hash, complete = _compute_hash_status(instance.config_dir, file_deps)
+        data_hash, complete = compute_hash_status(instance.config_dir, file_deps)
     if not data_hash or not complete:
         return None
 
@@ -97,16 +87,18 @@ def _cache_key(instance: Any, cls: type) -> str | None:
 def _load_cached_result(
     instance: Any,
     name: str,
+    description: str,
     file_hash: str | None,
     force: bool,
-) -> _ValidatorExecutionResult | None:
+) -> ValidatorResult | None:
     """Return a matching cached result, or ``None`` on a cache miss."""
     if force or file_hash is None:
         return None
     try:
         cached = load_cache(instance.config_dir, name)
         if cached and cached["hash"] == file_hash and cached["passed"] is True:
-            return _ValidatorExecutionResult(
+            return ValidatorResult(
+                description=description,
                 passed=cached["passed"],
                 stderr=cached.get("stderr", ""),
                 duration=cached.get("duration", 0.0),
@@ -117,7 +109,7 @@ def _load_cached_result(
     return None
 
 
-def _run_validator(instance: Any, start: float) -> _ValidatorExecutionResult:
+def _run_validator(instance: Any, description: str, start: float) -> ValidatorResult:
     """Execute one validator and translate its expected failure boundaries."""
     try:
         passed = bool(instance.validate_all())
@@ -131,12 +123,14 @@ def _run_validator(instance: Any, start: float) -> _ValidatorExecutionResult:
             else ("" if passed else f"Validator raised SystemExit({e.code!r})")
         )
     except Exception as e:
-        return _ValidatorExecutionResult(
+        return ValidatorResult(
+            description=description,
             passed=False,
             stderr=f"Failed to run validator: {e}",
             duration=time.perf_counter() - start,
         )
-    return _ValidatorExecutionResult(
+    return ValidatorResult(
+        description=description,
         passed=passed,
         stderr=stderr,
         duration=time.perf_counter() - start,
@@ -198,42 +192,25 @@ def _run_one(
         fhash = _cache_key(instance, cls)
 
         # --- cache check (skip when --force or when file_deps is empty) ---
-        cached_result = _load_cached_result(instance, name, fhash, force)
+        cached_result = _load_cached_result(instance, name, description, fhash, force)
         if cached_result is not None:
-            return ValidatorResult(
-                description=description,
-                passed=cached_result.passed,
-                stderr=cached_result.stderr,
-                duration=cached_result.duration or 0.0,
-                cached=cached_result.cached,
-            )
+            return cached_result
 
         # --- cache miss or forced — actually run the validator ---
-        execution = _run_validator(instance, start)
-        duration = (
-            execution.duration
-            if execution.duration is not None
-            else time.perf_counter() - start
-        )
+        result = _run_validator(instance, description, start)
 
         # --- save to cache (only on success; failures always re-run) ---
-        if execution.passed:
+        if result.passed:
             _save_success_cache(
                 instance,
                 name,
                 description,
                 fhash,
-                duration,
-                execution.stderr,
+                result.duration,
+                result.stderr,
             )
 
-        return ValidatorResult(
-            description=description,
-            passed=execution.passed,
-            stderr=execution.stderr,
-            duration=duration,
-            cached=execution.cached,
-        )
+        return result
     except Exception as e:
         return ValidatorResult(
             description=description,

@@ -7,7 +7,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tests.helpers import assert_diagnostic, assert_no_diagnostic, mock_json_client
+from tests.helpers import (
+    assert_diagnostic,
+    assert_no_diagnostic,
+    mock_json_client,
+    write_storage_registry,
+)
 from tools.common import HARequestError
 from tools.validators.stale_sensors import StaleSensorValidator, main
 
@@ -38,15 +43,9 @@ def config_dir(tmp_path):
 
 def _write_entity_registry(config_dir, entities_list):
     """Helper to write mock core.entity_registry."""
-    registry_file = config_dir / ".storage" / "core.entity_registry"
-    data = {
-        "version": 1,
-        "minor_version": 1,
-        "key": "core.entity_registry",
-        "data": {"entities": entities_list},
-    }
-    with open(registry_file, "w", encoding="utf-8") as f:
-        json.dump(data, f)
+    return write_storage_registry(
+        config_dir, "core.entity_registry", "entities", entities_list
+    )
 
 
 def _mock_states(states_list) -> MagicMock:
@@ -559,23 +558,21 @@ def test_retry_on_registry_read_failure(config_dir):
         mock_sleep.assert_called_once_with(0.1)
 
 
-def test_second_registry_decode_failure_warns_without_extra_retry(config_dir):
-    """A second JSON decode failure warns after exactly one bounded retry."""
+def test_registry_decode_failure_warns_without_extra_retry(config_dir):
+    """When load_storage_registry fails, _load_registry records a warning directly
+    without extra retries.
+    """
     _write_entity_registry(config_dir, [])
     v = StaleSensorValidator(str(config_dir))
     decode_error = json.JSONDecodeError("still invalid", "", 0)
 
-    with (
-        patch(
-            "tools.validators.stale_sensors.load_storage_registry",
-            side_effect=decode_error,
-        ) as load_registry,
-        patch("time.sleep") as mock_sleep,
-    ):
+    with patch(
+        "tools.validators.stale_sensors.load_storage_registry",
+        side_effect=decode_error,
+    ) as load_registry:
         assert v._load_registry() is None
 
-    assert load_registry.call_count == 2
-    mock_sleep.assert_called_once_with(0.1)
+    assert load_registry.call_count == 1
     assert_diagnostic(v, "warnings", "Failed to read entity registry: still invalid")
 
 

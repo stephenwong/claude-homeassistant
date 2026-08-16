@@ -658,5 +658,5 @@ def test_resolve_include_handles_unicode_decode_error(tmp_path):
         config_dir, config_dir / ".storage", warnings, []
     )
     result = extractor._resolve_include("!include_dir_named packages")
-    assert result is None
+    assert result == {}
     assert any("Failed to extract entity definitions" in w for w in warnings)

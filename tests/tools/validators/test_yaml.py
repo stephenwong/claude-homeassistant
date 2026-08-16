@@ -200,10 +200,6 @@ class TestValidateAll:
         (config_dir / "bad.yaml").write_bytes(b"\xff\xfe\x00\x01")
         assert validator.validate_all() is False
 
-    def test_fails_on_syntax_error(self, config_dir, validator):
-        (config_dir / "bad.yaml").write_text("key: value\n  bad: indent\n")
-        assert validator.validate_all() is False
-
     def test_automations_not_list_via_validate_all(self, config_dir, validator):
         (config_dir / "automations.yaml").write_text("not_a_list: true\n")
         (config_dir / "configuration.yaml").write_text("homeassistant:\n")

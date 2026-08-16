@@ -7,7 +7,6 @@ Works with both list-based (automations.yaml, scenes.yaml) and dict-based
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import cast
 
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
@@ -98,7 +97,9 @@ class YAMLEditor:
     # Automation list helpers (automations.yaml and scenes.yaml)
     # ------------------------------------------------------------------
 
-    def _require_shape(self, expected_type: type, operation: str) -> list | dict:
+    def _require_shape[T: (list, dict)](
+        self, expected_type: type[T], operation: str
+    ) -> T:
         """Return loaded data of *expected_type* or raise the stable shape error."""
         self._ensure_loaded()
         if not isinstance(self._data, expected_type):
@@ -107,15 +108,15 @@ class YAMLEditor:
                 f"expected a {expected_type.__name__}, got "
                 f"{type(self._data).__name__}"
             )
-        return self._data  # type: ignore[return-value]
+        return self._data
 
     def _require_list(self, operation: str) -> list:
         """Return the loaded list or raise TypeError for another shape."""
-        return cast(list, self._require_shape(list, operation))
+        return self._require_shape(list, operation)
 
     def _require_dict(self, operation: str) -> dict:
         """Return the loaded dict or raise TypeError for another shape."""
-        return cast(dict, self._require_shape(dict, operation))
+        return self._require_shape(dict, operation)
 
     def _find_automation(self, alias: str, operation: str) -> tuple[list, int]:
         """Return the automation list and alias index, or raise its old error."""

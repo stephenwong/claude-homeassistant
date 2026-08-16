@@ -4,25 +4,22 @@ import json
 
 import pytest
 
+from tests.helpers import write_storage_registry
 from tools.validators._storage import _load_storage_data, load_storage_registry
 
 
 @pytest.fixture
 def registry_file(tmp_path):
     """Write a registry JSON with two entities indexed by entity_id."""
-    path = tmp_path / "core.entity_registry"
-    data = {
-        "version": 1,
-        "minor_version": 1,
-        "data": {
-            "entities": [
-                {"entity_id": "sensor.one", "id": "aaa"},
-                {"entity_id": "sensor.two", "id": "bbb"},
-            ]
-        },
-    }
-    path.write_text(json.dumps(data))
-    return path
+    return write_storage_registry(
+        tmp_path,
+        "core.entity_registry",
+        "entities",
+        [
+            {"entity_id": "sensor.one", "id": "aaa"},
+            {"entity_id": "sensor.two", "id": "bbb"},
+        ],
+    )
 
 
 class TestLoadStorageRegistry:

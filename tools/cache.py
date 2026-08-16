@@ -16,7 +16,7 @@ CACHE_DIR_NAME = ".cache/validators"
 CACHE_SCHEMA_VERSION = 1
 
 
-def _compute_hash_status(config_dir: Path, patterns: list[str]) -> tuple[str, bool]:
+def compute_hash_status(config_dir: Path, patterns: list[str]) -> tuple[str, bool]:
     """Compute a SHA256 hash over all files matching the given glob patterns.
 
     Files are sorted for deterministic ordering. Missing files/patterns are
@@ -47,9 +47,13 @@ def _compute_hash_status(config_dir: Path, patterns: list[str]) -> tuple[str, bo
     return sha.hexdigest(), complete
 
 
+# Backwards compatibility alias
+_compute_hash_status = compute_hash_status
+
+
 def compute_hash(config_dir: Path, patterns: list[str]) -> str:
     """Compute the public digest for matching files."""
-    digest, _complete = _compute_hash_status(config_dir, patterns)
+    digest, _complete = compute_hash_status(config_dir, patterns)
     return digest
 
 
@@ -127,53 +131,6 @@ def load_cache(config_dir: Path, name: str) -> dict | None:
         if metadata in data and not isinstance(data[metadata], str):
             return None
     return data
-
-
-# ====================================================================
-# Generic blob cache (for entity output)
-# ====================================================================
-
-BLOB_CACHE_DIR = ".cache/entities"
-
-
-def _blob_hash(keys: list[str | bytes]) -> str:
-    """Compute a SHA256 hash over the concatenation of all *keys*.
-
-    A null-byte delimiter is inserted between adjacent keys to prevent
-    accidental collisions (e.g. ``["ab","c"]`` ≠ ``["a","bc"]``).  Each key
-    is hashed in order; the result is a hex digest used as a cache filename.
-    Empty *keys* yields the hash of the empty string.
-    """
-    sha = hashlib.sha256()
-    for i, k in enumerate(keys):
-        if i > 0:
-            sha.update(b"\x00")
-        if isinstance(k, str):
-            sha.update(k.encode())
-        elif isinstance(k, bytes):
-            sha.update(k)
-        else:
-            sha.update(str(k).encode())
-    return sha.hexdigest()
-
-
-def _blob_path(config_dir: Path, name: str) -> Path:
-    """Return the path to a generic entity-cache blob."""
-    return config_dir / BLOB_CACHE_DIR / f"{name}.json"
-
-
-def save_blob(config_dir: Path, name: str, data) -> None:
-    """Save arbitrary JSON-serializable data to the entity cache atomically.
-
-    Writes via :func:`tools.common.atomic_write_text` (temp + fsync +
-    ``os.replace``) so a crash mid-write never leaves a truncated cache file.
-    """
-    _write_json(_blob_path(config_dir, name), data)
-
-
-def load_blob(config_dir: Path, name: str):
-    """Load cached blob data.  Returns None on any failure."""
-    return _load_json(_blob_path(config_dir, name))
 
 
 def save_cache(

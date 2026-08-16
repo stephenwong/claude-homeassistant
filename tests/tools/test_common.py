@@ -377,117 +377,6 @@ class TestValidatorBase:
         assert "test.yml" in names
         assert "test.txt" not in names
 
-    def test_check_automations_structure_valid(self):
-        from tools.validators.yaml import YAMLValidator
-
-        v = YAMLValidator(str(self.config_dir))
-        automations = [
-            {
-                "alias": "Test",
-                "trigger": {"platform": "state"},
-                "action": {"service": "test"},
-            },
-        ]
-        assert v.check_automations_structure(automations, "test") is True
-        assert len(v.errors) == 0
-
-    def test_check_automations_structure_blueprint(self):
-        from tools.validators.yaml import YAMLValidator
-
-        v = YAMLValidator(str(self.config_dir))
-        automations = [
-            {"alias": "Blueprint", "use_blueprint": {"path": "test.yaml"}},
-        ]
-        assert v.check_automations_structure(automations, "test") is True
-
-    def test_check_automations_structure_invalid_blueprint_mapping(self):
-        from tools.validators.yaml import YAMLValidator
-
-        v = YAMLValidator(str(self.config_dir))
-        automations = [
-            {"alias": "Blueprint", "use_blueprint": "test.yaml"},
-        ]
-
-        assert v.check_automations_structure(automations, "test") is False
-        assert v.errors == ["test: Automation 0 'use_blueprint' must be a dictionary"]
-
-    def test_check_automations_structure_not_dict(self):
-        from tools.validators.yaml import YAMLValidator
-
-        v = YAMLValidator(str(self.config_dir))
-        automations = ["not a dict"]
-        assert v.check_automations_structure(automations, "test") is False
-        assert any("must be a dictionary" in e for e in v.errors)
-
-    def test_check_automations_structure_missing_trigger(self):
-        from tools.validators.yaml import YAMLValidator
-
-        v = YAMLValidator(str(self.config_dir))
-        automations = [{"alias": "Test", "action": {"service": "test"}}]
-        assert v.check_automations_structure(automations, "test") is False
-        assert any("trigger" in e for e in v.errors)
-
-    def test_check_automations_structure_missing_action(self):
-        from tools.validators.yaml import YAMLValidator
-
-        v = YAMLValidator(str(self.config_dir))
-        automations = [
-            {"alias": "Test", "trigger": {"platform": "state"}},
-        ]
-        assert v.check_automations_structure(automations, "test") is False
-        assert any("action" in e for e in v.errors)
-
-    def test_check_automations_structure_missing_alias_warning(self):
-        from tools.validators.yaml import YAMLValidator
-
-        v = YAMLValidator(str(self.config_dir))
-        automations = [
-            {"trigger": {"platform": "state"}, "action": {"service": "test"}},
-        ]
-        v.check_automations_structure(automations, "test")
-        assert any("alias" in w for w in v.warnings)
-
-    def test_check_scripts_structure_valid(self):
-        from tools.validators.yaml import YAMLValidator
-
-        v = YAMLValidator(str(self.config_dir))
-        scripts = {"my_script": {"sequence": [{"service": "test"}]}}
-        assert v.check_scripts_structure(scripts, "test") is True
-
-    def test_check_scripts_structure_blueprint(self):
-        from tools.validators.yaml import YAMLValidator
-
-        v = YAMLValidator(str(self.config_dir))
-        scripts = {"my_script": {"use_blueprint": {"path": "test.yaml"}}}
-        assert v.check_scripts_structure(scripts, "test") is True
-
-    def test_check_scripts_structure_invalid_blueprint_mapping(self):
-        from tools.validators.yaml import YAMLValidator
-
-        v = YAMLValidator(str(self.config_dir))
-        scripts = {"my_script": {"use_blueprint": "test.yaml"}}
-
-        assert v.check_scripts_structure(scripts, "test") is False
-        assert v.errors == [
-            "test: Script 'my_script' 'use_blueprint' must be a dictionary"
-        ]
-
-    def test_check_scripts_structure_not_dict(self):
-        from tools.validators.yaml import YAMLValidator
-
-        v = YAMLValidator(str(self.config_dir))
-        scripts = {"my_script": "not a dict"}
-        assert v.check_scripts_structure(scripts, "test") is False
-        assert any("must be a dictionary" in e for e in v.errors)
-
-    def test_check_scripts_structure_missing_sequence(self):
-        from tools.validators.yaml import YAMLValidator
-
-        v = YAMLValidator(str(self.config_dir))
-        scripts = {"my_script": {"alias": "Test"}}
-        assert v.check_scripts_structure(scripts, "test") is False
-        assert any("sequence" in e or "use_blueprint" in e for e in v.errors)
-
     def test_print_results_valid(self, capsys):
         v = _ConcreteValidator(str(self.config_dir))
         v.print_results()
@@ -607,35 +496,23 @@ class TestArgparseTypes:
         with pytest.raises((argparse.ArgumentTypeError, ValueError)):
             non_negative_int("-1")
 
-    def test_positive_float_accepts_valid(self):
-        from tools.common import positive_float
+    def test_is_valid_entity_id_valid(self):
+        from tools.common import is_valid_entity_id
 
-        assert positive_float("3.14") == 3.14
-        assert isinstance(positive_float("3.14"), float)
+        assert is_valid_entity_id("sensor.living_room_temp") is True
+        assert is_valid_entity_id("light.kitchen") is True
+        assert is_valid_entity_id("automation.turn_off_1") is True
 
-    def test_positive_float_rejects_zero(self):
-        from tools.common import positive_float
+    def test_is_valid_entity_id_invalid(self):
+        from tools.common import is_valid_entity_id
 
-        with pytest.raises((argparse.ArgumentTypeError, ValueError)):
-            positive_float("0")
-
-    def test_positive_float_rejects_negative(self):
-        from tools.common import positive_float
-
-        with pytest.raises((argparse.ArgumentTypeError, ValueError)):
-            positive_float("-0.5")
-
-    def test_positive_float_rejects_non_numeric(self):
-        from tools.common import positive_float
-
-        with pytest.raises((argparse.ArgumentTypeError, ValueError)):
-            positive_float("abc")
-
-    def test_positive_float_rejects_nan(self):
-        from tools.common import positive_float
-
-        with pytest.raises((argparse.ArgumentTypeError, ValueError)):
-            positive_float("nan")
+        assert is_valid_entity_id("sensor") is False
+        assert is_valid_entity_id("sensor.") is False
+        assert is_valid_entity_id(".living_room") is False
+        assert is_valid_entity_id("sensor.temp.extra") is False
+        assert is_valid_entity_id("sensor.living-room") is False
+        assert is_valid_entity_id("sensor.temp ") is False
+        assert is_valid_entity_id("") is False
 
 
 class TestM5LoadEnvFile:

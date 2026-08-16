@@ -119,7 +119,7 @@ class TestRunOne:
 
         monkeypatch.setattr(
             validate,
-            "_compute_hash_status",
+            "compute_hash_status",
             lambda *_args: ("digest", False),
         )
         with (
@@ -186,7 +186,7 @@ class TestRunOne:
         hash_val = f"abc123:{_fake_source_hash()}"
         with (
             patch(
-                "tools.commands.validate._compute_hash_status",
+                "tools.commands.validate.compute_hash_status",
                 return_value=("abc123", True),
             ),
             patch(
@@ -212,7 +212,7 @@ class TestRunOne:
         hash_val = f"abc123:{_fake_source_hash()}"
         with (
             patch(
-                "tools.commands.validate._compute_hash_status",
+                "tools.commands.validate.compute_hash_status",
                 return_value=("abc123", True),
             ),
             patch(
@@ -241,7 +241,7 @@ class TestRunOne:
 
         with (
             patch(
-                "tools.commands.validate._compute_hash_status",
+                "tools.commands.validate.compute_hash_status",
                 return_value=("newhash", True),
             ),
             patch(
@@ -260,7 +260,7 @@ class TestRunOne:
 
         with (
             patch(
-                "tools.commands.validate._compute_hash_status",
+                "tools.commands.validate.compute_hash_status",
                 return_value=("abc", True),
             ),
             patch(
@@ -293,7 +293,7 @@ class TestRunOne:
         combined_hash = f"{file_hash}:{_fake_source_hash()}"
         with (
             patch(
-                "tools.commands.validate._compute_hash_status",
+                "tools.commands.validate.compute_hash_status",
                 return_value=(file_hash, True),
             ),
             patch(
@@ -338,7 +338,7 @@ class TestRunOne:
         (tmp_path / "configuration.yaml").write_text("a: 1")
         monkeypatch.setattr(
             mod,
-            "_compute_hash_status",
+            "compute_hash_status",
             _raise_value_error,
         )
         result = mod._run_one(YAMLValidator, "YAML", str(tmp_path), True, True)
@@ -353,7 +353,7 @@ class TestRunOne:
 
         (tmp_path / "configuration.yaml").write_text("a: 1")
         monkeypatch.setattr(
-            mod, "_compute_hash_status", lambda *a, **k: ("fakehash", True)
+            mod, "compute_hash_status", lambda *a, **k: ("fakehash", True)
         )
         monkeypatch.setattr(mod, "load_cache", lambda *a, **k: None)
         monkeypatch.setattr(
@@ -537,7 +537,7 @@ class TestRunValidators:
         monkeypatch.setattr(HAOfficialValidator, "file_deps", lambda self: [])
         with (
             patch(
-                "tools.commands.validate._compute_hash_status",
+                "tools.commands.validate.compute_hash_status",
                 return_value=("hash", True),
             ),
             patch(

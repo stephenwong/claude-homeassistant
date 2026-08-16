@@ -1,11 +1,13 @@
 """Tests for tools/commands/curl.py — pure-Python curl subcommand."""
 
 import json
+import time
 from functools import partial
 from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
+from requests.structures import CaseInsensitiveDict
 
 from tests.helpers import make_response, parse_command_args
 from tools.commands import curl as curl_cmd
@@ -1339,8 +1341,6 @@ class TestMaxCharsInteractions:
 
     def test_large_list_does_not_hang(self, mock_client, capsys):
         """1000+ items must shape in reasonable time (perf guard)."""
-        import time
-
         data = [{"i": i, "v": "x" * 20} for i in range(2000)]
         mock_client.get.return_value = json_resp(data)
         args = make_args(endpoint="/api/states", max_chars=500)
@@ -1351,8 +1351,6 @@ class TestMaxCharsInteractions:
 
     def test_headers_are_case_insensitive(self, mock_client, capsys):
         """CaseInsensitiveDict headers should not break response parsing."""
-        from requests.structures import CaseInsensitiveDict
-
         mock_client.get.return_value = response_mock(
             headers=CaseInsensitiveDict({"CONTENT-TYPE": "application/json"}),
             json_data={"ok": True},

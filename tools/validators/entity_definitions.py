@@ -231,8 +231,9 @@ class EntityDefinitionExtractor:
                     f"{f}: Include path is outside the config directory"
                 )
                 continue
-            with open(f, encoding="utf-8") as fh:
-                loaded.append((f, yaml.load(fh, Loader=HAYamlLoader)))
+            data = self._load_yaml_file(f)
+            if data is not None:
+                loaded.append((f, data))
         return loaded
 
     def _resolve_include(self, tag_value: object):
@@ -260,8 +261,7 @@ class EntityDefinitionExtractor:
         try:
             if tag in ("!include",):
                 if target.is_file():
-                    with open(target, encoding="utf-8") as f:
-                        return yaml.load(f, Loader=HAYamlLoader)
+                    return self._load_yaml_file(target)
                 self._record_extraction_warning(target, FileNotFoundError(str(target)))
                 return None
             if not target.is_dir():

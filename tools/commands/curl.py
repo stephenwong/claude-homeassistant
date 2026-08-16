@@ -22,11 +22,11 @@ from typing import Any, cast
 import requests
 
 from tools.common import (
-    _ENTITY_RE,
     HARequestError,
     add_output_shape_args,
     add_summary_args,
     fail_stderr,
+    is_valid_entity_id,
     positive_int,
     resolve_max_chars,
     resolve_summary,
@@ -187,18 +187,17 @@ def _validate_args(args: argparse.Namespace, summary: bool) -> _CurlRequest:
     if args.raw and args.pretty:
         raise _CurlError("Cannot combine --raw with --pretty")
 
-    if args.pick and _has_collection_output_flags(args):
-        raise _CurlError("Cannot combine --pick with --count/--keys/--raw")
+    for flag_name in ("pick", "entity", "domain"):
+        if getattr(args, flag_name) and _has_collection_output_flags(args):
+            raise _CurlError(f"Cannot combine --{flag_name} with --count/--keys/--raw")
 
     if args.entity:
-        if not _ENTITY_RE.match(args.entity):
+        if not is_valid_entity_id(args.entity):
             raise _CurlError(f"Invalid entity_id: {args.entity!r}")
         if endpoint and endpoint.rstrip("/") != "/api/states":
             raise _CurlError(
                 "--entity requires endpoint /api/states (or omit endpoint)"
             )
-        if _has_collection_output_flags(args):
-            raise _CurlError("Cannot combine --entity with --count/--keys/--raw")
         if method != "GET" and not summary:
             print(
                 "\u26a0\ufe0f  --entity forces GET method (ignoring --method)",
@@ -207,11 +206,8 @@ def _validate_args(args: argparse.Namespace, summary: bool) -> _CurlRequest:
         endpoint = f"/api/states/{args.entity}"
         method = "GET"
 
-    if args.domain:
-        if args.entity:
-            raise _CurlError("Cannot combine --domain with --entity")
-        if _has_collection_output_flags(args):
-            raise _CurlError("Cannot combine --domain with --count/--keys/--raw")
+    if args.domain and args.entity:
+        raise _CurlError("Cannot combine --domain with --entity")
 
     if not endpoint:
         raise _CurlError("endpoint path is required (use --entity to fetch by id)")
@@ -484,7 +480,7 @@ def _collect_key_names(data: Any) -> tuple[list[str] | None, str]:
 def _print_key_names(keys: list[str], max_chars: int | None) -> None:
     """Shape and print normalized key names as compact JSON."""
     shaped = apply_output_shape(cast(JSONValue, keys), max_chars=max_chars)
-    print(json.dumps(shaped, separators=(",", ":"), ensure_ascii=False))
+    print_json(shaped, pretty=False)
 
 
 def _handle_keys(data, summary: bool = False, max_chars: int | None = None) -> int:
@@ -501,12 +497,7 @@ def _handle_keys(data, summary: bool = False, max_chars: int | None = None) -> i
         _print_key_names([], max_chars)
     elif kind == "scalar":
         print("# not a JSON object or list", file=sys.stderr)
-        printable = (
-            json.dumps(data, separators=(",", ":"), ensure_ascii=False)
-            if data is not None
-            else "null"
-        )
-        print(printable)
+        print_json(cast(JSONValue, data), pretty=False)
     elif kind == "list":
         count = len(data)
         assert keys is not None

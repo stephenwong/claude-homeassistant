@@ -14,6 +14,7 @@ import requests
 import yaml
 
 from tools.backup_common import BackupRecord
+from tools.ha.client import HAClient, HARequestError
 
 
 def make_tar(
@@ -174,8 +175,6 @@ def mock_json_client(
     post_response: Any = None,
 ) -> MagicMock:
     """Create an HA client mock for a JSON or POST endpoint."""
-    from tools.ha.client import HAClient
-
     client = MagicMock(spec=HAClient)
     client.close = MagicMock()
     client.__enter__.return_value = client
@@ -193,8 +192,6 @@ def mock_json_client(
 
 def mock_offline_client(error_msg: str = "offline") -> MagicMock:
     """Create an HA client mock that fails requests with HARequestError."""
-    from tools.ha.client import HARequestError
-
     return mock_json_client(side_effect=HARequestError(error_msg))
 
 

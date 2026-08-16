@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from tests.helpers import write_yaml
+from tests.helpers import assert_diagnostic, assert_no_diagnostic, write_yaml
 from tools.validators.duplicate_ids import DuplicateIDValidator, main
 
 
@@ -40,7 +40,7 @@ class TestM10bScriptsDuplicateKeys:
         v = DuplicateIDValidator(str(config_dir))
         is_valid = v.validate_all()
         assert is_valid is False
-        assert any("good_script" in e and "script" in e.lower() for e in v.errors)
+        assert_diagnostic(v, "errors", "good_script")
 
     def test_scripts_without_duplicates_pass(self, config_dir):
         (config_dir / "scripts.yaml").write_text(
@@ -74,10 +74,8 @@ class TestM10bScriptsDuplicateKeys:
         v = DuplicateIDValidator(str(config_dir))
 
         assert v.validate_all() is False
-        assert any(
-            "could not determine a constructor" in error.lower() for error in v.errors
-        )
-        assert not any("duplicate top-level key: None" in error for error in v.errors)
+        assert_diagnostic(v, "errors", "could not determine a constructor")
+        assert_no_diagnostic(v, "errors", "duplicate top-level key: None")
 
     def test_yaml_merge_keys_are_supported(self, config_dir):
         (config_dir / "scripts.yaml").write_text(
@@ -96,25 +94,14 @@ class TestM10bScriptsDuplicateKeys:
         v = DuplicateIDValidator(str(config_dir))
 
         assert v.validate_all() is False
-        assert any("unhashable key" in error.lower() for error in v.errors)
+        assert_diagnostic(v, "errors", "unhashable key")
 
 
-class TestNoDuplicates:
-    def test_no_duplicates_passes(self, config_dir, validator):
+class TestDuplicateIDValidator:
+    def test_valid_automations(self, config_dir, validator):
         automations = [
-            {
-                "id": "morning_lights",
-                "alias": "Morning Lights",
-                "trigger": [],
-                "action": [],
-            },
-            {
-                "id": "motion_light",
-                "alias": "Motion Light",
-                "trigger": [],
-                "action": [],
-            },
-            {"id": "doorbell", "alias": "Doorbell", "trigger": [], "action": []},
+            {"id": "auto_1", "alias": "First", "trigger": [], "action": []},
+            {"id": "auto_2", "alias": "Second", "trigger": [], "action": []},
         ]
         write_yaml(config_dir, automations)
         assert validator.validate_all() is True
@@ -127,9 +114,7 @@ class TestNoDuplicates:
         ]
         write_yaml(config_dir, automations)
         assert validator.validate_all() is False
-        assert any(
-            "duplicate" in e.lower() and "same_id" in e for e in validator.errors
-        )
+        assert_diagnostic(validator, "errors", "same_id")
 
     def test_missing_id_warns(self, config_dir, validator):
         automations = [
@@ -137,9 +122,7 @@ class TestNoDuplicates:
         ]
         write_yaml(config_dir, automations)
         assert validator.validate_all() is True
-        assert any(
-            "missing" in w.lower() and "id" in w.lower() for w in validator.warnings
-        )
+        assert_diagnostic(validator, "warnings", "missing")
 
     def test_empty_file_passes(self, config_dir, validator):
         """No automations.yaml at all — nothing to check."""
@@ -148,19 +131,19 @@ class TestNoDuplicates:
     def test_nonexistent_dir_errors(self):
         v = DuplicateIDValidator("/nonexistent")
         assert v.validate_all() is False
-        assert any("does not exist" in e for e in v.errors)
+        assert_diagnostic(v, "errors", "does not exist")
 
     def test_non_list_automations_handled(self, config_dir, validator):
         f = config_dir / "automations.yaml"
         f.write_text("not_a_list: true\n")
         assert validator.validate_all() is False
-        assert any("must be a list" in e for e in validator.errors)
+        assert_diagnostic(validator, "errors", "must be a list")
 
     def test_broken_yaml_fails(self, config_dir, validator):
         f = config_dir / "automations.yaml"
         f.write_text("{{{ not valid yaml\n")
         assert validator.validate_all() is False
-        assert any("syntax error" in e.lower() for e in validator.errors)
+        assert_diagnostic(validator, "errors", "syntax error")
 
     def test_empty_file_exists_passes(self, config_dir, validator):
         """File exists but YAML parses to None (empty doc)."""
@@ -176,7 +159,7 @@ class TestNoDuplicates:
         ]
         write_yaml(config_dir, automations)
         assert validator.validate_all() is False
-        assert any("must be a dictionary" in e for e in validator.errors)
+        assert_diagnostic(validator, "errors", "must be a dictionary")
 
     def test_mixed_duplicates_and_missing(self, config_dir, validator):
         automations = [
@@ -186,11 +169,9 @@ class TestNoDuplicates:
         ]
         write_yaml(config_dir, automations)
         assert validator.validate_all() is False
-        assert any("duplicate" in e.lower() and "dup" in e for e in validator.errors)
-        assert any(
-            "missing" in w.lower() and "id" in w.lower() for w in validator.warnings
-        )
-        assert any("missing 'id'" in i for i in validator.info)
+        assert_diagnostic(validator, "errors", "dup")
+        assert_diagnostic(validator, "warnings", "missing")
+        assert_diagnostic(validator, "info", "missing 'id'")
 
     def test_three_way_duplicate_detected(self, config_dir, validator):
         automations = [
@@ -229,9 +210,7 @@ class TestNoDuplicates:
         ]
         write_yaml(config_dir, automations)
         assert validator.validate_all() is True
-        assert any(
-            "missing" in w.lower() and "id" in w.lower() for w in validator.warnings
-        )
+        assert_diagnostic(validator, "warnings", "missing")
 
     def test_int_id_handled(self, config_dir, validator):
         automations = [
@@ -240,7 +219,7 @@ class TestNoDuplicates:
         ]
         write_yaml(config_dir, automations)
         assert validator.validate_all() is False
-        assert any("duplicate" in e.lower() and "123" in e for e in validator.errors)
+        assert_diagnostic(validator, "errors", "123")
 
 
 class TestConfigurationYamlOpenedOnce:
@@ -248,7 +227,7 @@ class TestConfigurationYamlOpenedOnce:
         (config_dir / "scripts.yaml").write_bytes(b"script: \xff\n")
         validator = DuplicateIDValidator(str(config_dir))
         assert validator.validate_all() is False
-        assert any("failed to parse" in error for error in validator.errors)
+        assert_diagnostic(validator, "errors", "failed to parse")
 
     def test_configuration_yaml_not_accessed_unnecessarily(self, config_dir):
         """Validator should not parse configuration.yaml at all — it only reads
@@ -263,29 +242,34 @@ class TestConfigurationYamlOpenedOnce:
         open_count = 0
         real_open = builtins.open
 
-        def spy(path, *args, **kwargs):
+        def tracking_open(file, *args, **kwargs):
             nonlocal open_count
-            if "configuration.yaml" in str(path):
+            if "configuration.yaml" in str(file):
                 open_count += 1
-            return real_open(path, *args, **kwargs)
+            return real_open(file, *args, **kwargs)
 
-        with patch("builtins.open", side_effect=spy):
+        with patch("builtins.open", side_effect=tracking_open):
             v = DuplicateIDValidator(str(config_dir))
             v.validate_all()
 
-        assert open_count == 0
-
-
-class TestMain:
-    def test_main_dispatches_clean(self, config_dir, monkeypatch):
-        yaml_content = (
-            "- id: a\n  alias: A\n  trigger:\n"
-            "    platform: state\n  action:\n    service: test\n"
+        assert open_count == 0, (
+            f"configuration.yaml was opened {open_count} time(s); "
+            "DuplicateIDValidator must not open it."
         )
-        (config_dir / "automations.yaml").write_text(yaml_content)
-        monkeypatch.setattr("sys.argv", ["duplicate_ids", str(config_dir)])
+
+
+class TestMainFunction:
+    def test_main_passes_with_valid_config(self, config_dir, monkeypatch):
+        (config_dir / "automations.yaml").write_text(
+            "- id: a1\n  alias: A1\n  trigger: []\n  action: []\n"
+        )
+        monkeypatch.setattr("sys.argv", ["duplicate_ids.py", str(config_dir)])
         assert main() == 0
 
-    def test_main_invalid(self, monkeypatch):
-        monkeypatch.setattr("sys.argv", ["duplicate_ids", "/nonexistent"])
+    def test_main_fails_with_duplicate(self, config_dir, monkeypatch):
+        (config_dir / "automations.yaml").write_text(
+            "- id: a1\n  alias: A1\n  trigger: []\n  action: []\n"
+            "- id: a1\n  alias: A2\n  trigger: []\n  action: []\n"
+        )
+        monkeypatch.setattr("sys.argv", ["duplicate_ids.py", str(config_dir)])
         assert main() == 1

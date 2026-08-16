@@ -7,28 +7,8 @@ from unittest.mock import patch
 
 import pytest
 
-from tests.helpers import write_yaml
+from tests.helpers import write_storage_registries, write_yaml
 from tools.validators.references import ReferenceValidator, main
-
-
-def _write_registry(storage_dir, filename, list_key, entries):
-    """Write a Home Assistant storage registry using the shared envelope."""
-    data = {
-        "version": 1,
-        "minor_version": 1,
-        "key": filename,
-        "data": {list_key: entries},
-    }
-    (storage_dir / filename).write_text(json.dumps(data))
-
-
-def _write_registries(config_dir, *, entities, devices, areas):
-    """Create the three registry files used by reference-validator tests."""
-    storage_dir = config_dir / ".storage"
-    storage_dir.mkdir()
-    _write_registry(storage_dir, "core.entity_registry", "entities", entities)
-    _write_registry(storage_dir, "core.device_registry", "devices", devices)
-    _write_registry(storage_dir, "core.area_registry", "areas", areas)
 
 
 class _ReverseSet(set):
@@ -93,7 +73,7 @@ def config_dir(tmp_path):
 
     areas = [{"id": "living_room", "name": "Living Room"}]
 
-    _write_registries(
+    write_storage_registries(
         tmp_path,
         entities=entities,
         devices=devices,
@@ -155,30 +135,44 @@ class TestCollectStringValues:
 class TestDisabledHiddenPredicates:
     """Disabled and hidden predicates use ``is not None`` uniformly."""
 
-    def test_is_disabled_none_is_false(self, validator):
-        assert validator._is_disabled({"disabled_by": None}) is False
+    def test_is_disabled_none_is_false(self):
+        from tools.validators._storage import is_entity_disabled
 
-    def test_is_disabled_string_is_true(self, validator):
-        assert validator._is_disabled({"disabled_by": "user"}) is True
+        assert is_entity_disabled({"disabled_by": None}) is False
 
-    def test_is_disabled_empty_string_is_true(self, validator):
+    def test_is_disabled_string_is_true(self):
+        from tools.validators._storage import is_entity_disabled
+
+        assert is_entity_disabled({"disabled_by": "user"}) is True
+
+    def test_is_disabled_empty_string_is_true(self):
         """An empty string is treated as disabled by the ``is not None`` predicate.
         This matches the entity-branch behavior (``is not None``),
         not the old device-branch truthy check which was the outlier."""
-        assert validator._is_disabled({"disabled_by": ""}) is True
+        from tools.validators._storage import is_entity_disabled
 
-    def test_is_hidden_none_is_false(self, validator):
-        assert validator._is_hidden({"hidden_by": None}) is False
+        assert is_entity_disabled({"disabled_by": ""}) is True
 
-    def test_is_hidden_empty_string_is_true(self, validator):
+    def test_is_hidden_none_is_false(self):
+        from tools.validators._storage import is_entity_hidden
+
+        assert is_entity_hidden({"hidden_by": None}) is False
+
+    def test_is_hidden_empty_string_is_true(self):
         """An empty string is treated as hidden by the ``is not None`` predicate."""
-        assert validator._is_hidden({"hidden_by": ""}) is True
+        from tools.validators._storage import is_entity_hidden
 
-    def test_is_hidden_handles_missing_key(self, validator):
-        assert validator._is_hidden({}) is False
+        assert is_entity_hidden({"hidden_by": ""}) is True
 
-    def test_is_hidden_string_is_true(self, validator):
-        assert validator._is_hidden({"hidden_by": "user"}) is True
+    def test_is_hidden_handles_missing_key(self):
+        from tools.validators._storage import is_entity_hidden
+
+        assert is_entity_hidden({}) is False
+
+    def test_is_hidden_string_is_true(self):
+        from tools.validators._storage import is_entity_hidden
+
+        assert is_entity_hidden({"hidden_by": "user"}) is True
 
 
 class TestExtractEntityRegistryIds:
@@ -500,7 +494,7 @@ def setup_config(tmp_path):
         {"id": "bedroom", "name": "Bedroom"},
     ]
 
-    _write_registries(
+    write_storage_registries(
         config_dir,
         entities=entities,
         devices=devices,

@@ -6,11 +6,11 @@ from datetime import UTC, datetime
 from typing import cast
 
 from tools.common import (
-    _ENTITY_RE,
     HARequestError,
     add_output_shape_args,
     add_summary_args,
     fail_stderr,
+    is_valid_entity_id,
     resolve_max_chars,
     resolve_summary,
 )
@@ -52,7 +52,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
 
 def _validate_args(args: argparse.Namespace, summary: bool) -> int | None:
     """Validate CLI args. Returns ``1`` on error, ``None`` otherwise."""
-    if args.entity_id is not None and not _ENTITY_RE.fullmatch(args.entity_id):
+    if args.entity_id is not None and not is_valid_entity_id(args.entity_id):
         return fail_stderr(f"Invalid entity_id: {args.entity_id!r}")
     if args.first is not None and args.first < 1:
         return fail_stderr("--first must be >= 1")

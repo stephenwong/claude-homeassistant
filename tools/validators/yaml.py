@@ -68,18 +68,17 @@ class YAMLValidator(ValidatorBase):
             if not blueprint_valid:
                 all_valid = False
             elif "use_blueprint" not in automation:
-                trigger_key = "trigger" if "trigger" in automation else "triggers"
-                action_key = "action" if "action" in automation else "actions"
-                if trigger_key not in automation or automation[trigger_key] is None:
-                    self.errors.append(
-                        f"{source}: Automation {i} missing 'trigger' or 'triggers'"
-                    )
-                    all_valid = False
-                if action_key not in automation or automation[action_key] is None:
-                    self.errors.append(
-                        f"{source}: Automation {i} missing 'action' or 'actions'"
-                    )
-                    all_valid = False
+                for singular, plural in (
+                    ("trigger", "triggers"),
+                    ("action", "actions"),
+                ):
+                    key = singular if singular in automation else plural
+                    if key not in automation or automation[key] is None:
+                        self.errors.append(
+                            f"{source}: Automation {i} missing '{singular}' "
+                            f"or '{plural}'"
+                        )
+                        all_valid = False
 
             if "alias" not in automation:
                 self.warnings.append(

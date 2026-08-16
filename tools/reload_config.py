@@ -46,17 +46,6 @@ def _relative_config_path(path: str, config_dir: str) -> str | None:
     return str(relative)
 
 
-def _top_level_config_basename(path: str, config_dir: str) -> str | None:
-    """Return a direct child basename of *config_dir*, otherwise ``None``."""
-    try:
-        relative = Path(path).relative_to(Path(config_dir))
-    except ValueError:
-        return None
-    if len(relative.parts) != 1:
-        return None
-    return relative.name
-
-
 def _run_git_command(
     args: list[str], cwd: Path, timeout: int
 ) -> subprocess.CompletedProcess[str] | None:

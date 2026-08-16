@@ -6,8 +6,18 @@ import pytest
 import yaml
 
 from tests.helpers import make_command_args, make_parser, parse_command_args
+from tools.commands import edit
 from tools.commands import stale_sensors as stale_cmd
-from tools.commands.edit import add_parser, run
+from tools.commands.edit import (
+    _dispatch_by_filetype,
+    _parse_value,
+    _resolve_shape,
+    _run_add,
+    _run_show,
+    add_parser,
+    run,
+)
+from tools.ha.yaml_editor import YAMLEditor
 
 
 def _boom(*arguments, **keywords):
@@ -116,9 +126,6 @@ def _read_yaml(config_dir, basename):
 
 class TestDispatchByFiletype:
     def test_supplied_shape_skips_shape_detection(self, tmp_path, monkeypatch):
-        from tools.commands import edit
-        from tools.ha.yaml_editor import YAMLEditor
-
         editor = YAMLEditor(_write_file(tmp_path, "scripts", "{}"))
         monkeypatch.setattr(
             edit,
@@ -126,7 +133,7 @@ class TestDispatchByFiletype:
             lambda _editor: pytest.fail("shape should already be known"),
         )
         calls = []
-        edit._dispatch_by_filetype(
+        _dispatch_by_filetype(
             editor,
             "foo",
             shape=edit._FileShape(edit._ShapeKind.DICT, edit._ShapeKind.DICT),
@@ -136,9 +143,6 @@ class TestDispatchByFiletype:
         assert calls == ["dict:foo"]
 
     def test_dispatches_to_on_dict_for_scripts(self, tmp_path):
-        from tools.commands.edit import _dispatch_by_filetype
-        from tools.ha.yaml_editor import YAMLEditor
-
         editor = YAMLEditor(_write_file(tmp_path, "scripts", "foo:\n  mode: single\n"))
         calls = []
         _dispatch_by_filetype(
@@ -150,9 +154,6 @@ class TestDispatchByFiletype:
         assert calls == ["dict:foo"]
 
     def test_dispatches_to_on_list_for_automations(self, tmp_path):
-        from tools.commands.edit import _dispatch_by_filetype
-        from tools.ha.yaml_editor import YAMLEditor
-
         editor = YAMLEditor(_write_file(tmp_path, "automations", "- alias: foo\n"))
         calls = []
         _dispatch_by_filetype(
@@ -164,9 +165,6 @@ class TestDispatchByFiletype:
         assert calls == ["list:foo"]
 
     def test_unknown_filetype_preserves_list_fallback(self, tmp_path):
-        from tools.commands.edit import _dispatch_by_filetype
-        from tools.ha.yaml_editor import YAMLEditor
-
         editor = YAMLEditor(_write_file(tmp_path, "empty", ""))
         calls = []
         _dispatch_by_filetype(
@@ -178,9 +176,6 @@ class TestDispatchByFiletype:
         assert calls == ["list"]
 
     def test_add_with_numeric_alias_is_saved(self, tmp_path):
-        from tools.commands.edit import _run_add
-        from tools.ha.yaml_editor import YAMLEditor
-
         path = _write_file(tmp_path, "automations", "[]")
         result = _run_add(
             YAMLEditor(path), '{"alias": 123, "trigger": [], "action": []}', True
@@ -208,9 +203,6 @@ class TestResolveShape:
         expected_kind,
         expected_editable,
     ):
-        from tools.commands.edit import _resolve_shape
-        from tools.ha.yaml_editor import YAMLEditor
-
         path = _write_file(tmp_path, file, content)
         shape = _resolve_shape(YAMLEditor(path))
 
@@ -228,9 +220,6 @@ class TestResolveShape:
     def test_missing_file_uses_filename_default(
         self, tmp_path, file, expected_editable
     ):
-        from tools.commands.edit import _resolve_shape
-        from tools.ha.yaml_editor import YAMLEditor
-
         shape = _resolve_shape(YAMLEditor(tmp_path / f"{file}.yaml"))
 
         assert shape.kind.value == "missing"
@@ -307,7 +296,6 @@ class TestRunShow:
         assert "empty" in err.lower()
 
     def test_show_uses_public_load_result(self, capsys):
-        from tools.commands.edit import _run_show
 
         class PublicOnlyEditor:
             def __init__(self):
@@ -399,8 +387,6 @@ class TestRunAdd:
     def test_add_save_oserror_reports_write_failure(
         self, tmp_path, monkeypatch, capsys
     ):
-        from tools.ha.yaml_editor import YAMLEditor
-
         _write_file(tmp_path, "automations", "[]")
 
         def fail_save(_editor):
@@ -863,8 +849,6 @@ class TestParseValue:
         ],
     )
     def test_coercion(self, raw, expected):
-        from tools.commands.edit import _parse_value
-
         assert _parse_value(raw) == expected
         if isinstance(expected, bool):
             assert isinstance(_parse_value(raw), bool)
@@ -872,8 +856,6 @@ class TestParseValue:
             assert isinstance(_parse_value(raw), int)
 
     def test_yaml_error_falls_back_to_raw(self):
-        from tools.commands.edit import _parse_value
-
         assert _parse_value("[1, 2") == "[1, 2"
 
 
@@ -929,7 +911,6 @@ def test_edit_round_trip_preserves_comments(tmp_path):
         "  triggers: []\n"
         "  actions: []\n"
     )
-    from tools.ha.yaml_editor import YAMLEditor
 
     auto.write_text(original, encoding="utf-8")
     e = YAMLEditor(auto)

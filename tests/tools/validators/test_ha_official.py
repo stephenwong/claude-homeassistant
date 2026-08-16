@@ -136,26 +136,6 @@ def test_is_benign_package_line_rejects_unrelated_line():
     assert _is_benign_package_line("RuntimeError: real configuration failure") is False
 
 
-class TestL53IgnorablePatterns:
-    """L53: pin each known-benign pattern so a regression surfaces."""
-
-    @pytest.mark.parametrize(
-        "pattern",
-        [
-            "Unable to install package foo",
-            "No solution found when resolving",
-            "Requirements are unsatisfiable",
-            "Requirements for package X",
-            "could not be loaded",
-        ],
-    )
-    def test_ignorable_message_covers_known_patterns(self, validator, pattern):
-        assert validator.is_ignorable_message(pattern) is True
-
-    def test_normal_error_not_ignorable(self, validator):
-        assert validator.is_ignorable_message("real config error") is False
-
-
 class TestL52ErrorCountRegex:
     """L52: the regex must match several HA phrasings."""
 
