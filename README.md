@@ -1,6 +1,13 @@
 # AI Home Assistant Config Manager
 
+[![Documentation](https://img.shields.io/badge/Documentation-GitHub_Wiki-0969da?style=flat-square&logo=github)](https://github.com/stephenwong/ai-homeassistant/wiki)
+[![Validation](https://img.shields.io/badge/Validation-7_Layers_Parallel-success?style=flat-square)](https://github.com/stephenwong/ai-homeassistant/wiki/Validation-and-Deployment-Engine)
+[![Hardware](https://img.shields.io/badge/Hardware-OptiPlex_%2B_Hailo--8-orange?style=flat-square)](https://github.com/stephenwong/ai-homeassistant/wiki/System-and-Hardware-Architecture)
+
 A toolkit for managing Home Assistant configurations — automated validation, safe deployment, round-trip YAML editing. Designed to work alongside AI coding assistants, but fully usable standalone.
+
+> 📖 **Looking for full guides, architecture diagrams, and hardware runbooks?**  
+> Explore the **[GitHub Wiki](https://github.com/stephenwong/ai-homeassistant/wiki)** for deep-dive documentation on [Hardware & Network Topology](https://github.com/stephenwong/ai-homeassistant/wiki/System-and-Hardware-Architecture), [Validation Caching](https://github.com/stephenwong/ai-homeassistant/wiki/Validation-and-Deployment-Engine), [Frigate & Zigbee Runbooks](https://github.com/stephenwong/ai-homeassistant/wiki/Integrations-and-Runbooks), and [Disaster Recovery](https://github.com/stephenwong/ai-homeassistant/wiki/Backups-and-Disaster-Recovery).
 
 ## ✨ Features
 
@@ -13,6 +20,20 @@ A toolkit for managing Home Assistant configurations — automated validation, s
 - 📦 **Importable Python Modules** — `HAClient`, `YAMLEditor`, and validators for scripts and tests
 - 💾 **Backup System** — Timestamped config backups, changelog tooling, and full-text search
 - 🔎 **Upgrade Readiness** — `check-upgrade` skill reviews intervening Home Assistant releases for breaking changes and instance-relevant features
+
+## 📚 Documentation & Runbooks
+
+Comprehensive guides, hardware topologies, and visual runbooks are maintained in the **[GitHub Wiki](https://github.com/stephenwong/ai-homeassistant/wiki)**:
+
+| Guide | Description |
+|---|---|
+| 🏗️ **[System & Hardware Architecture](https://github.com/stephenwong/ai-homeassistant/wiki/System-and-Hardware-Architecture)** | Dell OptiPlex, Hailo-8 AI, SMLIGHT PoE Zigbee, and 4-channel access model |
+| 🛡️ **[Validation & Deployment Engine](https://github.com/stephenwong/ai-homeassistant/wiki/Validation-and-Deployment-Engine)** | 7-layer validation pipeline, SHA256 caching, and offline fallbacks |
+| 🔌 **[Integrations & Hardware Runbooks](https://github.com/stephenwong/ai-homeassistant/wiki/Integrations-and-Runbooks)** | Frigate NVR, Hailo-8, go2rtc stream routing, Zigbee 250ms rule, Lovelace storage mode |
+| 📐 **[Automation & Entity Standards](https://github.com/stephenwong/ai-homeassistant/wiki/Automation-and-Entity-Design)** | Entity naming conventions, UI-visible motion timer helper pattern, safe YAML editing |
+| 💾 **[Backups & Disaster Recovery](https://github.com/stephenwong/ai-homeassistant/wiki/Backups-and-Disaster-Recovery)** | 3-tier retention policy, changelog search, surgical restore guide |
+| 🤖 **[AI Assistant & MCP Bridge](https://github.com/stephenwong/ai-homeassistant/wiki/AI-Assistant-Integration)** | Dual harness MCP setup, tool selection decision matrix, token guardrails |
+| 🔧 **[Troubleshooting & FAQs](https://github.com/stephenwong/ai-homeassistant/wiki/Troubleshooting-and-FAQ)** | Interactive runbooks for validation errors, SSH failures, dead sensors |
 
 ## 🔄 How It Works
 
