@@ -7,6 +7,7 @@ This repository manages Home Assistant configuration files with automated valida
 ## User Preferences
 
 - **Timezone:** AEST/AEDT (Australian Eastern). AEST=UTC+10, AEDT=UTC+11 (Oct-Apr). "7:15am AEDT" = 20:15 UTC previous day.
+- **Motion Lighting Timers (Real-Time UI Visibility):** Always use explicit `timer.*` helper entities (with `action: timer.start` on motion and `trigger: timer.finished` to turn off) for room motion lighting automations rather than inline `for:` triggers. This ensures real-time countdown progress is visible on Lovelace dashboard room cards.
 
 ## Project Structure
 
@@ -16,6 +17,7 @@ This repository manages Home Assistant configuration files with automated valida
 - `config/blueprints/` — HA blueprints (automation/, script/, template/)
 - `config/.storage/core.entity_registry` — **1.7MB JSON, never read directly.** Use `ha_search` MCP tool or `grep` for known exact IDs.
 - `frigate/config.yml` — Frigate NVR (addon: `ccab4aaf_frigate-fa-beta`)
+- **Deployment vs Git:** `config/` and `frigate/config.yml` are untracked (`.gitignore`). Configuration changes are **never committed to git**; they are deployed directly to the Home Assistant server via `make push` (with pre-push validation and automatic config reload) and snapshot-recorded in `backups/` via `make backup`. Git commits are strictly for repository tooling (`tools/`), tests (`tests/`), documentation, and CI.
 
 ### Tools Package (`tools/`)
 - `tools/ha_cli.py` — **Single CLI entry point**
@@ -40,6 +42,8 @@ Configure `.env` (copy from `.env.example`) for repository tools: `HA_TOKEN`, `H
 make pull           Sync config from HA
 make push           Push config (with validation)
 make backup         Verified mode-600 local config snapshot (attempts changelog generation)
+make changelog-search Search diff changelogs for changes (usage: make changelog-search PATTERN='text' [DAYS=7] [LIMIT=5])
+make backup-search  Search archive contents for text (usage: make backup-search PATTERN='text' [DAYS=7] [LIMIT=5])
 make validate       Run all validators
 make reload         Reload HA config via API
 make status         Config/filesystem status + entity-reference summary
@@ -191,8 +195,10 @@ from tools.validators.entity_definitions import EntityDefinitionExtractor
 - **Automations:** `home-assistant-automation` skill; scripts/scenes: the external `home-assistant-best-practices` skill supplied by ha-mcp
 - **Debugging:** `home-assistant-debugging` skill
 - **Upgrade readiness:** `check-upgrade` skill; require a target version in `YYYY.M.P` form, review every intervening release, and produce a read-only instance-specific report without syncing or deploying HA configuration
+- **Deploying HA Config vs Python Commits:** Never attempt to git-commit changes to `config/` or `frigate/` (both are git-ignored). Deploy HA configuration changes by running `make push` (which runs `make validate` before rsyncing to `HA_HOST` and triggering config reload). Protect state before and after using `make backup`.
 - **Python changes:** **Always TDD** — write tests first, confirm red, then implement.
 - **After tests pass:** update `README.md`, this context file (`AGENTS.md`), and relevant skills to reflect any behavior, entity, or workflow changes.
+- **Entity removals/refactoring:** When removing or renaming entities, helpers, or timers, always audit and clean up all dashboard references (`.storage/lovelace.lovelace`), automations, scripts, scenes, and templates to prevent broken/unavailable dashboard cards.
 - **Before committing:** `make lint` (or `make lint-fix` followed by `make lint`; `lint-fix` runs Ruff only, while `lint` also runs mypy)
 - **After concurrency/parallel/error-handling changes:** perform a state-machine review of entry points, transitions, cancellation/error paths, and tests; use an installed review skill when available.
 - **Rubber duck review:** invoke the `rubber-duck-review` skill when wanted (explicit, not automatic).
@@ -244,6 +250,8 @@ Co-authored-by: Antigravity <noreply@antigravity.google>
 ## Backups
 
 Config changes often not in git history — `backups/` is the real record. Use `home-assistant-backup` skill.
+- Find changes/regressions (fastest): `make changelog-search PATTERN='<text>' DAYS=7` (searches plain-text diffs)
+- Find historical snapshot content: `make backup-search PATTERN='<text>' LIMIT=5` (searches archive files)
 - Extract: `tar -xzOf backups/ha_config_<ts>.tar.gz config/automations.yaml`
 - Compare: extract to `/tmp/`, then diff
 - Revert: ask about individual settings, don't blindly restore
@@ -287,9 +295,17 @@ Zone tuning: increase `inertia`/`loitering_time` for false alerts. After changes
 
 **Zigbee command timing:** Add 250ms delays between commands to the same device. Applies to `select.select_option`, `switch.turn_on/off`, `number.set_value`, etc.
 
+**Searching config files (Harness `grep_search` vs `.gitignore`):** Because `config/` is untracked in `.gitignore`, agent harness search tools (`grep_search`, `find_by_name`) silently ignore files inside `config/` and `.storage/`. Never rely on harness `grep_search` for `config/` queries (it returns 0 matches). Instead use:
+- **Entities & Config Bodies:** MCP `ha_search` (covers entity registry + automation/script/scene/helper YAML).
+- **Zigbee Devices:** Direct lookup in `config/zigbee2mqtt/configuration.yaml` for friendly names, IEEE addresses, and descriptions.
+- **Local Automations/Scripts:** `uv run python tools/ha_cli.py edit automations "<alias>"` or `ha_config_get_automation`.
+- **Shell search:** `rg --no-ignore "<pattern>" config/` or `grep` via terminal.
+- **Diffs & regressions:** `make changelog-search PATTERN='<text>' [DAYS=7]` (searches plain-text changelog diffs).
+- **Historical snapshots:** `make backup-search PATTERN='<text>' [LIMIT=5]` (searches archive contents).
+
 **Rsync:** Separate exclude files for pull vs push. `make push` transfers the local config tree subject to `.rsync-excludes-push`; it excludes `.storage/` and runtime files. `.storage/` is a read-only reference — use MCP or `grep` for known exact IDs, never modify it locally.
 
-**HA Jinja2:** Validate templates against the live Home Assistant renderer; do not treat a short example list of filters as an allowlist. Filter availability is HA-version-specific. For a portable content-change fingerprint, use `| length` rather than relying on a non-portable filter such as `hash`.
+**HA Jinja2:** Validate templates against the live Home Assistant renderer; do not treat a short example list of filters as an allowlist. Filter availability is HA-version-specific (e.g. Ansible-only filters like `quote` or `default(omit)` are not supported in HA Jinja2). For a portable content-change fingerprint, use `| length` rather than relying on a non-portable filter such as `hash`.
 
 **Template whitespace:** NEVER multi-line for URLs/entity IDs. Use single-line with quotes.
 
@@ -301,7 +317,7 @@ Zone tuning: increase `inertia`/`loitering_time` for false alerts. After changes
 
 **Helper scripts:** Must exist locally — rsync push deletes server files not in local repo.
 
-**Lovelace:** `.storage/lovelace` excluded from push. Edit via SSH to `/config/.storage/lovelace.lovelace`, then restart HA. REST API returns 404 in storage mode.
+**Lovelace:** `.storage/lovelace` excluded from push. Edit via SSH to `/config/.storage/lovelace.lovelace`, then restart HA. REST API returns 404 in storage mode. Always clean up dashboard card entity references when retiring or renaming entities to prevent orphaned/unavailable cards.
 
 **DashCast:** Need `trusted_users` in `auth_providers` for multi-user. Stop with `homeassistant.turn_off`, NOT `media_player.turn_off`.
 

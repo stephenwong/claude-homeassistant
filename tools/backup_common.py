@@ -9,7 +9,7 @@ import os
 import re
 import tarfile
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import IO, Literal, TypedDict
 
@@ -98,6 +98,24 @@ def get_backups() -> list[BackupRecord]:
             )
 
     return sorted(backups, key=lambda x: (x["timestamp"], x["filename"]))
+
+
+def filter_backups(
+    backups: list[BackupRecord],
+    *,
+    days: int | None = None,
+    limit: int | None = None,
+    now: datetime | None = None,
+) -> list[BackupRecord]:
+    """Filter backup records by age (days) and/or count limit (preserves list order)."""
+    filtered = backups
+    if days is not None:
+        current_time = now if now is not None else datetime.now().astimezone()
+        cutoff = current_time - timedelta(days=days)
+        filtered = [b for b in filtered if b["timestamp"] >= cutoff]
+    if limit is not None:
+        filtered = filtered[:limit]
+    return filtered
 
 
 def iter_tarball_file_members(path: Path) -> Iterator[tuple[str, IO[bytes]]]:

@@ -118,13 +118,16 @@ ha_get_state("binary_sensor.zigbee2mqtt_bridge_connection_state")
 
 ### Finding When a Change Was Introduced
 
-If the user says "this worked before" or "this broke recently", use backup search to find when it changed:
+If the user says "this worked before" or "this broke recently", search changelog diffs first to pinpoint exact changes:
 
 ```bash
-# Search all backups for a specific pattern
-make backup-search PATTERN='media_player.play_media'
+# Search diff changelogs for when lines were added/removed (fastest, plain text)
+make changelog-search PATTERN='media_player.play_media' DAYS=7
 
-# Check changelogs for what changed in each backup
+# Search archive contents across backups if looking for full snapshot states
+make backup-search PATTERN='media_player.play_media' LIMIT=5
+
+# Check a specific changelog directly
 cat backups/ha_config_YYYYMMDD_HHMMSS.changelog
 ```
 

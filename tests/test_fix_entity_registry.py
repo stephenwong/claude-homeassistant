@@ -1,9 +1,9 @@
-"""Unit tests for config/fix_entity_registry.py."""
+"""Unit tests for tools/fix_entity_registry.py."""
 
 import json
 from pathlib import Path
 
-from config.fix_entity_registry import (
+from tools.fix_entity_registry import (
     fix_entity_registry_data,
     main,
 )
@@ -59,6 +59,44 @@ def test_fix_entity_registry_data_prunes_and_renames():
         result["data"]["deleted_entities"][0]["entity_id"]
         == "automation.control_pantry_light_via_door_sensor"
     )
+
+
+def test_fix_entity_registry_data_prunes_scenes():
+    raw_data = {
+        "version": 1,
+        "key": "core.entity_registry",
+        "data": {
+            "entities": [
+                {
+                    "entity_id": "scene.pantry_white",
+                    "unique_id": "1637730427771",
+                },
+                {
+                    "entity_id": "scene.pantry_white_2",
+                    "unique_id": "pantry_white",
+                },
+                {
+                    "entity_id": "scene.pantry_rainbow",
+                    "unique_id": "1637730279312",
+                },
+                {
+                    "entity_id": "scene.pantry_rainbow_2",
+                    "unique_id": "pantry_rainbow",
+                },
+            ],
+            "deleted_entities": [],
+        },
+    }
+
+    result, removed, renamed = fix_entity_registry_data(raw_data)
+
+    assert removed == 2
+    assert renamed == 2
+    assert len(result["data"]["entities"]) == 2
+    assert result["data"]["entities"][0]["entity_id"] == "scene.pantry_white"
+    assert result["data"]["entities"][0]["unique_id"] == "pantry_white"
+    assert result["data"]["entities"][1]["entity_id"] == "scene.pantry_rainbow"
+    assert result["data"]["entities"][1]["unique_id"] == "pantry_rainbow"
 
 
 def test_fix_entity_registry_data_no_changes():

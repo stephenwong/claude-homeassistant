@@ -29,7 +29,9 @@ Do not run `make pull` until the pre-pull snapshot succeeds. If pull fails, pres
 
 **Preview before pruning:** `uv run python tools/prune_backups.py --dry-run` to see what would be deleted. Pass `--apply` only when deletion is authorized; the default is dry-run. The default `--min-keep 3` safety floor applies during `--apply`.
 
-**Searching backups:** `make backup-search PATTERN='text'` to find when a change was introduced.
+**Searching backups:**
+- `make changelog-search PATTERN='text' [DAYS=7]` — search plain-text diffs to find when a change was introduced (fastest).
+- `make backup-search PATTERN='text' [LIMIT=5]` — search snapshot archive contents.
 
 **Backup directory:** Keep the default `backups/` directory. The Makefile and helper tools must use the same directory; if changing `BACKUP_DIR`, verify all backup, pruning, search, and changelog commands use it before relying on the result.
 

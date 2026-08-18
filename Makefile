@@ -41,7 +41,8 @@ help:
 	@echo "  $(YELLOW)reload$(NC)   - Reload Home Assistant configuration (without pushing)"
 	@echo "  $(YELLOW)format-yaml$(NC) - Format YAML files (usage: make format-yaml [FILES='file1.yaml file2.yaml'])"
 	@echo "  $(YELLOW)check-env$(NC) - Validate environment configuration (.env file)"
-	@echo "  $(YELLOW)backup-search$(NC) - Search backups for a pattern (usage: make backup-search PATTERN='text')"
+	@echo "  $(YELLOW)backup-search$(NC) - Search backup archives for a pattern (usage: make backup-search PATTERN='text' [DAYS=7] [LIMIT=5])"
+	@echo "  $(YELLOW)changelog-search$(NC) - Search diff changelogs for a pattern (usage: make changelog-search PATTERN='text' [DAYS=7] [LIMIT=5])"
 	@echo "  $(YELLOW)changelog$(NC) - Generate changelog for a backup (usage: make changelog BACKUP='path')"
 	@echo "  $(YELLOW)changelog-all$(NC) - Generate changelogs for all backups"
 	@echo "  $(YELLOW)lint$(NC)     - Run Python linting and format checks (ruff)"
@@ -118,9 +119,13 @@ backup:
 		echo "$(YELLOW)Warning: changelog generation failed$(NC)" >&2; \
 	fi
 
-# Search backups for a pattern
+# Search backup archives for a pattern
 backup-search:
-	@$(UV_RUN) python $(TOOLS_PATH)/search_backups.py "$(PATTERN)"
+	@$(UV_RUN) python $(TOOLS_PATH)/search_backups.py $(if $(DAYS),--days $(DAYS),) $(if $(LIMIT),--limit $(LIMIT),) $(if $(CONTEXT),-C $(CONTEXT),) "$(PATTERN)"
+
+# Search diff changelogs for a pattern
+changelog-search:
+	@$(UV_RUN) python $(TOOLS_PATH)/search_backups.py --changelogs $(if $(DAYS),--days $(DAYS),) $(if $(LIMIT),--limit $(LIMIT),) $(if $(CONTEXT),-C $(CONTEXT),) "$(PATTERN)"
 
 # Generate changelog for a specific backup
 changelog:

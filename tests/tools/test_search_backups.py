@@ -337,3 +337,159 @@ class TestTarExtractionSafety:
         assert unreadable is False
         assert len(matches) == 1
         assert matches[0]["file"] == "config/real.yaml"
+
+
+class TestSearchChangelog:
+    def test_finds_pattern_in_changelog(self, tmp_path):
+        from tools.search_backups import search_changelog
+
+        tar_path = tmp_path / "ha_config_20260816_120000.tar.gz"
+        tar_path.write_bytes(b"dummy")
+        changelog_path = tmp_path / "ha_config_20260816_120000.changelog"
+        changelog_path.write_text(
+            "Date: 2026-08-16 12:00:00\n"
+            "-  action: input_select.select_next\n"
+            "+  action: select.select_option\n"
+        )
+        backup = make_backup_record(
+            tar_path, tar_path.name, datetime(2026, 8, 16).astimezone()
+        )
+        matches, unreadable = search_changelog(backup, re.compile(r"select_option"))
+        assert unreadable is False
+        assert len(matches) == 1
+        assert matches[0]["file"] == "ha_config_20260816_120000.changelog"
+        assert matches[0]["line_num"] == 3
+        assert "+  action: select.select_option" in matches[0]["line"]
+
+    def test_missing_changelog_returns_empty_and_not_unreadable(self, tmp_path):
+        from tools.search_backups import search_changelog
+
+        tar_path = tmp_path / "ha_config_20260816_120000.tar.gz"
+        tar_path.write_bytes(b"dummy")
+        backup = make_backup_record(
+            tar_path, tar_path.name, datetime(2026, 8, 16).astimezone()
+        )
+        matches, unreadable = search_changelog(backup, re.compile(r"select_option"))
+        assert unreadable is False
+        assert matches == []
+
+    def test_changelog_context_lines(self, tmp_path):
+        from tools.search_backups import search_changelog
+
+        tar_path = tmp_path / "ha_config_20260816_120000.tar.gz"
+        tar_path.write_bytes(b"dummy")
+        changelog_path = tmp_path / "ha_config_20260816_120000.changelog"
+        changelog_path.write_text("line1\nMATCH_LINE\nline3\n")
+        backup = make_backup_record(
+            tar_path, tar_path.name, datetime(2026, 8, 16).astimezone()
+        )
+        matches, _ = search_changelog(backup, re.compile("MATCH_LINE"), context_lines=1)
+        assert len(matches) == 1
+        assert matches[0]["context_before"] == ["line1"]
+        assert matches[0]["context_after"] == ["line3"]
+
+
+class TestSearchBackupsCLIOptions:
+    def test_main_changelogs_flag(self, tmp_path, capsys, monkeypatch):
+        tar_path = tmp_path / "ha_config_20260816_120000.tar.gz"
+        tar_path.write_bytes(b"dummy")
+        changelog_path = tmp_path / "ha_config_20260816_120000.changelog"
+        changelog_path.write_text("+  action: script.apply_kitchen_lighting_mode\n")
+        backup = make_backup_record(
+            tar_path, tar_path.name, datetime(2026, 8, 16).astimezone()
+        )
+
+        assert (
+            _run_main(
+                monkeypatch, [backup], "--changelogs", "apply_kitchen_lighting_mode"
+            )
+            == 0
+        )
+        captured = capsys.readouterr()
+        assert "MATCH" in captured.out
+        assert "apply_kitchen_lighting_mode" in captured.out
+
+    def test_main_days_filter(self, tmp_path, capsys, monkeypatch):
+        from datetime import timedelta
+
+        now = datetime(2026, 8, 18, 20, 0, 0).astimezone()
+        tar1 = tmp_path / "ha_config_20260818_120000.tar.gz"
+        tar1.write_bytes(b"dummy")
+        tar2 = tmp_path / "ha_config_20260801_120000.tar.gz"
+        tar2.write_bytes(b"dummy")
+        b1 = make_backup_record(tar1, tar1.name, now - timedelta(days=1))
+        b2 = make_backup_record(tar2, tar2.name, now - timedelta(days=15))
+
+        with patch(
+            "tools.search_backups.search_backup", return_value=([], False)
+        ) as mock_search:
+            _run_main(monkeypatch, [b1, b2], "--days", "7", "dummy_pattern")
+            assert mock_search.call_count == 1
+
+    def test_main_limit_filter(self, tmp_path, capsys, monkeypatch):
+        tar1 = tmp_path / "ha_config_20260818_120000.tar.gz"
+        tar1.write_bytes(b"dummy")
+        tar2 = tmp_path / "ha_config_20260817_120000.tar.gz"
+        tar2.write_bytes(b"dummy")
+        tar3 = tmp_path / "ha_config_20260816_120000.tar.gz"
+        tar3.write_bytes(b"dummy")
+        b1 = make_backup_record(tar1, tar1.name, datetime(2026, 8, 18).astimezone())
+        b2 = make_backup_record(tar2, tar2.name, datetime(2026, 8, 17).astimezone())
+        b3 = make_backup_record(tar3, tar3.name, datetime(2026, 8, 16).astimezone())
+
+        with patch(
+            "tools.search_backups.search_backup", return_value=([], False)
+        ) as mock_search:
+            _run_main(monkeypatch, [b1, b2, b3], "--limit", "2", "dummy_pattern")
+            assert mock_search.call_count == 2
+
+    def test_main_empty_after_filter_returns_zero(self, tmp_path, capsys, monkeypatch):
+        tar1 = tmp_path / "ha_config_20260801_120000.tar.gz"
+        tar1.write_bytes(b"dummy")
+        b1 = make_backup_record(tar1, tar1.name, datetime(2026, 8, 1).astimezone())
+
+        assert _run_main(monkeypatch, [b1], "--days", "1", "pattern") == 0
+        captured = capsys.readouterr()
+        assert "No matching backups found" in captured.err
+
+    def test_changelog_oserror_marks_unreadable(self, tmp_path, monkeypatch):
+        from tools.search_backups import search_changelog
+
+        tar_path = tmp_path / "ha_config_20260816_120000.tar.gz"
+        tar_path.write_bytes(b"dummy")
+        changelog_path = tmp_path / "ha_config_20260816_120000.changelog"
+        changelog_path.write_text("data")
+        backup = make_backup_record(
+            tar_path, tar_path.name, datetime(2026, 8, 16).astimezone()
+        )
+
+        def mock_open(*args, **kwargs):
+            raise OSError("permission denied")
+
+        monkeypatch.setattr("builtins.open", mock_open)
+        matches, unreadable = search_changelog(backup, re.compile(r"pattern"))
+        assert unreadable is True
+        assert matches == []
+
+    def test_main_changelogs_with_files_only(self, tmp_path, capsys, monkeypatch):
+        tar_path = tmp_path / "ha_config_20260816_120000.tar.gz"
+        tar_path.write_bytes(b"dummy")
+        changelog_path = tmp_path / "ha_config_20260816_120000.changelog"
+        changelog_path.write_text("+  test_match_pattern\n")
+        backup = make_backup_record(
+            tar_path, tar_path.name, datetime(2026, 8, 16).astimezone()
+        )
+
+        assert (
+            _run_main(
+                monkeypatch,
+                [backup],
+                "--changelogs",
+                "--files-only",
+                "test_match_pattern",
+            )
+            == 0
+        )
+        captured = capsys.readouterr()
+        assert "MATCH  ha_config_20260816_120000.tar.gz" in captured.out
+        assert "+  test_match_pattern" not in captured.out

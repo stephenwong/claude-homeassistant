@@ -129,3 +129,74 @@ class TestManagedBackups:
 
         assert changelog_path_for(record) == changelog
         assert backup_path_for_changelog(changelog) == archive
+
+
+class TestFilterBackups:
+    def test_filter_by_days(self):
+        from datetime import datetime, timedelta
+        from pathlib import Path
+
+        from tests.helpers import make_backup_record
+        from tools.backup_common import filter_backups
+
+        now = datetime(2026, 8, 18, 20, 0, 0).astimezone()
+        b1 = make_backup_record(
+            Path("ha_config_20260818_120000.tar.gz"),
+            "ha_config_20260818_120000.tar.gz",
+            now - timedelta(hours=8),
+        )
+        b2 = make_backup_record(
+            Path("ha_config_20260816_120000.tar.gz"),
+            "ha_config_20260816_120000.tar.gz",
+            now - timedelta(days=2),
+        )
+        b3 = make_backup_record(
+            Path("ha_config_20260801_120000.tar.gz"),
+            "ha_config_20260801_120000.tar.gz",
+            now - timedelta(days=17),
+        )
+
+        backups = [b1, b2, b3]
+        result = filter_backups(backups, days=7, now=now)
+        assert result == [b1, b2]
+
+    def test_filter_by_limit(self):
+        from datetime import datetime
+        from pathlib import Path
+
+        from tests.helpers import make_backup_record
+        from tools.backup_common import filter_backups
+
+        b1 = make_backup_record(
+            Path("b1.tar.gz"), "b1.tar.gz", datetime(2026, 8, 18).astimezone()
+        )
+        b2 = make_backup_record(
+            Path("b2.tar.gz"), "b2.tar.gz", datetime(2026, 8, 17).astimezone()
+        )
+        b3 = make_backup_record(
+            Path("b3.tar.gz"), "b3.tar.gz", datetime(2026, 8, 16).astimezone()
+        )
+
+        backups = [b1, b2, b3]
+        assert filter_backups(backups, limit=2) == [b1, b2]
+
+    def test_filter_combines_days_and_limit(self):
+        from datetime import datetime, timedelta
+        from pathlib import Path
+
+        from tests.helpers import make_backup_record
+        from tools.backup_common import filter_backups
+
+        now = datetime(2026, 8, 18, 20, 0, 0).astimezone()
+        b1 = make_backup_record(
+            Path("b1.tar.gz"), "b1.tar.gz", now - timedelta(hours=1)
+        )
+        b2 = make_backup_record(
+            Path("b2.tar.gz"), "b2.tar.gz", now - timedelta(hours=2)
+        )
+        b3 = make_backup_record(
+            Path("b3.tar.gz"), "b3.tar.gz", now - timedelta(hours=3)
+        )
+
+        backups = [b1, b2, b3]
+        assert filter_backups(backups, days=1, limit=2, now=now) == [b1, b2]

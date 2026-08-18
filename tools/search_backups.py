@@ -18,8 +18,14 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from typing import IO, NotRequired, TypedDict
 
-from tools.backup_common import BackupRecord, get_backups, iter_tarball_file_members
-from tools.common import get_env_int, non_negative_int
+from tools.backup_common import (
+    BackupRecord,
+    changelog_path_for,
+    filter_backups,
+    get_backups,
+    iter_tarball_file_members,
+)
+from tools.common import get_env_int, non_negative_int, positive_int
 
 
 class _MatchResult(TypedDict):
@@ -125,6 +131,33 @@ def search_backup(
     return matches, unreadable
 
 
+def search_changelog(
+    backup: BackupRecord,
+    pattern: re.Pattern[str],
+    context_lines: int = 0,
+) -> tuple[list[_MatchResult], bool]:
+    """Search changelog paired with a backup archive. Returns (matches, unreadable)."""
+    changelog_path = changelog_path_for(backup)
+    if not changelog_path.is_file():
+        return [], False
+
+    matches: list[_MatchResult] = []
+    try:
+        with open(changelog_path, "rb") as f:
+            _search_file(
+                f,
+                changelog_path.name,
+                pattern,
+                context_lines,
+                matches,
+            )
+    except OSError as e:
+        print(f"  Warning: Could not read {changelog_path.name}: {e}", file=sys.stderr)
+        return [], True
+
+    return matches, False
+
+
 def _search_backups(
     backups: list[BackupRecord],
     pattern: re.Pattern[str],
@@ -132,23 +165,38 @@ def _search_backups(
     yaml_only: bool,
     context_lines: int,
     max_workers: int,
+    changelog_mode: bool = False,
 ) -> list[tuple[BackupRecord, tuple[list[_MatchResult], bool]]]:
     """Search backups concurrently while retaining newest-first ordering."""
     results: list[tuple[BackupRecord, tuple[list[_MatchResult], bool]]] = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [
-            (
-                backup,
-                executor.submit(
-                    search_backup,
+        if changelog_mode:
+            futures = [
+                (
                     backup,
-                    pattern,
-                    yaml_only=yaml_only,
-                    context_lines=context_lines,
-                ),
-            )
-            for backup in backups
-        ]
+                    executor.submit(
+                        search_changelog,
+                        backup,
+                        pattern,
+                        context_lines=context_lines,
+                    ),
+                )
+                for backup in backups
+            ]
+        else:
+            futures = [
+                (
+                    backup,
+                    executor.submit(
+                        search_backup,
+                        backup,
+                        pattern,
+                        yaml_only=yaml_only,
+                        context_lines=context_lines,
+                    ),
+                )
+                for backup in backups
+            ]
 
         for backup, future in futures:
             results.append((backup, future.result()))
@@ -203,6 +251,27 @@ def main() -> int:
         "--all", "-a", action="store_true", help="Search all files, not just YAML"
     )
     parser.add_argument(
+        "--changelogs",
+        "--diffs",
+        action="store_true",
+        dest="changelogs",
+        help="Search diff changelogs instead of tarball contents",
+    )
+    parser.add_argument(
+        "--days",
+        "-d",
+        type=positive_int,
+        default=None,
+        help="Search only backups from the last N days",
+    )
+    parser.add_argument(
+        "--limit",
+        "-n",
+        type=positive_int,
+        default=None,
+        help="Limit search to the N most recent backups",
+    )
+    parser.add_argument(
         "--files-only",
         "-l",
         action="store_true",
@@ -239,10 +308,27 @@ def main() -> int:
     # Search newest first
     backups = list(reversed(backups))
 
+    backups = filter_backups(backups, days=args.days, limit=args.limit)
+    if not backups:
+        print(
+            "No matching backups found within the specified time/limit filter",
+            file=sys.stderr,
+        )
+        return 0
+
     yaml_only = not args.all
-    file_type = "all files" if args.all else "YAML files"
+    target_type = (
+        "changelogs" if args.changelogs else ("all files" if args.all else "YAML files")
+    )
+    filter_notes: list[str] = []
+    if args.days:
+        filter_notes.append(f"last {args.days}d")
+    if args.limit:
+        filter_notes.append(f"limit {args.limit}")
+    filter_str = f" [{' '.join(filter_notes)}]" if filter_notes else ""
     print(
-        f"Searching {len(backups)} backups for: {args.pattern} ({file_type})\n",
+        f"Searching {len(backups)} backups for: {args.pattern} "
+        f"({target_type}){filter_str}\n",
         file=sys.stderr,
     )
 
@@ -259,6 +345,7 @@ def main() -> int:
         yaml_only=yaml_only,
         context_lines=args.context,
         max_workers=max_workers,
+        changelog_mode=args.changelogs,
     )
     match_count, unreadable_count = _render_results(
         results, files_only=args.files_only, context_lines=args.context
