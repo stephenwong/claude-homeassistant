@@ -1,10 +1,10 @@
-# 🔌 Integrations & Hardware Runbooks
+# 🔌 Integrations & Runbooks
 
 This guide covers operational best practices and critical gotchas for our main smart home integrations: **Frigate NVR**, **Zigbee2MQTT**, **go2rtc Streaming**, and **Lovelace Dashboards**.
 
 ---
 
-## 📹 Frigate NVR & Hailo-8 AI Computer Vision
+## 📹 Frigate NVR & AI Computer Vision
 
 Frigate processes RTSP camera streams using local hardware acceleration:
 
@@ -14,10 +14,10 @@ flowchart LR
         RTSP["RTSP Stream (Main / Sub)"]
     end
 
-    subgraph VideoPipeline["🖥️ Dell OptiPlex (Frigate Stack)"]
+    subgraph VideoPipeline["🖥️ Home Assistant Server (Frigate Stack)"]
         G2R["go2rtc (Port 1984)<br/>Low-latency WebRTC / RTSP restreamer"]
-        QS["Intel QuickSync (UHD 770)<br/>Hardware video decode"]
-        Hailo["⚡ Hailo-8 AI Accelerator<br/>(26 TOPS object detection)"]
+        QS["Hardware Video Acceleration<br/>Video decode"]
+        AI_Acc["⚡ AI Accelerator<br/>Local object detection"]
         HA_Events["HA Frigate Integration<br/>(Events, clips, occupancy sensors)"]
     end
 
@@ -26,7 +26,7 @@ flowchart LR
     end
 
     RTSP --> G2R
-    G2R --> QS --> Hailo --> HA_Events
+    G2R --> QS --> AI_Acc --> HA_Events
     G2R -->|"Direct H.264 MP4 stream"| Nest
 ```
 
@@ -55,11 +55,11 @@ action:
 
 ## 🐝 Zigbee2MQTT (Z2M) & The 250ms Delay Rule
 
-Our Zigbee network uses an **SMLIGHT SLZB-06Mg24 PoE Coordinator** communicating over Ethernet.
+Our Zigbee network uses a **Network PoE Coordinator** communicating over Ethernet.
 
 ```mermaid
 flowchart TD
-    Coord["📡 SMLIGHT SLZB-06Mg24 (PoE Coordinator)"]
+    Coord["📡 Network PoE Coordinator"]
     
     subgraph Mesh["Zigbee Mesh Network"]
         Router1["💡 Hardwired Light / Plug (Router)"]

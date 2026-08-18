@@ -1,32 +1,32 @@
-# 🏗️ System & Hardware Architecture
+# 🏗️ System Architecture
 
-This page outlines the physical hardware, network layout, software components, and communication channels that make up this smart home system.
+This page outlines the high-level system topology, software components, and communication channels that make up this smart home management setup.
 
 ---
 
-## 🖥️ Physical Hardware Stack
+## 🖥️ System Topology
 
-The system runs on dedicated local hardware designed for reliability, fast AI computer vision processing, and low-latency Zigbee communication:
+The system operates across dedicated local server infrastructure, network-attached coordinator gateways, and IP security cameras:
 
 ```mermaid
 flowchart TB
-    subgraph Rack["🏠 Home Server & Network"]
+    subgraph Rack["🏠 Home Server & Local Network"]
         direction TB
-        Host["🖥️ Dell OptiPlex 7010 Micro<br/>• CPU: Intel i5-13600 (14 cores)<br/>• RAM: 32GB DDR5<br/>• OS: Home Assistant OS (HAOS)<br/>• GPU: Intel UHD 770 (QuickSync)"]
-        Hailo["⚡ Hailo-8 M.2 Module<br/>(26 TOPS AI Neural Accelerator)"]
-        Switch["🔀 Gigabit PoE Switch"]
-        SLZB["📡 SMLIGHT SLZB-06Mg24<br/>PoE Zigbee 3.0 / Matter Coordinator"]
+        Host["🖥️ Home Assistant Server<br/>• OS: Home Assistant OS (HAOS)<br/>• Hardware Video Acceleration<br/>• Container / Add-on Runtime"]
+        AI_Acc["⚡ AI Neural Accelerator<br/>(Local Object Detection)"]
+        Switch["🔀 Local Network / PoE Switch"]
+        Coord["📡 Network Zigbee Coordinator<br/>(PoE / Ethernet Gateway)"]
         Cams["📹 Security Cameras<br/>(RTSP H.264/H.265 streams)"]
 
-        Host --- Hailo
+        Host --- AI_Acc
         Host <--> Switch
-        Switch <--> SLZB
+        Switch <--> Coord
         Switch <--> Cams
     end
 
     subgraph Mesh["🌿 Smart Home Devices"]
         ZDevices["💡 Zigbee Mesh Devices<br/>(Lights, Motion Sensors, Plugs, Climate)"]
-        SLZB -.->|Zigbee Wireless| ZDevices
+        Coord -.->|Zigbee Wireless| ZDevices
     end
 
     subgraph Client["💻 Development & Management"]
@@ -35,14 +35,14 @@ flowchart TB
     end
 ```
 
-### Key Hardware Components
+### Key System Components
 
-| Component | Hardware Model | Purpose | Why It's Chosen |
-|---|---|---|---|
-| **Host Server** | Dell OptiPlex 7010 Micro | Main Home Assistant Server | Compact, low power (~25W idle), PCIe/M.2 expandability, DDR5 speed |
-| **AI Co-Processor** | Hailo-8 M.2 (26 TOPS) | Frigate Object Detection | Runs real-time AI object detection on multiple cameras with near-zero CPU load |
-| **Hardware Video** | Intel QuickSync (UHD 770) | Camera stream transcoding | Hardware-accelerated decoding/encoding for go2rtc and web live-streams |
-| **Zigbee Gateway** | SMLIGHT SLZB-06Mg24 | Zigbee 3.0 / Matter Coordinator | **PoE-powered** over Ethernet; can be placed centrally in the home away from server interference |
+| Component | Role | Purpose |
+|---|---|---|
+| **Host Server** | Home Assistant Core & Add-ons | Main smart home operating system and automation engine |
+| **AI Co-Processor** | Local Object Detection | Runs real-time AI computer vision on camera feeds with low CPU overhead |
+| **Video Processing** | Hardware Video Acceleration | Transcodes and restreams live RTSP camera feeds via go2rtc |
+| **Zigbee Gateway** | Network Zigbee Coordinator | Communicates over local network to manage Zigbee mesh devices |
 
 ---
 

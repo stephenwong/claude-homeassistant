@@ -23,10 +23,10 @@ flowchart LR
         Backup["💾 Snapshot & Changelog"]
     end
 
-    subgraph Server["🏠 Dell OptiPlex (Home Assistant)"]
+    subgraph Server["🏠 Home Assistant Server"]
         HA["Home Assistant Core"]
         Z2M["Zigbee2MQTT"]
-        Frigate["Frigate NVR + Hailo-8"]
+        Frigate["Frigate NVR"]
     end
 
     Edit --> Val
@@ -46,8 +46,8 @@ Browse the guides below. Each page is written with plenty of diagrams and clear 
 <tr>
 <td width="50%">
 
-### 🏗️ [1. System & Hardware Architecture](System-and-Hardware-Architecture)
-- Physical server hardware & PoE Zigbee setup
+### 🏗️ [1. System Architecture](System-and-Hardware-Architecture)
+- System topology & coordinator setup
 - 4-Channel communication model (SSH, REST, WS, MCP)
 - The Push vs. Pull rsync safety boundary
 
@@ -64,8 +64,8 @@ Browse the guides below. Each page is written with plenty of diagrams and clear 
 <tr>
 <td width="50%">
 
-### 🔌 [3. Integrations & Hardware Runbooks](Integrations-and-Runbooks)
-- Frigate NVR + Hailo-8 AI setup & stream routing
+### 🔌 [3. Integrations & Runbooks](Integrations-and-Runbooks)
+- Frigate NVR AI setup & stream routing
 - Zigbee2MQTT naming rules & the 250ms timing rule
 - Lovelace storage mode & Google Cast quirks
 
@@ -124,14 +124,14 @@ mindmap
       Asymmetric rsync excludes
       Local timestamped backups
       Diff changelogs
-    Hardware & Video
-      Dell OptiPlex 7010 Micro
-      Hailo-8 26 TOPS AI
-      SMLIGHT PoE Zigbee
+    Integrations & Video
+      Home Assistant Core
+      Frigate NVR Detection
+      Zigbee Mesh Coordinator
       go2rtc low-latency RTSP
 ```
 
 ---
 
 > [!TIP]
-> **New to the repo?** Start by reading [System & Hardware Architecture](System-and-Hardware-Architecture) to understand how your local machine talks to Home Assistant!
+> **New to the repo?** Start by reading [System Architecture](System-and-Hardware-Architecture) to understand how your local machine talks to Home Assistant!

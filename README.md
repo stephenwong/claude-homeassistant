@@ -2,12 +2,11 @@
 
 [![Documentation](https://img.shields.io/badge/Documentation-GitHub_Wiki-0969da?style=flat-square&logo=github)](https://github.com/stephenwong/ai-homeassistant/wiki)
 [![Validation](https://img.shields.io/badge/Validation-7_Layers_Parallel-success?style=flat-square)](https://github.com/stephenwong/ai-homeassistant/wiki/Validation-and-Deployment-Engine)
-[![Hardware](https://img.shields.io/badge/Hardware-OptiPlex_%2B_Hailo--8-orange?style=flat-square)](https://github.com/stephenwong/ai-homeassistant/wiki/System-and-Hardware-Architecture)
 
 A toolkit for managing Home Assistant configurations — automated validation, safe deployment, round-trip YAML editing. Designed to work alongside AI coding assistants, but fully usable standalone.
 
-> 📖 **Looking for full guides, architecture diagrams, and hardware runbooks?**  
-> Explore the **[GitHub Wiki](https://github.com/stephenwong/ai-homeassistant/wiki)** for deep-dive documentation on [Hardware & Network Topology](https://github.com/stephenwong/ai-homeassistant/wiki/System-and-Hardware-Architecture), [Validation Caching](https://github.com/stephenwong/ai-homeassistant/wiki/Validation-and-Deployment-Engine), [Frigate & Zigbee Runbooks](https://github.com/stephenwong/ai-homeassistant/wiki/Integrations-and-Runbooks), and [Disaster Recovery](https://github.com/stephenwong/ai-homeassistant/wiki/Backups-and-Disaster-Recovery).
+> 📖 **Looking for full guides, architecture diagrams, and runbooks?**  
+> Explore the **[GitHub Wiki](https://github.com/stephenwong/ai-homeassistant/wiki)** for deep-dive documentation on [System Architecture](https://github.com/stephenwong/ai-homeassistant/wiki/System-and-Hardware-Architecture), [Validation Caching](https://github.com/stephenwong/ai-homeassistant/wiki/Validation-and-Deployment-Engine), [Integrations & Runbooks](https://github.com/stephenwong/ai-homeassistant/wiki/Integrations-and-Runbooks), and [Disaster Recovery](https://github.com/stephenwong/ai-homeassistant/wiki/Backups-and-Disaster-Recovery).
 
 ## ✨ Features
 
@@ -23,13 +22,13 @@ A toolkit for managing Home Assistant configurations — automated validation, s
 
 ## 📚 Documentation & Runbooks
 
-Comprehensive guides, hardware topologies, and visual runbooks are maintained in the **[GitHub Wiki](https://github.com/stephenwong/ai-homeassistant/wiki)**:
+Comprehensive guides, system topologies, and visual runbooks are maintained in the **[GitHub Wiki](https://github.com/stephenwong/ai-homeassistant/wiki)**:
 
 | Guide | Description |
 |---|---|
-| 🏗️ **[System & Hardware Architecture](https://github.com/stephenwong/ai-homeassistant/wiki/System-and-Hardware-Architecture)** | Dell OptiPlex, Hailo-8 AI, SMLIGHT PoE Zigbee, and 4-channel access model |
+| 🏗️ **[System Architecture](https://github.com/stephenwong/ai-homeassistant/wiki/System-and-Hardware-Architecture)** | Server topology, network coordinator, and 4-channel access model |
 | 🛡️ **[Validation & Deployment Engine](https://github.com/stephenwong/ai-homeassistant/wiki/Validation-and-Deployment-Engine)** | 7-layer validation pipeline, SHA256 caching, and offline fallbacks |
-| 🔌 **[Integrations & Hardware Runbooks](https://github.com/stephenwong/ai-homeassistant/wiki/Integrations-and-Runbooks)** | Frigate NVR, Hailo-8, go2rtc stream routing, Zigbee 250ms rule, Lovelace storage mode |
+| 🔌 **[Integrations & Runbooks](https://github.com/stephenwong/ai-homeassistant/wiki/Integrations-and-Runbooks)** | Frigate NVR, go2rtc stream routing, Zigbee 250ms rule, Lovelace storage mode |
 | 📐 **[Automation & Entity Standards](https://github.com/stephenwong/ai-homeassistant/wiki/Automation-and-Entity-Design)** | Entity naming conventions, UI-visible motion timer helper pattern, safe YAML editing |
 | 💾 **[Backups & Disaster Recovery](https://github.com/stephenwong/ai-homeassistant/wiki/Backups-and-Disaster-Recovery)** | 3-tier retention policy, changelog search, surgical restore guide |
 | 🤖 **[AI Assistant & MCP Bridge](https://github.com/stephenwong/ai-homeassistant/wiki/AI-Assistant-Integration)** | Dual harness MCP setup, tool selection decision matrix, token guardrails |
